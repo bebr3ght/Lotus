@@ -73,3 +73,10 @@ class InjectionManager:
             self.injector.stop_overlay_process()
         except Exception as e:
             log.warning(f"Injection: Failed to stop overlay process: {e}")
+    
+    def kill_all_runoverlay_processes(self):
+        """Kill all runoverlay processes (for ChampSelect cleanup)"""
+        try:
+            self.injector.kill_all_runoverlay_processes()
+        except Exception as e:
+            log.warning(f"Injection: Failed to kill runoverlay processes: {e}")

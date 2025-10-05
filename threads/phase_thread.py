@@ -55,6 +55,14 @@ class PhaseThread(threading.Thread):
                     # This helps OCR restart immediately if champion is already locked
                     self.state.locked_champ_id = None  # Reset first
                     
+                    # Kill any existing runoverlay processes when entering ChampSelect
+                    if self.injection_manager:
+                        try:
+                            self.injection_manager.kill_all_runoverlay_processes()
+                            log.info("Phase: Killed all runoverlay processes for ChampSelect")
+                        except Exception as e:
+                            log.warning(f"Phase: Failed to kill runoverlay processes: {e}")
+                    
                 else:
                     # Exit champ select → reset counter/timer
                     self.state.hovered_champ_id = None

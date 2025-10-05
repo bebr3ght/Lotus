@@ -345,3 +345,32 @@ class SkinInjector:
                 log.warning(f"Injector: Failed to stop overlay process: {e}")
         else:
             log.debug("Injector: No active overlay process to stop")
+    
+    def kill_all_runoverlay_processes(self):
+        """Kill all runoverlay processes (for ChampSelect cleanup)"""
+        import psutil
+        killed_count = 0
+        
+        try:
+            # Find all processes with "runoverlay" in command line
+            for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+                try:
+                    cmdline = proc.info.get('cmdline', [])
+                    if cmdline and any('runoverlay' in arg for arg in cmdline):
+                        log.info(f"Injector: Killing runoverlay process PID {proc.info['pid']}")
+                        proc.kill()
+                        killed_count += 1
+                except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                    # Process might have already ended or we don't have access
+                    pass
+            
+            if killed_count > 0:
+                log.info(f"Injector: Killed {killed_count} runoverlay process(es)")
+            else:
+                log.debug("Injector: No runoverlay processes found to kill")
+                
+        except Exception as e:
+            log.warning(f"Injector: Failed to kill runoverlay processes: {e}")
+        
+        # Also stop our tracked process if it exists
+        self.stop_overlay_process()

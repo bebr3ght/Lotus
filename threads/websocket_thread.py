@@ -112,6 +112,14 @@ class WSEventThread(threading.Thread):
                     except Exception: 
                         self.state.processed_action_ids = set()
                     
+                    # Kill any existing runoverlay processes when entering ChampSelect
+                    if self.injection_manager:
+                        try:
+                            self.injection_manager.kill_all_runoverlay_processes()
+                            log.info("WS: Killed all runoverlay processes for ChampSelect")
+                        except Exception as e:
+                            log.warning(f"WS: Failed to kill runoverlay processes: {e}")
+                    
                 else:
                     # Exit → reset locks/timer
                     self.state.hovered_champ_id = None
