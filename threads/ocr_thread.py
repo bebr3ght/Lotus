@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-OCR skin detection thread
+OCR skin detection thread - Optimized version with hardcoded ROI
 """
 
 import os
@@ -23,9 +23,18 @@ from utils.window_capture import find_league_window_rect
 
 log = get_logger()
 
+# ROI proportions - these are constant for League of Legends
+# Based on exact measurements: 455px from top, 450px from left/right, 230px from bottom
+ROI_PROPORTIONS = {
+    'x1_ratio': 0.352,  # 450/1280
+    'y1_ratio': 0.632,  # 455/720  
+    'x2_ratio': 0.648,  # 830/1280
+    'y2_ratio': 0.681   # 490/720
+}
+
 
 class OCRSkinThread(threading.Thread):
-    """OCR thread: locked ROI + burst"""
+    """OCR thread: Optimized with hardcoded ROI proportions"""
     
     def __init__(self, state: SharedState, db: NameDB, ocr: OCR, args, lcu: Optional[LCU] = None, multilang_db: Optional[MultiLanguageDB] = None):
         super().__init__(daemon=True)
@@ -40,74 +49,133 @@ class OCRSkinThread(threading.Thread):
         self.burst_ms = args.burst_ms
         self.min_ocr_interval = args.min_ocr_interval
         self.second_shot_ms = args.second_shot_ms
+        
+        # OCR state variables (reset on phase change)
         self.last_small = None
         self.last_key = None
         self.motion_until = 0.0
         self.last_ocr_t = 0.0
+        self.second_shot_at = 0.0
         self.next_emit = time.time()
         self.emit_dt = (1.0 / max(1.0, args.idle_hz)) if args.idle_hz > 0 else None
-        self.roi_abs = None
-        self.roi_lock_until = 0.0
-        self.roi_lock_s = args.roi_lock_s
-        self.second_shot_at = 0.0
+        
+        # Window and ROI state (calculated once, cached)
+        self.window_rect = None
+        self.roi_abs = None  # ROI calculé une seule fois puis caché
+        self.window_rect_cache_time = 0.0
+        self.window_rect_cache_duration = 30.0  # Cache window rect for 30 seconds
 
-    def _calc_band_roi_abs(self, sct, monitor) -> Optional[Tuple[int, int, int, int]]:
-        """Calculate band ROI in absolute coordinates"""
-        try:
-            import mss  # pyright: ignore[reportMissingImports]
+    def _get_window_rect(self) -> Optional[Tuple[int, int, int, int]]:
+        """Get League window rectangle with caching"""
+        now = time.time()
+        
+        # Use cached window rect if available and recent
+        if (self.window_rect is None or 
+            (now - self.window_rect_cache_time) > self.window_rect_cache_duration):
+            
             if self.args.capture == "window" and os.name == "nt":
                 rect = find_league_window_rect(self.args.window_hint)
-                if not rect: 
-                    log.debug("[ocr] League window not found, falling back to monitor capture")
+                if not rect:
+                    log.debug("[ocr] League window not found")
                     return None
-                l, t, r, b = rect
-                log.debug(f"[ocr] League window found: {l},{t},{r},{b} (size: {r-l}x{b-t})")
-                mon = {"left": l, "top": t, "width": r - l, "height": b - t}
-                full = np.array(sct.grab(mon), dtype=np.uint8)[:, :, :3]
-                x1, y1, x2, y2 = choose_band(full)
-                roi_abs = (l + x1, t + y1, l + x2, t + y2)
-                log.debug(f"[ocr] ROI calculated: {roi_abs}")
-                return roi_abs
+                
+                self.window_rect = rect
+                self.window_rect_cache_time = now
+                log.debug(f"[ocr] League window found: {rect[0]},{rect[1]},{rect[2]},{rect[3]} (size: {rect[2]-rect[0]}x{rect[3]-rect[1]})")
             else:
-                log.debug(f"[ocr] Using monitor capture (mode: {self.args.capture})")
-                shot = sct.grab(monitor)
-                full = np.array(shot, dtype=np.uint8)[:, :, :3]
-                x1, y1, x2, y2 = choose_band(full)
-                return (monitor["left"] + x1, monitor["top"] + y1, monitor["left"] + x2, monitor["top"] + y2)
-        except Exception as e:
-            log.debug(f"[ocr] Error calculating ROI: {e}")
+                # Monitor capture mode - use monitor dimensions
+                import mss
+                with mss.mss() as sct:
+                    monitor = sct.monitors[self.monitor_index]
+                    self.window_rect = (monitor["left"], monitor["top"], 
+                                       monitor["left"] + monitor["width"], 
+                                       monitor["top"] + monitor["height"])
+                    self.window_rect_cache_time = now
+                    log.debug(f"[ocr] Using monitor capture (mode: {self.args.capture})")
+        
+        return self.window_rect
+    
+
+    def _get_roi_abs(self) -> Optional[Tuple[int, int, int, int]]:
+        """Get absolute ROI coordinates using FIXED proportions - CACHED"""
+        # Si on a déjà le ROI calculé et la fenêtre n'a pas changé, on le retourne
+        if self.roi_abs is not None and self.window_rect is not None:
+            return self.roi_abs
+        
+        # Sinon on calcule une seule fois
+        window_rect = self._get_window_rect()
+        if not window_rect:
             return None
+        
+        l, t, r, b = window_rect
+        width = r - l
+        height = b - t
+        
+        # Les proportions sont FIXES ! On les multiplie juste par la résolution
+        self.roi_abs = (
+            int(l + width * ROI_PROPORTIONS['x1_ratio']),
+            int(t + height * ROI_PROPORTIONS['y1_ratio']),
+            int(l + width * ROI_PROPORTIONS['x2_ratio']),
+            int(t + height * ROI_PROPORTIONS['y2_ratio'])
+        )
+        
+        log.debug(f"[ocr] ROI calculated ONCE using FIXED proportions: {self.roi_abs}")
+        return self.roi_abs
+
+    def _reset_ocr_state(self):
+        """Reset OCR state variables"""
+        self.last_small = None
+        self.last_key = None
+        self.motion_until = 0.0
+        self.last_ocr_t = 0.0
+        self.second_shot_at = 0.0
+        # Reset ROI cache aussi (au cas où la fenêtre change)
+        self.roi_abs = None
+        self.window_rect = None
+        self.window_rect_cache_time = 0.0
+        log.debug("[ocr] OCR state reset (including ROI cache)")
+
+    def _should_run_ocr(self) -> bool:
+        """Check if OCR should be running based on conditions"""
+        # Must be in ChampSelect
+        if self.state.phase != "ChampSelect":
+            return False
+        
+        # Must have locked a champion
+        if not getattr(self.state, "locked_champ_id", None):
+            return False
+        
+        # Check if we're within the injection threshold (2 seconds)
+        # This would need to be implemented based on your injection timing logic
+        # For now, we'll assume OCR should run until injection happens
+        return True
 
     def run(self):
-        """Main OCR loop"""
+        """Main OCR loop - Optimized version"""
         import mss  # pyright: ignore[reportMissingImports]
-        log.info("OCR: Thread ready (active only in Champion Select)")
+        log.info("OCR: Thread ready (optimized with hardcoded ROI)")
         
         try:
             with mss.mss() as sct:
                 monitor = sct.monitors[self.monitor_index]
                 while not self.state.stop:
                     now = time.time()
-                    if self.state.phase != "ChampSelect":
-                        self.last_small = None
-                        self.last_key = None
-                        self.motion_until = 0.0
-                        self.last_ocr_t = 0.0
-                        self.roi_abs = None
-                        self.roi_lock_until = 0.0
+                    
+                    # Check if we should be running OCR
+                    if not self._should_run_ocr():
+                        # Reset OCR state when not in ChampSelect or no champion locked
+                        if self.state.phase != "ChampSelect" or not getattr(self.state, "locked_champ_id", None):
+                            self._reset_ocr_state()
                         time.sleep(0.15)
                         continue
                     
-                    if self.roi_abs is None or now >= self.roi_lock_until:
-                        roi = self._calc_band_roi_abs(sct, monitor)
-                        if roi:
-                            self.roi_abs = roi
-                            self.roi_lock_until = now + self.roi_lock_s
-                        else:
-                            time.sleep(0.05)
-                            continue
+                    # Get ROI coordinates (uses hardcoded proportions)
+                    roi_abs = self._get_roi_abs()
+                    if not roi_abs:
+                        time.sleep(0.05)
+                        continue
                     
-                    L, T, R, B = self.roi_abs
+                    L, T, R, B = roi_abs
                     mon = {"left": L, "top": T, "width": max(8, R - L), "height": max(8, B - T)}
                     
                     try:
@@ -117,16 +185,7 @@ class OCRSkinThread(threading.Thread):
                         time.sleep(0.05)
                         continue
                     
-                    if not getattr(self.state, "locked_champ_id", None):
-                        self.last_small = None
-                        self.last_key = None
-                        self.motion_until = 0.0
-                        self.last_ocr_t = 0.0
-                        self.roi_abs = None
-                        self.roi_lock_until = 0.0
-                        time.sleep(0.10)
-                        continue
-                    
+                    # Process image for OCR
                     band_bin = preprocess_band_for_ocr(band)
                     small = cv2.resize(band_bin, (96, 20), interpolation=cv2.INTER_AREA)
                     changed = True
@@ -137,6 +196,7 @@ class OCRSkinThread(threading.Thread):
                     
                     self.last_small = small
                     
+                    # Run OCR if image changed or in burst mode
                     if changed:
                         self.motion_until = now + (self.burst_ms / 1000.0)
                         if now - self.last_ocr_t >= self.min_ocr_interval:
@@ -144,21 +204,30 @@ class OCRSkinThread(threading.Thread):
                             self.last_ocr_t = now
                             self.second_shot_at = now + (self.second_shot_ms / 1000.0)
                     
+                    # Second shot for better accuracy
                     if self.second_shot_at and now >= self.second_shot_at:
                         if now - self.last_ocr_t >= (self.min_ocr_interval * 0.6):
                             self._run_ocr_and_match(band_bin)
                             self.last_ocr_t = now
                         self.second_shot_at = 0.0
                     
+                    # Continue OCR during motion burst
                     if now < self.motion_until and (now - self.last_ocr_t >= self.min_ocr_interval):
                         self._run_ocr_and_match(band_bin)
                         self.last_ocr_t = now
                     
+                    # Emit periodic updates if configured
                     if self.emit_dt is not None and now >= self.next_emit and self.last_key:
                         log.info(f"[hover:skin] {self.last_key}")
                         self.next_emit = now + self.emit_dt
                     
-                    time.sleep(1.0 / max(10.0, self.args.burst_hz) if now < self.motion_until else 1.0 / max(5.0, self.args.idle_hz))
+                    # Sleep based on motion state
+                    if now < self.motion_until:
+                        sleep_time = 1.0 / max(10.0, self.args.burst_hz)
+                    else:
+                        sleep_time = 1.0 / max(5.0, self.args.idle_hz) if self.args.idle_hz > 0 else 0.1
+                    
+                    time.sleep(sleep_time)
         finally:
             pass
 
