@@ -147,6 +147,21 @@ def main():
     setup_logging(args.verbose)
     log.info("Starting...")
     
+    # Initialize system tray manager immediately to hide console
+    tray_manager = None
+    try:
+        def tray_quit_callback():
+            """Callback for tray quit - set the shared state stop flag"""
+            log.info("Setting stop flag from tray quit")
+            # We'll set the stop flag later when state is initialized
+        
+        tray_manager = TrayManager(quit_callback=tray_quit_callback)
+        tray_manager.start()
+        log.info("System tray icon initialized - console hidden")
+    except Exception as e:
+        log.warning(f"Failed to initialize system tray: {e}")
+        log.info("Application will continue without system tray icon")
+    
     # Download skins if enabled
     if args.download_skins:
         log.info("Starting automatic skin download...")
@@ -248,20 +263,14 @@ def main():
     state.skin_file = getattr(args, 'skin_file', state.skin_file) or state.skin_file
     state.inject_batch = getattr(args, 'inject_batch', state.inject_batch) or state.inject_batch
     
-    # Initialize system tray manager
-    tray_manager = None
-    try:
-        def tray_quit_callback():
+    # Update tray manager quit callback now that state is available
+    if tray_manager:
+        def updated_tray_quit_callback():
             """Callback for tray quit - set the shared state stop flag"""
             log.info("Setting stop flag from tray quit")
             state.stop = True
         
-        tray_manager = TrayManager(quit_callback=tray_quit_callback)
-        tray_manager.start()
-        log.info("System tray icon initialized")
-    except Exception as e:
-        log.warning(f"Failed to initialize system tray: {e}")
-        log.info("Application will continue without system tray icon")
+        tray_manager.quit_callback = updated_tray_quit_callback
 
     # Function to update OCR language dynamically
     def update_ocr_language(new_lcu_lang: str):

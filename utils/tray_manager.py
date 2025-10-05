@@ -7,6 +7,8 @@ System tray manager for SkinCloner
 import os
 import sys
 import threading
+import ctypes
+from ctypes import wintypes
 from typing import Optional, Callable
 import pystray
 from PIL import Image, ImageDraw
@@ -18,17 +20,20 @@ log = get_logger()
 class TrayManager:
     """Manages the system tray icon for SkinCloner"""
     
-    def __init__(self, quit_callback: Optional[Callable] = None):
+    def __init__(self, quit_callback: Optional[Callable] = None, toggle_terminal_callback: Optional[Callable] = None):
         """
         Initialize the tray manager
         
         Args:
             quit_callback: Function to call when user clicks "Quit"
+            toggle_terminal_callback: Function to call when user clicks "Toggle Terminal"
         """
         self.quit_callback = quit_callback
+        self.toggle_terminal_callback = toggle_terminal_callback
         self.icon = None
         self.tray_thread = None
         self._stop_event = threading.Event()
+        self._terminal_visible = False  # Track terminal visibility state
         
     def _create_icon_image(self) -> Image.Image:
         """Create a simple icon image for the tray"""
@@ -80,6 +85,47 @@ class TrayManager:
         # Fallback to created icon
         return self._create_icon_image()
     
+    def _create_terminal_window(self):
+        """Create a new terminal window for logging"""
+        try:
+            if sys.platform == "win32":
+                # Create a new console window
+                ctypes.windll.kernel32.AllocConsole()
+                
+                # Redirect stdout to the new console
+                import subprocess
+                subprocess.Popen(['cmd.exe', '/k', 'echo Terminal opened for SkinCloner logging'])
+                
+                self._terminal_visible = True
+                log.info("Terminal window created")
+        except Exception as e:
+            log.error(f"Failed to create terminal window: {e}")
+    
+    def _destroy_terminal_window(self):
+        """Destroy the terminal window"""
+        try:
+            if sys.platform == "win32" and self._terminal_visible:
+                # Free the console
+                ctypes.windll.kernel32.FreeConsole()
+                self._terminal_visible = False
+                log.info("Terminal window destroyed")
+        except Exception as e:
+            log.error(f"Failed to destroy terminal window: {e}")
+    
+    def _on_toggle_terminal(self, icon, item):
+        """Handle toggle terminal menu item click"""
+        try:
+            if self.toggle_terminal_callback:
+                self.toggle_terminal_callback()
+            else:
+                # Default behavior - toggle terminal window
+                if self._terminal_visible:
+                    self._destroy_terminal_window()
+                else:
+                    self._create_terminal_window()
+        except Exception as e:
+            log.error(f"Error in toggle terminal callback: {e}")
+    
     def _on_quit(self, icon, item):
         """Handle quit menu item click"""
         log.info("Quit requested from system tray")
@@ -103,6 +149,8 @@ class TrayManager:
         """Create the context menu for the tray icon"""
         return pystray.Menu(
             pystray.MenuItem("SkinCloner", None, enabled=False),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem("Toggle Terminal", self._on_toggle_terminal),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Quit", self._on_quit, default=True)
         )
@@ -134,7 +182,7 @@ class TrayManager:
         try:
             self.tray_thread = threading.Thread(target=self._run_tray, daemon=True)
             self.tray_thread.start()
-            log.info("System tray manager started")
+            log.info("System tray manager started - no console window")
         except Exception as e:
             log.error(f"Failed to start system tray manager: {e}")
     

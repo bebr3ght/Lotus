@@ -13,11 +13,22 @@ from urllib3.exceptions import InsecureRequestWarning
 
 def setup_logging(verbose: bool):
     """Setup logging configuration"""
-    # Force unbuffered output for console
-    sys.stdout.reconfigure(line_buffering=True)
-    sys.stderr.reconfigure(line_buffering=True)
+    # Handle windowed mode where stdout/stderr might be None
+    if sys.stdout is not None:
+        try:
+            sys.stdout.reconfigure(line_buffering=True)
+        except (AttributeError, OSError):
+            pass  # stdout doesn't support reconfigure or is redirected
     
-    h = logging.StreamHandler(sys.stdout)
+    if sys.stderr is not None:
+        try:
+            sys.stderr.reconfigure(line_buffering=True)
+        except (AttributeError, OSError):
+            pass  # stderr doesn't support reconfigure or is redirected
+    
+    # Use stderr if stdout is None (windowed mode)
+    output_stream = sys.stdout if sys.stdout is not None else sys.stderr
+    h = logging.StreamHandler(output_stream)
     fmt = "%(_when)s | %(levelname)-7s | %(message)s"
     
     class _Fmt(logging.Formatter):
@@ -33,10 +44,11 @@ def setup_logging(verbose: bool):
     root.addHandler(h)
     root.setLevel(logging.DEBUG if verbose else logging.INFO)
     
-    # Add a console print to ensure output is visible
-    print("=" * 60, flush=True)
-    print("SkinCloner - Starting...", flush=True)
-    print("=" * 60, flush=True)
+    # Add a console print to ensure output is visible (only if we have stdout)
+    if sys.stdout is not None:
+        print("=" * 60, flush=True)
+        print("SkinCloner - Starting...", flush=True)
+        print("=" * 60, flush=True)
     
     # Suppress HTTPS/HTTP logs
     logging.getLogger("urllib3.connectionpool").setLevel(logging.WARNING)

@@ -87,7 +87,7 @@ def build_executable():
     cmd = [
         "pyinstaller",
         "--onedir",  # Directory distribution (faster startup)
-        "--console",  # Show console window for debugging
+        "--windowed",  # No console window - completely hidden
         "--name=SkinCloner",
         "--icon=icon.ico",
         "--add-data=icon.ico;.",
