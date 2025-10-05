@@ -115,7 +115,7 @@ LoLSkinChanger/
 
 **For developers and advanced users who want to run from source:**
 
-1. **Install Python 3.11 or higher**
+1. **Install Python 3.11**
 2. **Clone this repository**:
    ```bash
    git clone https://github.com/AlbanCliquet/LoLSkinChanger.git
@@ -126,8 +126,13 @@ LoLSkinChanger/
    pip install -r requirements.txt
    ```
    This will automatically install the local tesserocr wheel from the `dependencies/` folder.
-4. **Install Tesseract OCR** on your system
-5. **Run the system**:
+4. **Install Tesseract OCR** on your system (see detailed instructions below)
+   - **No manual configuration needed** - the application automatically detects and configures Tesseract
+5. **Verify installation** (optional but recommended):
+   ```bash
+   python utils/check_tesseract.py
+   ```
+6. **Run the system**:
    ```bash
    # That's it! Just run this:
    python main.py
@@ -139,16 +144,18 @@ LoLSkinChanger/
    python main.py --ws
    
    # Optional: Specify language (auto-detection by default)
+   python main.py                     # Auto-detect (default)
    python main.py --language es_ES    # Spanish
    python main.py --language fr_FR    # French
    python main.py --language zh_CN    # Chinese Simplified
-   python main.py --language auto     # Auto-detect (default)
+   
    
    # Optional: Specify OCR language for non-Latin alphabets
+   python main.py                     # Auto-detect OCR language (default)
    python main.py --lang kor          # Korean OCR
    python main.py --lang chi_sim      # Chinese Simplified OCR
    python main.py --lang ell          # Greek OCR
-   python main.py --lang auto         # Auto-detect OCR language (default)
+   
    
    # Optional: Disable multi-language support
    python main.py --no-multilang
@@ -161,11 +168,11 @@ LoLSkinChanger/
 
 ## Usage
 
-### How It Works (Both Versions)
+### How It Works 
 1. **Launch League of Legends** and start a game
 2. **Enter Champion Select** - the system detects this automatically
-3. **Hover over skins** for 2+ seconds - the system detects the skin name
-4. **The system automatically injects** the skin before the game starts
+3. **Hover over skins** - the system detects the skin name
+4. **The system automatically injects** the skin 2 seconds before the game starts
 5. **Enjoy your custom skin** in the game!
 
 ### Fully Automated Mode (Default)
@@ -200,7 +207,7 @@ The system provides real-time status updates:
 ### Multi-Language Options
 - `--multilang`: Enable multi-language support (default)
 - `--no-multilang`: Disable multi-language support
-- `--language <lang>`: Specify language or auto-detection
+- `--language <lang>`: Specify language
   - `auto`: Auto-detect language from LCU API (default)
   - `en_US`: English (United States)
   - `es_ES`: Spanish (Spain)
@@ -260,6 +267,125 @@ The system supports 17 languages with automatic detection and optimized loading:
 - mss: Screen capture
 - Pillow: Image processing
 
+## 📚 Tesseract OCR Installation Guide
+
+**🎯 Important**: The application automatically detects Tesseract OCR installations and configures all necessary paths. You only need to install Tesseract - no manual configuration required!
+
+### Windows Installation
+
+1. **Download Tesseract for Windows**:
+   - Go to: https://github.com/UB-Mannheim/tesseract/wiki
+   - Download the latest Windows installer (e.g., `tesseract-ocr-w64-setup-5.x.x.exe`)
+
+2. **Install Tesseract**:
+   - Run the installer as Administrator
+   - **IMPORTANT**: During installation, select "Additional language data" to install language packs
+   - Choose the default installation path: `C:\Program Files\Tesseract-OCR\`
+
+3. **Optional: Add to System PATH** (Recommended but not required):
+   - The application will automatically detect Tesseract even without PATH configuration
+   - For faster detection, you can add: `C:\Program Files\Tesseract-OCR` to your system PATH
+   - Open System Properties → Advanced → Environment Variables
+   - Edit the "Path" variable and add: `C:\Program Files\Tesseract-OCR`
+   - Or use PowerShell (as Administrator):
+     ```powershell
+     $env:PATH += ";C:\Program Files\Tesseract-OCR"
+     [Environment]::SetEnvironmentVariable("PATH", $env:PATH, [EnvironmentVariableTarget]::Machine)
+     ```
+
+4. **Optional: Set TESSDATA_PREFIX Environment Variable** (Not required):
+   - The application automatically configures this variable when it detects Tesseract
+   - You can optionally set it manually: `TESSDATA_PREFIX=C:\Program Files\Tesseract-OCR\tessdata`
+   - Or use PowerShell (as Administrator):
+     ```powershell
+     [Environment]::SetEnvironmentVariable("TESSDATA_PREFIX", "C:\Program Files\Tesseract-OCR\tessdata", [EnvironmentVariableTarget]::Machine)
+     ```
+
+5. **Verify Installation** (Optional but recommended):
+   ```bash
+   # Check if Tesseract is accessible
+   tesseract --version
+   
+   # Check available languages
+   tesseract --list-langs
+   
+   # Run our diagnostic tool
+   python check_tesseract.py
+   ```
+
+### Linux Installation
+
+```bash
+# Ubuntu/Debian
+sudo apt-get update
+sudo apt-get install tesseract-ocr tesseract-ocr-eng
+
+# For additional languages (e.g., French, Spanish, German)
+sudo apt-get install tesseract-ocr-fra tesseract-ocr-spa tesseract-ocr-deu
+
+# CentOS/RHEL/Fedora
+sudo yum install tesseract tesseract-langpack-eng
+# or for newer versions:
+sudo dnf install tesseract tesseract-langpack-eng
+```
+
+### macOS Installation
+
+```bash
+# Using Homebrew
+brew install tesseract
+
+# For additional languages
+brew install tesseract-lang
+```
+
+### Common Language Codes
+
+| Language | Code | Language | Code |
+|----------|------|----------|------|
+| English  | eng  | Spanish  | spa  |
+| French   | fra  | German   | deu  |
+| Chinese (Simplified) | chi_sim | Chinese (Traditional) | chi_tra |
+| Japanese | jpn  | Korean   | kor  |
+| Italian  | ita  | Portuguese | por |
+| Russian  | rus  | Polish   | pol  |
+
+### Troubleshooting Tesseract Issues
+
+If you encounter Tesseract-related errors:
+
+1. **Run the diagnostic tool**:
+   ```bash
+   python utils/check_tesseract.py
+   ```
+
+2. **Common error messages and solutions**:
+
+   - **"Tesseract executable not found"**:
+     - Ensure Tesseract is installed and added to PATH
+     - Restart your command prompt/IDE after installation
+
+   - **"Tessdata directory not found"**:
+     - The application should automatically detect this - try running the diagnostic tool
+     - If manual configuration is needed, set TESSDATA_PREFIX environment variable
+     - Ensure tessdata folder contains `.traineddata` files
+
+   - **"Language not found"**:
+     - Install additional language packs
+     - Use `tesseract --list-langs` to see available languages
+
+   - **"tesserocr import error"**:
+     - Reinstall tesserocr: `pip install -r requirements.txt`
+     - Ensure you're using the correct Python version (3.11+)
+
+3. **Manual path specification** (Last resort):
+   If automatic detection fails, you can specify paths manually:
+   ```bash
+   python main.py --tessdata "C:\Program Files\Tesseract-OCR\tessdata" --tesseract-exe "C:\Program Files\Tesseract-OCR\tesseract.exe"
+   ```
+   
+   **Note**: This should rarely be necessary as the application automatically detects Tesseract installations.
+
 ## Troubleshooting
 
 ### Common Issues
@@ -272,6 +398,7 @@ The system supports 17 languages with automatic detection and optimized loading:
 - **Performance issues**: Use manual language selection (`--language <lang>`) for better performance
 - **Non-Latin alphabet issues**: Languages with non-Latin alphabets (Chinese, Japanese, Korean, Arabic, etc.) are currently not supported due to OCR limitations
 - **OCR language not found**: Ensure Tesseract OCR has the required language packs installed
+- **Tesseract OCR errors**: Run `python utils/check_tesseract.py` to diagnose installation issues
 - **Permission errors**: The installer version automatically uses user data directories to avoid permission issues
 
 ### System Requirements

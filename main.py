@@ -5,6 +5,7 @@ Main entry point for the modularized LoL Skin Changer
 """
 
 import argparse
+import sys
 import time
 from ocr.backend import OCR
 from database.name_db import NameDB
@@ -199,10 +200,18 @@ def main():
         log.info(f"OCR: {ocr.backend} (lang: {ocr_lang})")
     except Exception as e:
         log.warning(f"Failed to initialize OCR with language '{ocr_lang}': {e}")
-        log.info("Falling back to English OCR")
-        ocr = OCR(lang="eng", psm=args.psm, tesseract_exe=args.tesseract_exe)
-        ocr.tessdata_dir = args.tessdata
-        log.info(f"OCR: {ocr.backend} (lang: eng)")
+        log.info("Attempting fallback to English OCR...")
+        
+        try:
+            ocr = OCR(lang="eng", psm=args.psm, tesseract_exe=args.tesseract_exe)
+            ocr.tessdata_dir = args.tessdata
+            log.info(f"OCR: {ocr.backend} (lang: eng)")
+        except Exception as fallback_e:
+            log.error(f"OCR initialization failed: {fallback_e}")
+            log.error("Tesseract OCR is not properly installed or configured.")
+            log.error("Run 'python utils/check_tesseract.py' for detailed diagnostic information.")
+            log.error("Install Tesseract from: https://github.com/UB-Mannheim/tesseract/wiki")
+            sys.exit(1)
     
     db = NameDB(lang=args.dd_lang)
     state = SharedState()
