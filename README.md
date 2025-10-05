@@ -1,6 +1,36 @@
 # LoL Skin Changer - Fully Automated System
 
-A complete League of Legends skin changer that automatically detects skins using OCR and injects them 2 seconds before the game starts. Just run `main.py` and it handles everything automatically - no manual intervention required!
+A complete League of Legends skin changer that automatically detects skins using OCR and injects them 2 seconds before the game starts. 
+
+## Two Ways to Use This Project
+
+### 🚀 **Option 1: Download Installer (Recommended for Most Users)**
+For users who want a simple, ready-to-use application:
+- **Download the latest installer** from our releases
+- **Run the installer** and follow the setup wizard
+- **Launch the app** from your desktop or start menu
+- **No technical knowledge required!**
+
+**[📥 Download Latest Installer](https://github.com/AlbanCliquet/LoLSkinChanger/releases/latest)**
+
+### 💻 **Option 2: Run from Source Code (For Developers/Advanced Users)**
+For developers or users who want to modify the code:
+- **Clone this repository**
+- **Install Python dependencies**
+- **Run `main.py`** directly
+- **Full control over the codebase**
+
+---
+
+## 🚀 Quick Start (Installer Version)
+
+1. **Download** the latest installer from the releases page
+2. **Run** `LoLSkinChanger_Setup.exe` as Administrator
+3. **Launch** League of Legends and start a game
+4. **Hover over skins** in champion select for 2+ seconds
+5. **Enjoy** your custom skins automatically injected!
+
+**That's it!** The system handles everything automatically - no manual intervention required!
 
 ## Project Structure
 
@@ -21,7 +51,7 @@ LoLSkinChanger/
 │   │   └── [other tools]      # WAD utilities
 │   ├── mods/                  # Extracted skin mods (created at runtime)
 │   └── overlay/               # Temporary overlay files (created at runtime)
-├── skins/                     # Skin collection (downloaded at runtime)
+├── skins/                     # Skin collection (downloaded to user data directory at runtime)
 │   ├── Aatrox/
 │   ├── Ahri/
 │   └── [171 champions]/
@@ -45,10 +75,10 @@ LoLSkinChanger/
 │   ├── __init__.py
 │   ├── client.py              # LCU API client
 │   └── utils.py               # LCU utility functions
-├── state/                     # Shared state
+├── state/                     # Shared state (stored in user data directory at runtime)
 │   ├── __init__.py
 │   ├── shared_state.py        # Shared state between threads
-│   └── last_hovered_skin.txt  # Last hovered skin file
+│   └── last_hovered_skin.txt  # Last hovered skin file (user data directory)
 ├── threads/                   # Threading components
 │   ├── __init__.py
 │   ├── phase_thread.py        # Game phase monitoring
@@ -65,7 +95,8 @@ LoLSkinChanger/
 
 ## Features
 
-- **Fully Automated**: Just run `main.py` - no manual intervention required!
+- **🚀 Two Usage Options**: Simple installer for users, source code for developers
+- **Fully Automated**: Works automatically - no manual intervention required!
 - **Multi-Language Support**: Works with any League of Legends client language (17 languages supported)
 - **⚠️ Limitation**: Languages with non-Latin alphabets (Chinese, Japanese, Korean, Arabic, etc.) are currently not supported due to OCR limitations
 - **Smart Detection**: OCR automatically detects skin names during champion select
@@ -78,17 +109,25 @@ LoLSkinChanger/
 - **Modular Architecture**: Clean, maintainable codebase
 - **Multi-threaded**: Optimal performance with concurrent processing
 - **Optimized Loading**: Only loads necessary language databases for better performance
+- **Permission-Safe**: Uses user data directories to avoid permission issues when installed
 
-## Installation
+## 💻 Installation (Source Code Version)
 
-1. Install Python 3.11 or higher
-2. Install dependencies:
+**For developers and advanced users who want to run from source:**
+
+1. **Install Python 3.11 or higher**
+2. **Clone this repository**:
+   ```bash
+   git clone https://github.com/AlbanCliquet/LoLSkinChanger.git
+   cd LoLSkinChanger
+   ```
+3. **Install dependencies**:
    ```bash
    pip install -r requirements.txt
    ```
    This will automatically install the local tesserocr wheel from the `dependencies/` folder.
-3. Install Tesseract OCR on your system
-4. Run the system:
+4. **Install Tesseract OCR** on your system
+5. **Run the system**:
    ```bash
    # That's it! Just run this:
    python main.py
@@ -122,23 +161,22 @@ LoLSkinChanger/
 
 ## Usage
 
-### Fully Automated Mode (Default)
-1. **Start the system**: `python main.py`
-2. **That's it!** The system will:
-   - Connect to League Client automatically
-   - Monitor game phases (lobby, champion select, in-game)
-   - Activate OCR when you enter champion select
-   - Detect skin names as you hover over them
-   - Automatically inject the skin after 2 seconds of hovering
-   - Inject the skin 2 seconds before the game starts
-   - Work completely automatically - no manual intervention!
-
-### How It Works
+### How It Works (Both Versions)
 1. **Launch League of Legends** and start a game
 2. **Enter Champion Select** - the system detects this automatically
 3. **Hover over skins** for 2+ seconds - the system detects the skin name
 4. **The system automatically injects** the skin before the game starts
 5. **Enjoy your custom skin** in the game!
+
+### Fully Automated Mode (Default)
+The system will:
+- Connect to League Client automatically
+- Monitor game phases (lobby, champion select, in-game)
+- Activate OCR when you enter champion select
+- Detect skin names as you hover over them
+- Automatically inject the skin after 2 seconds of hovering
+- Inject the skin 2 seconds before the game starts
+- Work completely automatically - no manual intervention!
 
 ### System Status
 The system provides real-time status updates:
@@ -235,15 +273,23 @@ The system supports 17 languages with automatic detection and optimized loading:
 - **Performance issues**: Use manual language selection (`--language <lang>`) for better performance
 - **Non-Latin alphabet issues**: Languages with non-Latin alphabets (Chinese, Japanese, Korean, Arabic, etc.) are currently not supported due to OCR limitations
 - **OCR language not found**: Ensure Tesseract OCR has the required language packs installed
+- **Permission errors**: The installer version automatically uses user data directories to avoid permission issues
 
 ### System Requirements
+
+**For Installer Version:**
+- Windows 10/11
+- League of Legends installed
+- Tesseract OCR installed (for OCR functionality)
+
+**For Source Code Version:**
 - Python 3.11+
 - Tesseract OCR installed
 - League of Legends installed
 - Windows operating system (for CSLOL tools)
 - CSLOL tools present in `injection/tools/` directory
 
-## Building Executable
+## 🔧 Building from Source (For Developers)
 
 To create a standalone executable for distribution:
 
@@ -270,7 +316,7 @@ The build process creates a single executable file that includes:
 - League of Legends installed and running
 - Tesseract OCR installed (for OCR functionality)
 
-## Windows Installer
+## 📦 Creating Windows Installer (For Developers)
 
 To create a proper Windows installer that registers the app in Windows Apps list:
 
@@ -283,10 +329,9 @@ To create a proper Windows installer that registers the app in Windows Apps list
    python create_installer.py
    ```
 
-3. **Install the app**
-   - Run `installer/LoLSkinChanger_Setup.exe` as Administrator
-   - App will appear in Windows "Installed Apps" list
-   - Includes proper uninstaller
+3. **Find the installer**
+   - The installer will be created in the `installer/` folder
+   - Upload to GitHub releases for distribution
 
 The installer provides:
 - Windows Apps list integration
