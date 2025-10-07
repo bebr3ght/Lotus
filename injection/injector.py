@@ -14,7 +14,7 @@ import shutil
 
 from utils.logging import get_logger
 from utils.paths import get_skins_dir, get_injection_dir
-from constants import PROCESS_TERMINATE_TIMEOUT_S, PROCESS_MONITOR_SLEEP_S
+from constants import PROCESS_TERMINATE_TIMEOUT_S, PROCESS_MONITOR_SLEEP_S, ENABLE_PRIORITY_BOOST
 
 log = get_logger()
 
@@ -221,6 +221,17 @@ class SkinInjector:
                 creationflags = subprocess.CREATE_NO_WINDOW
             
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, creationflags=creationflags)
+            
+            # Boost process priority to maximize CPU contention if enabled
+            if ENABLE_PRIORITY_BOOST:
+                try:
+                    import psutil
+                    p = psutil.Process(proc.pid)
+                    p.nice(psutil.HIGH_PRIORITY_CLASS)
+                    log.info(f"Injector: Boosted mkoverlay process priority (PID={proc.pid})")
+                except Exception as e:
+                    log.debug(f"Injector: Could not boost process priority: {e}")
+            
             stdout, _ = proc.communicate(timeout=timeout)
             mkoverlay_duration = time.time() - mkoverlay_start
             
@@ -259,6 +270,17 @@ class SkinInjector:
                 creationflags = subprocess.CREATE_NO_WINDOW
             
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, creationflags=creationflags)
+            
+            # Boost process priority to maximize CPU contention if enabled
+            if ENABLE_PRIORITY_BOOST:
+                try:
+                    import psutil
+                    p = psutil.Process(proc.pid)
+                    p.nice(psutil.HIGH_PRIORITY_CLASS)
+                    log.info(f"Injector: Boosted runoverlay process priority (PID={proc.pid})")
+                except Exception as e:
+                    log.debug(f"Injector: Could not boost process priority: {e}")
+            
             self.current_overlay_process = proc
             
             # Monitor process with stop callback

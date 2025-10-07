@@ -16,7 +16,8 @@ from utils.normalization import normalize_text
 from constants import (
     TIMER_HZ_MIN, TIMER_HZ_MAX, TIMER_POLL_PERIOD_S,
     SKIN_THRESHOLD_MS_DEFAULT, HOVER_BUFFER_FILE,
-    BASE_SKIN_VERIFICATION_WAIT_S, PREBUILD_WAIT_TIMEOUT_S
+    BASE_SKIN_VERIFICATION_WAIT_S,
+    FORCE_TRADITIONAL_INJECTION
 )
 
 log = get_logger()
@@ -277,7 +278,7 @@ class LoadoutTicker(threading.Thread):
                                 champ_id = self.state.locked_champ_id or self.state.hovered_champ_id
                                 champion_name = self.db.champ_name_by_id.get(champ_id or -1, "") if self.db else ""
                                 
-                                if champion_name and self.injection_manager.prebuilder:
+                                if champion_name and self.injection_manager.prebuilder and not FORCE_TRADITIONAL_INJECTION:
                                     # Check if pre-built overlay exists for this skin
                                     prebuilt_overlay_path = self.injection_manager.prebuilder.get_prebuilt_overlay_path(champion_name, name)
                                     
@@ -286,20 +287,17 @@ class LoadoutTicker(threading.Thread):
                                         # Use pre-built injection (no need for stop_callback since it's instant)
                                         success = self.injection_manager.inject_prebuilt_skin(champion_name, name)
                                     else:
-                                        # Pre-built overlay not ready yet, wait briefly for completion
-                                        log.info(f"[inject] Pre-built overlay not ready for {name}, waiting for completion...")
-                                        if self.injection_manager.prebuilder.wait_for_prebuild_completion(champion_name, timeout=PREBUILD_WAIT_TIMEOUT_S):
-                                            # Check again after waiting
-                                            prebuilt_overlay_path = self.injection_manager.prebuilder.get_prebuilt_overlay_path(champion_name, name)
-                                            if prebuilt_overlay_path and prebuilt_overlay_path.exists():
-                                                log.info(f"[inject] Pre-built overlay ready after wait, using for {name}")
-                                                success = self.injection_manager.inject_prebuilt_skin(champion_name, name)
-                                            else:
-                                                log.info(f"[inject] Pre-built overlay still not available for {name}, using traditional injection")
-                                                success = self.injection_manager.inject_skin_immediately(name, stop_callback=game_ended_callback)
-                                        else:
-                                            log.info(f"[inject] Pre-building timeout for {name}, using traditional injection")
-                                            success = self.injection_manager.inject_skin_immediately(name, stop_callback=game_ended_callback)
+                                        # Pre-built overlay not ready - cancel prebuild and use traditional injection
+                                        log.info(f"[inject] Pre-built overlay not ready for {name} at T={SKIN_THRESHOLD_MS_DEFAULT}ms")
+                                        log.info(f"[inject] Cancelling prebuild and using traditional injection")
+                                        
+                                        # Cancel the ongoing prebuild to free up CPU for game opening
+                                        try:
+                                            self.injection_manager.prebuilder.cancel_current_build()
+                                        except Exception as e:
+                                            log.debug(f"[inject] Failed to cancel prebuild: {e}")
+                                        
+                                        success = self.injection_manager.inject_skin_immediately(name, stop_callback=game_ended_callback)
                                 else:
                                     log.info(f"[inject] No champion name or pre-builder available, using traditional injection for {name}")
                                     # Fallback to traditional injection

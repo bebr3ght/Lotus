@@ -125,7 +125,14 @@ FALLBACK_LOADOUT_MS_DEFAULT = 0      # Deprecated: fallback countdown duration
 SKIN_THRESHOLD_MS_DEFAULT = 500      # Time before loadout ends to write skin (ms)
 INJECTION_THRESHOLD_SECONDS = 2.0    # Seconds between injection attempts
 BASE_SKIN_VERIFICATION_WAIT_S = 0.15 # Seconds to wait for LCU to process base skin change
-PREBUILD_WAIT_TIMEOUT_S = 0.2        # Seconds to wait for prebuild completion at injection time (must be < threshold - verification time)
+# Note: PREBUILD_WAIT_TIMEOUT removed - if prebuild not ready at threshold, cancel it and use traditional injection
+
+# Testing flags
+FORCE_TRADITIONAL_INJECTION = True  # Set to True to test late injection without prebuild
+
+# Game delay strategies (if natural CPU contention is insufficient)
+ENABLE_GAME_SUSPENSION = False       # Set to True to suspend game process during late injection (RISKY)
+ENABLE_PRIORITY_BOOST = True         # Set to True to boost injection priority for more CPU contention (SAFER)
 
 
 # =============================================================================
@@ -169,6 +176,10 @@ LOG_CHUNK_SIZE = 8192                    # Chunk size for file downloads
 PROCESS_TERMINATE_TIMEOUT_S = 5         # Timeout for process.wait() after terminate/kill
 MKOVERLAY_PROCESS_TIMEOUT_S = 60        # Timeout for mkoverlay process execution
 THREAD_JOIN_TIMEOUT_S = 1.0             # Timeout for thread.join() on shutdown
+
+# Process priority settings
+# Note: Lower priority for injection processes can help prevent slowing down game launch
+# But the CPU contention also provides a buffer window for late injections to complete
 
 # API request timeouts (seconds)
 LCU_API_TIMEOUT_S = 2.0                 # Timeout for LCU API requests

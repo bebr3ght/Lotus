@@ -13,7 +13,7 @@ from typing import Optional
 from .injector import SkinInjector
 from .prebuilder import ChampionPreBuilder
 from utils.logging import get_logger
-from constants import INJECTION_THRESHOLD_SECONDS
+from constants import INJECTION_THRESHOLD_SECONDS, FORCE_TRADITIONAL_INJECTION
 
 log = get_logger()
 
@@ -72,6 +72,12 @@ class InjectionManager:
                 self.prebuilder.cancel_current_build()
             
             self.current_champion = champion_name
+            
+            # Check if prebuilding is disabled for testing
+            if FORCE_TRADITIONAL_INJECTION:
+                log.info(f"[INJECT] Pre-build DISABLED (FORCE_TRADITIONAL_INJECTION=True) for {champion_name}")
+                log.info(f"[INJECT] Will use traditional injection at injection time")
+                return
             
             # Start pre-building in background thread
             def prebuild_worker():
