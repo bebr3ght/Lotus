@@ -137,7 +137,6 @@ hiddenimports = [
     'ui.chroma_ui',
     'ui.dice_button',
     'ui.random_flag',
-    'ui.historic_flag',
     'ui.user_interface',
     'utils.license_client',
     'utils.logging',

@@ -57,13 +57,6 @@ class ChampThread(threading.Thread):
             self.state.historic_mode_active = False
             self.state.historic_skin_id = None
             self.state.historic_first_detection_done = False
-            # Hide Historic flag if it was visible
-            try:
-                from ui.user_interface import get_user_interface
-                ui = get_user_interface(self.state, self.skin_scraper)
-                ui.hide_historic_flag()
-            except Exception:
-                pass
         except Exception:
             pass
 
