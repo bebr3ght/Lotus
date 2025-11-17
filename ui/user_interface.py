@@ -31,12 +31,6 @@ class UserInterface:
         
         # UI Components (will be initialized when entering ChampSelect)
         self.chroma_ui = None
-        self.unowned_frame = None
-        self.click_catcher_hide = None
-        self.click_blocker = None  # Legacy placeholder (removed)
-        
-        # Click Catcher instances for different UI elements
-        self.click_catchers = {}  # Legacy placeholder (removed)
         
         # Current skin tracking
         self.current_skin_id = None
@@ -47,7 +41,6 @@ class UserInterface:
         # Track UI element visibility state before hiding
         self._ui_visibility_state = {
             'chroma_ui_visible': False,
-            'unowned_frame_visible': False,
         }
         
         # Randomization state
@@ -60,8 +53,6 @@ class UserInterface:
         self._ui_destruction_in_progress = False
         self._last_destruction_time = 0.0
         self._force_reinitialize = False  # Flag to force UI recreation
-        self._pending_click_catcher_creation = False  # Legacy placeholder (click catchers removed)
-        self._pending_click_catcher_creation_own_locked = False  # Legacy placeholder
         # Track last base skin shown (owned or unowned) to detect chroma swaps within same base
         self._last_base_skin_id = None
     
@@ -114,13 +105,6 @@ class UserInterface:
 
             # DiceButton is now handled by JavaScript (LU-RandomSkin plugin)
 
-            # Legacy UI components removed (UnownedFrame, ClickBlocker, ClickCatchers, RandomFlag)
-            self.unowned_frame = None
-            self.click_blocker = None
-            self.click_catchers.clear()
-            self._last_unowned_skin_id = None
-            self._last_unowned_base_skin_id = None
-            log.info("[UI] Legacy click catcher components skipped (removed)")
 
         except Exception as e:
             log.error(f"[UI] Failed to initialize UI components: {e}")
@@ -133,39 +117,26 @@ class UserInterface:
                 except Exception as e:
                     log.debug(f"[UI] Error cleaning up ChromaUI: {e}")
                 self.chroma_ui = None
-            if self.unowned_frame:
-                try:
-                    self.unowned_frame.cleanup()
-                except Exception:
-                    pass
-                self.unowned_frame = None
             raise
     
     def create_click_catchers(self):
-        """Legacy click catcher creation has been removed."""
-        log.debug("[UI] Click catcher support removed; skipping creation")
-        with self.lock:
-            self.click_catchers.clear()
-            self.click_catcher_hide = None
-            self._pending_click_catcher_creation = False
-            self._pending_click_catcher_creation_own_locked = False
-        return
+        """Legacy method - no-op for compatibility."""
+        pass
     def _try_show_click_blocker(self):
-        """Legacy click blocker support removed."""
-        log.debug("[UI] ClickBlocker removed; skipping show")
+        """Legacy method - no-op for compatibility."""
+        pass
     
     def _show_click_blocker_on_main_thread(self):
-        """Legacy click blocker support removed (no-op)."""
-        log.debug("[UI] ClickBlocker removed; main-thread show ignored")
+        """Legacy method - no-op for compatibility."""
+        pass
     
     def _hide_click_blocker_with_delay(self):
-        """Legacy click blocker support removed (no-op)."""
-        log.debug("[UI] ClickBlocker removed; hide ignored")
+        """Legacy method - no-op for compatibility."""
+        pass
     
     def create_click_catchers_for_finalization(self):
-        """Create ClickCatcherHide instances during FINALIZATION phase (deprecated - now created on lock)"""
-        # Delegates to create_click_catchers to avoid duplicate creation
-        self.create_click_catchers()
+        """Legacy method - no-op for compatibility."""
+        pass
     
     def show_skin(self, skin_id: int, skin_name: str, champion_name: str = None, champion_id: int = None):
         """Show UI for a specific skin - manages both ChromaUI and UnownedFrame"""
@@ -181,16 +152,6 @@ class UserInterface:
                 return
             
             log.info(f"[UI] Showing skin: {skin_name} (ID: {skin_id})")
-            
-            # Hide ClickBlocker when UIA finds the skin name (with 200ms delay to let ChromaButton fully appear)
-            if self.click_blocker and self.click_blocker.isVisible():
-                try:
-                    timer = threading.Timer(0.2, self._hide_click_blocker_with_delay)
-                    timer.daemon = True
-                    timer.start()
-                    log.info("[UI] ClickBlocker will be hidden in 200ms to let ChromaButton appear first")
-                except Exception as e:
-                    log.warning(f"[UI] Failed to schedule ClickBlocker hide: {e}")
             
             # Capture previous base skin before updating current
             prev_skin_id = self.current_skin_id
@@ -243,12 +204,6 @@ class UserInterface:
             else:
                 self._hide_chroma_ui()
             
-            # Show/hide UnownedFrame based on ownership
-            if should_show_unowned_frame:
-                self._show_unowned_frame(skin_id, skin_name, champion_name, is_same_base_chroma=is_same_base_chroma)
-            else:
-                self._hide_unowned_frame()
-
             # Cancel randomization if skin changed and random mode is active (but not during randomization sequence)
             if self.state.random_mode_active and not self._randomization_in_progress:
                 self._cancel_randomization()
@@ -275,9 +230,6 @@ class UserInterface:
             
             # Broadcast dice button state to JavaScript (dice button is now handled by JS)
             self._update_dice_button()
-            
-            # Show click catchers when a skin is selected (champion is locked)
-            self._show_click_catchers()
 
             # Update last base skin id after handling
             self._last_base_skin_id = new_base_skin_id if new_base_skin_id is not None else (skin_id if is_base_skin_var else None)
@@ -311,10 +263,6 @@ class UserInterface:
                 return
             log.info("[UI] Hiding all UI components")
             self._hide_chroma_ui()
-            self._hide_unowned_frame()
-            # Hide all click catcher instances
-            for catcher in self.click_catchers.values():
-                catcher.hide_catcher()
     
     def _schedule_hide_all_on_main_thread(self):
         """Schedule hide_all() to run on the main thread"""
@@ -443,33 +391,20 @@ class UserInterface:
                 log.debug(f"[UI] Error hiding ChromaUI: {e}")
     
     def _show_unowned_frame(self, skin_id: int, skin_name: str, champion_name: str = None, is_same_base_chroma: bool = False):
-        """Legacy UnownedFrame removed (no-op)."""
-        self._last_unowned_skin_id = None
-        self._last_unowned_base_skin_id = None
+        """Legacy method - no-op for compatibility."""
+        pass
     
     def _hide_unowned_frame(self):
-        """Hide UnownedFrame"""
-        self._last_unowned_skin_id = None
-        self._last_unowned_base_skin_id = None
+        """Legacy method - no-op for compatibility."""
+        pass
     
     def check_resolution_and_update(self):
         """Check for resolution changes and update UI components accordingly"""
         try:
-            # Legacy UnownedFrame support removed
-            self.unowned_frame = None
-            
             # Check ChromaUI for resolution changes (it handles its own resolution checking)
             if self.chroma_ui:
                 # ChromaUI components handle their own resolution checking
                 pass
-            
-            # DiceButton is now handled by JavaScript (LU-RandomSkin plugin)
-
-            # Legacy click catchers removed; ensure dictionaries stay empty
-            if self.click_catchers:
-                log.debug("[UI] Clearing legacy click catcher state")
-                self.click_catchers.clear()
-                self.click_catcher_hide = None
                 
         except Exception as e:
             log.error(f"[UI] Error checking resolution changes: {e}")
@@ -527,21 +462,17 @@ class UserInterface:
                 self._pending_ui_destruction = False
                 self._ui_destruction_in_progress = True
                 try:
-                    log.debug("[UI] About to call destroy_ui()")
                     self.destroy_ui()
-                    log.debug("[UI] destroy_ui() completed successfully")
                     
                     # Record destruction time for cooldown
                     import time
                     self._last_destruction_time = time.time()
-                    log.debug("[UI] Destruction completed and timestamp recorded")
                 except Exception as e:
                     log.error(f"[UI] Failed to process pending UI destruction: {e}")
                     import traceback
                     log.error(f"[UI] Destruction failure traceback: {traceback.format_exc()}")
                 finally:
                     self._ui_destruction_in_progress = False
-                    log.debug("[UI] Destruction flag cleared")
             
             # Handle pending initialization (either new or after destruction)
             if self._pending_ui_initialization:
@@ -557,27 +488,6 @@ class UserInterface:
                         # Reset the flag so we can try again later
                         self._pending_ui_initialization = True
             
-            # Handle pending ClickCatcher creation during FINALIZATION
-            if self._pending_click_catcher_creation:
-                log.info("[UI] Processing pending ClickCatcher creation for FINALIZATION in main thread")
-                self._pending_click_catcher_creation = False
-                try:
-                    self.create_click_catchers_for_finalization()
-                except Exception as e:
-                    log.error(f"[UI] Failed to process pending ClickCatcher creation: {e}")
-                    import traceback
-                    log.error(f"[UI] Traceback: {traceback.format_exc()}")
-            
-            # Handle pending ClickCatcher creation when own champion is locked
-            if self._pending_click_catcher_creation_own_locked:
-                log.info("[UI] Processing pending ClickCatcher creation for locked champion in main thread")
-                self._pending_click_catcher_creation_own_locked = False
-                try:
-                    self.create_click_catchers()
-                except Exception as e:
-                    log.error(f"[UI] Failed to process pending ClickCatcher creation for locked champion: {e}")
-                    import traceback
-                    log.error(f"[UI] Traceback: {traceback.format_exc()}")
 
     def request_ui_destruction(self):
         """Request UI destruction (called from any thread)"""
@@ -593,9 +503,7 @@ class UserInterface:
         """Check if there are pending UI operations"""
         with self.lock:
             return (self._pending_ui_destruction or 
-                    self._pending_ui_initialization or 
-                    self._pending_click_catcher_creation or
-                    self._pending_click_catcher_creation_own_locked)
+                    self._pending_ui_initialization)
     
     def destroy_ui(self):
         """Destroy UI components (must be called from main thread)"""
@@ -614,19 +522,12 @@ class UserInterface:
         try:
             # Store references to cleanup outside the lock to avoid deadlock
             chroma_ui_to_cleanup = None
-            unowned_frame_to_cleanup = None
-            click_catchers_to_cleanup = {}
             
             if lock_acquired:
                 try:
                     log.debug("[UI] Lock acquired, storing references")
                     chroma_ui_to_cleanup = self.chroma_ui
-                    unowned_frame_to_cleanup = self.unowned_frame
-                    click_catchers_to_cleanup = self.click_catchers.copy()
                     self.chroma_ui = None
-                    self.unowned_frame = None
-                    self.click_catchers = {}
-                    self.click_catcher_hide = None
                     
                     # Also clear global instances
                     try:
@@ -645,14 +546,9 @@ class UserInterface:
                 log.warning("[UI] Attempting to get UI references without lock for cleanup")
                 try:
                     chroma_ui_to_cleanup = self.chroma_ui
-                    unowned_frame_to_cleanup = self.unowned_frame
-                    click_catchers_to_cleanup = self.click_catchers.copy()
                     
                     # CRITICAL: Set components to None even without lock
                     self.chroma_ui = None
-                    self.unowned_frame = None
-                    self.click_catchers = {}
-                    self.click_catcher_hide = None
                     
                     log.debug("[UI] Got references without lock and cleared instance variables")
                 except Exception as e:
@@ -660,41 +556,21 @@ class UserInterface:
                     # Still try to clear the instance variables
                     try:
                         self.chroma_ui = None
-                        self.unowned_frame = None
                         log.debug("[UI] Cleared instance variables despite error")
                     except Exception as e2:
                         log.error(f"[UI] Could not clear instance variables: {e2}")
             
             # Cleanup components outside the lock to avoid deadlock
             if chroma_ui_to_cleanup:
-                log.debug("[UI] Cleaning up ChromaUI...")
                 try:
                     chroma_ui_to_cleanup.cleanup()
-                    log.debug("[UI] ChromaUI cleaned up successfully")
                 except Exception as e:
                     log.error(f"[UI] Error cleaning up ChromaUI: {e}")
                     import traceback
                     log.error(f"[UI] ChromaUI cleanup traceback: {traceback.format_exc()}")
             
-            if unowned_frame_to_cleanup:
-                try:
-                    unowned_frame_to_cleanup.cleanup()
-                except Exception:
-                    pass
-            
-            if click_catchers_to_cleanup:
-                log.debug("[UI] Cleaning up ClickCatcherHide instances...")
-                for instance_name, catcher in click_catchers_to_cleanup.items():
-                    try:
-                        catcher.cleanup()
-                        log.debug(f"[UI] ClickCatcherHide '{instance_name}' cleaned up successfully")
-                    except Exception as e:
-                        log.error(f"[UI] Error cleaning up ClickCatcherHide '{instance_name}': {e}")
-                        import traceback
-                        log.error(f"[UI] ClickCatcherHide '{instance_name}' cleanup traceback: {traceback.format_exc()}")
-            
             # If we couldn't get references, try to force cleanup through global instances
-            if not chroma_ui_to_cleanup and not unowned_frame_to_cleanup:
+            if not chroma_ui_to_cleanup:
                 log.warning("[UI] No references obtained, attempting global cleanup")
                 try:
                     # Try to cleanup global chroma panel manager
@@ -707,8 +583,6 @@ class UserInterface:
                     log.warning(f"[UI] Error cleaning up global chroma panel manager: {e}")
             
             # PyQt6 removed - no Qt events to process
-            log.debug("[UI] Processing widget destruction...")
-            
             log.info("[UI] UI components destroyed successfully")
             
         except Exception as e:
@@ -872,158 +746,56 @@ class UserInterface:
         log.info("[UI] Randomization cancelled")
     
     def _on_click_catcher_hide_clicked(self):
-        """Legacy click catcher handler (no-op)."""
-        log.debug("[UI] Click catcher hide callback ignored (feature removed)")
+        """Legacy method - no-op for compatibility."""
+        pass
     
     def _on_click_catcher_clicked(self, instance_name: str):
-        """Legacy click catcher handler (no-op)."""
-        log.debug(f"[UI] Click catcher '{instance_name}' ignored (feature removed)")
+        """Legacy method - no-op for compatibility."""
+        pass
     
     def _create_show_instances_for_panel(self, panel_name: str):
-        """Legacy ClickCatcherShow creation removed."""
-        log.debug(f"[UI] Skipping creation of show instances for panel: {panel_name}")
+        """Legacy method - no-op for compatibility."""
+        pass
     
     def _destroy_all_show_instances(self):
-        """Legacy ClickCatcherShow cleanup removed."""
-        self.click_catchers.clear()
-        self.click_catcher_hide = None
+        """Legacy method - no-op for compatibility."""
+        pass
     
     def _hide_all_ui_elements(self):
-        """Hide all UI elements instantly when click catchers are triggered"""
-        try:
-            # Track visibility state before hiding
-            chroma_ui_visible = False
-            if self.chroma_ui and self.chroma_ui.chroma_selector and self.chroma_ui.chroma_selector.panel:
-                # Check if the panel widget is visible (JavaScript plugin handles button)
-                chroma_ui_visible = (self.chroma_ui.chroma_selector.panel.widget and 
-                                   self.chroma_ui.chroma_selector.panel.widget.isVisible())
-            
-            self._ui_visibility_state['chroma_ui_visible'] = chroma_ui_visible
-            self._ui_visibility_state['unowned_frame_visible'] = self.unowned_frame and self.unowned_frame.isVisible()
-            
-            log.debug(f"[UI] Visibility state before hiding: {self._ui_visibility_state}")
-            
-            # Check if any UI is actually visible - if not, skip hiding (prevents premature hiding)
-            has_visible_ui = (chroma_ui_visible or 
-                             (self.unowned_frame and self.unowned_frame.isVisible()))
-            
-            if not has_visible_ui:
-                log.debug("[UI] No UI elements visible - skipping hide action")
-                return
-            
-            log.info("[UI] Hiding all UI elements instantly due to click catcher trigger")
-            
-            # Hide ChromaUI instantly
-            if self.chroma_ui:
-                try:
-                    self.chroma_ui.hide()
-                    log.debug("[UI] ChromaUI hidden instantly")
-                except Exception as e:
-                    log.error(f"[UI] Error hiding ChromaUI: {e}")
-            
-            # Hide UnownedFrame instantly (no fade)
-            if self.unowned_frame:
-                try:
-                    # Set opacity to 0 instantly instead of fade_out()
-                    if hasattr(self.unowned_frame, 'opacity_effect') and self.unowned_frame.opacity_effect:
-                        self.unowned_frame.opacity_effect.setOpacity(0.0)
-                    self.unowned_frame.hide()
-                except Exception:
-                    pass
-            
-            # Hide all click catchers instantly
-            for catcher_name, catcher in self.click_catchers.items():
-                try:
-                    catcher.hide_catcher()
-                    log.debug(f"[UI] ClickCatcher '{catcher_name}' hidden instantly")
-                except Exception as e:
-                    log.error(f"[UI] Error hiding ClickCatcher '{catcher_name}': {e}")
-            
-            log.info("[UI] All UI elements hidden instantly")
-            
-        except Exception as e:
-            log.error(f"[UI] Error hiding UI elements: {e}")
-            import traceback
-            log.error(f"[UI] Traceback: {traceback.format_exc()}")
+        """Legacy method - no-op for compatibility."""
+        pass
     
     def _show_all_ui_elements(self):
-        """Show UI elements that were previously visible before hiding"""
-        try:
-            log.info("[UI] Showing previously visible UI elements due to click catcher trigger")
-            log.debug(f"[UI] Restoring visibility state: {self._ui_visibility_state}")
-            
-            # Show ChromaUI only if it was previously visible
-            if self._ui_visibility_state['chroma_ui_visible'] and self.chroma_ui and self.current_skin_id and self.current_skin_name:
-                try:
-                    self.chroma_ui.show_for_skin(
-                        self.current_skin_id, 
-                        self.current_skin_name, 
-                        self.current_champion_name,
-                        self.current_champion_id
-                    )
-                    log.debug("[UI] ChromaUI shown (was previously visible)")
-                except Exception as e:
-                    log.error(f"[UI] Error showing ChromaUI: {e}")
-            else:
-                log.debug("[UI] ChromaUI not shown (was not previously visible)")
-            
-            # Show UnownedFrame only if it was previously visible
-            if self._ui_visibility_state['unowned_frame_visible'] and self.unowned_frame:
-                try:
-                    # Show UnownedFrame without fade in when triggered by ClickCatcherShow
-                    if hasattr(self.unowned_frame, 'opacity_effect') and self.unowned_frame.opacity_effect:
-                        self.unowned_frame.opacity_effect.setOpacity(1.0)
-                    self.unowned_frame.show()
-                    if hasattr(self.unowned_frame, 'unowned_frame_image') and self.unowned_frame.unowned_frame_image:
-                        self.unowned_frame.unowned_frame_image.show()
-                except Exception:
-                    pass
-            
-            # Show all click catchers (skip in Swiftplay mode)
-            if not self.state.is_swiftplay_mode:
-                for catcher_name, catcher in self.click_catchers.items():
-                    try:
-                        catcher.show_catcher()
-                        log.debug(f"[UI] ClickCatcher '{catcher_name}' shown")
-                    except Exception as e:
-                        log.error(f"[UI] Error showing ClickCatcher '{catcher_name}': {e}")
-            else:
-                log.debug("[UI] Skipping ClickCatcher display - Swiftplay mode detected")
-            
-            log.info("[UI] All UI elements shown")
-            
-        except Exception as e:
-            log.error(f"[UI] Error showing UI elements: {e}")
-            import traceback
-            log.error(f"[UI] Traceback: {traceback.format_exc()}")
+        """Legacy method - no-op for compatibility."""
+        pass
     
     def show_click_catcher_hide(self, x, y, width=50, height=50):
-        """Show the ClickCatcherHide at the specified position (backward compatibility)"""
-        log.debug("[UI] show_click_catcher_hide ignored (feature removed)")
+        """Legacy method - no-op for compatibility."""
+        pass
     
     def hide_click_catcher_hide(self):
-        """Hide the ClickCatcherHide (backward compatibility)"""
-        log.debug("[UI] hide_click_catcher_hide ignored (feature removed)")
+        """Legacy method - no-op for compatibility."""
+        pass
     
     def show_click_catcher(self, instance_name: str):
-        """Show a specific click catcher instance"""
-        log.debug(f"[UI] show_click_catcher('{instance_name}') ignored (feature removed)")
+        """Legacy method - no-op for compatibility."""
+        pass
     
     def hide_click_catcher(self, instance_name: str):
-        """Hide a specific click catcher instance"""
-        log.debug(f"[UI] hide_click_catcher('{instance_name}') ignored (feature removed)")
+        """Legacy method - no-op for compatibility."""
+        pass
     
     def show_all_click_catchers(self):
-        """Show all click catcher instances"""
-        log.debug("[UI] show_all_click_catchers ignored (feature removed)")
+        """Legacy method - no-op for compatibility."""
+        pass
     
     def hide_all_click_catchers(self):
-        """Hide all click catcher instances"""
-        log.debug("[UI] hide_all_click_catchers ignored (feature removed)")
+        """Legacy method - no-op for compatibility."""
+        pass
     
     def _show_click_catchers(self):
-        """Legacy ClickCatcher display removed."""
-        log.debug("[UI] _show_click_catchers ignored (feature removed)")
+        """Legacy method - no-op for compatibility."""
+        pass
     
     def _select_random_skin(self) -> Optional[tuple]:
         """Select a random skin from available skins (excluding base skin)

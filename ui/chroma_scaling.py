@@ -146,13 +146,4 @@ def get_scaled_chroma_values(resolution: Optional[Tuple[int, int]] = None, force
     return ScaledChromaValues(resolution, is_swiftplay)
 
 
-# DEPRECATED - Scale factor no longer used with hard-coded values
-def get_ui_scale() -> float:
-    """
-    DEPRECATED - Always returns 1.0 since we now use hard-coded values
-    
-    Returns:
-        Always 1.0 (kept for compatibility)
-    """
-    return 1.0
 

@@ -480,6 +480,5 @@ DEFAULT_DD_LANG = "en_US"          # Data Dragon language
 # Boolean flags
 DEFAULT_VERBOSE = False
 DEFAULT_WEBSOCKET_ENABLED = True
-DEFAULT_MULTILANG_ENABLED = False  # DEPRECATED - Using LCU scraper instead
 DEFAULT_DOWNLOAD_SKINS = True
 DEFAULT_FORCE_UPDATE_SKINS = False

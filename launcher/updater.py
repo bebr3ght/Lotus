@@ -203,5 +203,3 @@ def _resolve_extracted_root(staging_dir: Path) -> Optional[Path]:
     return staging_dir
 
 
-def _replace_tree(src: Path, dest: Path) -> None:
-    raise NotImplementedError("_replace_tree is deprecated in favour of batch updater")

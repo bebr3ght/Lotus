@@ -554,14 +554,6 @@ def initialize_tray_manager(args: argparse.Namespace) -> Optional[TrayManager]:
         return None
 
 
-def initialize_qt_and_chroma(skin_scraper, state: SharedState, db=None, app_status: Optional[AppStatus] = None, lcu=None):
-    """Legacy function - PyQt6 removed, chroma UI is now handled by JavaScript plugins"""
-    # Return None for both - no Qt application needed
-    return None, None
-
-
-
-
 def run_league_unlock(injection_threshold: Optional[float] = None):
     """Run the core Rose application startup and main loop."""
     set_config_option("General", "installed_version", APP_VERSION)
@@ -928,8 +920,6 @@ def run_league_unlock(injection_threshold: Optional[float] = None):
                             if user_interface.is_ui_initialized():
                                 if user_interface.chroma_ui:
                                     user_interface.chroma_ui.hide()
-                                if user_interface.unowned_frame:
-                                    user_interface.unowned_frame.hide()
                                 run_league_unlock._swiftplay_ui_hidden = True
                                 log.debug("[MAIN] Hiding UI - no skin detected in Swiftplay mode")
                         except Exception as e:
@@ -988,25 +978,7 @@ def run_league_unlock(injection_threshold: Optional[float] = None):
                         if user_interface.is_ui_initialized():
                             log.info("[MAIN] Champion exchange detected - hiding UI elements")
                             
-                            # Hide UnownedFrame by setting opacity to 0
-                            if user_interface.unowned_frame and hasattr(user_interface.unowned_frame, 'opacity_effect'):
-                                user_interface.unowned_frame.opacity_effect.setOpacity(0.0)
-                            
                             # Chroma button is handled by JavaScript plugin - no need to hide Python button
-                            
-                            # Hide RandomFlag (random mode is disabled on champion swap)
-                            if user_interface.random_flag:
-                                try:
-                                    user_interface.random_flag.hide_flag()
-                                    log.debug("[exchange] RandomFlag hidden")
-                                except Exception as e:
-                                    log.debug(f"[exchange] Failed to hide RandomFlag: {e}")
-
-                            # Ensure ClickBlocker is visible during exchange (create if missing)
-                            try:
-                                user_interface._show_click_blocker_on_main_thread()
-                            except Exception:
-                                pass
                     except Exception as e:
                         log.error(f"[MAIN] Failed to hide UI during champion exchange: {e}")
                 

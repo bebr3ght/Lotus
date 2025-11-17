@@ -487,16 +487,8 @@ class PhaseThread(threading.Thread):
             log.warning(f"[phase] Error starting Swiftplay monitoring: {e}")
     
     def _cleanup_click_catchers_for_swiftplay(self):
-        """Legacy click catcher cleanup (no-op)."""
-        log.debug("[phase] Click catcher support removed; nothing to clean for Swiftplay mode")
-        try:
-            from ui.user_interface import get_user_interface
-            user_interface = get_user_interface(self.state, self.skin_scraper)
-            if user_interface:
-                user_interface.click_catchers.clear()
-                user_interface.click_catcher_hide = None
-        except Exception:
-            pass
+        """Legacy method - no-op for compatibility."""
+        pass
     
     def test_swiftplay_detection(self):
         """Test method to verify Swiftplay detection is working"""

@@ -191,16 +191,6 @@ CLICK_CATCHER_CONFIGS_ARENA = {}
 CLICK_CATCHER_CONFIGS_MAYHEM = {}
 
 
-def get_click_catcher_config(*args, **kwargs) -> Optional[Dict[str, int]]:
-    """Legacy helper retained for compatibility; click catchers removed."""
-    return None
-
-
-def get_all_click_catcher_configs(*args, **kwargs) -> Optional[Dict[str, Dict[str, int]]]:
-    """Legacy helper retained for compatibility; click catchers removed."""
-    return {}
-
-
 def get_resolution_key(resolution: Tuple[int, int]) -> Optional[str]:
     """
     Get the resolution key for a given resolution tuple

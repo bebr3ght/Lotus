@@ -26,10 +26,7 @@ class ChromaPanelManager:
         self.on_chroma_selected = on_chroma_selected
         self.state = state  # SharedState for panel control
         self.lcu = lcu  # LCU client for game mode detection
-        # UI/widget fields kept for backwards compatibility but unused now
-        self.widget = None
-        self.click_catcher = None  # Legacy overlay (no-op)
-        self.is_initialized = False  # No real widget initialization anymore
+        self.is_initialized = False  # Track initialization state
         self.pending_show = None  # (skin_name, chromas) kept for API compatibility
         self.pending_hide = False
         self.pending_create = False
@@ -82,18 +79,14 @@ class ChromaPanelManager:
             log.debug("[CHROMA] _create_widgets called in headless mode (no Qt widgets created)")
     
     def _on_click_catcher_clicked(self):
-        """Called when click catcher overlay is clicked - close panel"""
-        log.debug("[CHROMA] Click catcher clicked, closing panel")
-        self.hide()
+        """Legacy method - no-op for compatibility."""
+        pass
     
     def _destroy_widgets(self):
-        """Legacy widget destruction – now a no-op (no Qt widgets)."""
-        self.widget = None
-        self.click_catcher = None
+        """Reset state (no widgets to destroy)."""
         self.is_initialized = False
         self.last_skin_name = None
         self.last_chromas = None
-        log.debug("[CHROMA] _destroy_widgets called in headless mode (no Qt widgets to destroy)")
     
     def _on_chroma_selected_wrapper(self, chroma_id: int, chroma_name: str):
         """Wrapper for chroma selection - tracks colors for JavaScript plugin"""
@@ -267,9 +260,7 @@ class ChromaPanelManager:
             if self.pending_destroy:
                 self.pending_destroy = False
                 try:
-                    log.debug("[CHROMA] Starting widget destruction...")
                     self._destroy_widgets()
-                    log.debug("[CHROMA] Widget destruction completed")
                 except Exception as e:
                     log.error(f"[CHROMA] Error destroying widgets: {e}")
                 return  # Don't process other requests after destroying
@@ -304,8 +295,6 @@ class ChromaPanelManager:
     def cleanup(self):
         """Clean up resources (called on app exit or UI destruction)"""
         try:
-            log.debug("[CHROMA] Starting ChromaPanelManager cleanup")
-            
             # Try to acquire lock with timeout to avoid deadlock
             import time
             lock_acquired = False
@@ -319,14 +308,11 @@ class ChromaPanelManager:
             try:
                 # Force immediate destruction of widgets
                 if self.is_initialized:
-                    log.debug("[CHROMA] Force destroying widgets during cleanup")
                     self._destroy_widgets()
-                    log.debug("[CHROMA] Widget destruction completed")
                 else:
                     log.debug("[CHROMA] Not initialized, requesting destruction")
                     # Just request destruction if not initialized
                     self.request_destroy()
-                log.debug("[CHROMA] ChromaPanelManager cleanup completed")
             finally:
                 if lock_acquired:
                     self.lock.release()
@@ -363,5 +349,3 @@ def get_chroma_wheel() -> ChromaPanelManager:
     return get_chroma_panel()
 
 
-# Legacy class name alias
-ChromaWheelManager = ChromaPanelManager
