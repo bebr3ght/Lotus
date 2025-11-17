@@ -343,9 +343,5 @@ def get_chroma_panel(state=None, lcu=None) -> ChromaPanelManager:
     return _chroma_panel_manager
 
 
-# Backward compatibility alias
-def get_chroma_wheel() -> ChromaPanelManager:
-    """Backward compatibility alias - use get_chroma_panel() instead"""
-    return get_chroma_panel()
 
 

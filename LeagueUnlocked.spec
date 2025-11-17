@@ -129,7 +129,6 @@ hiddenimports = [
     'utils.pengu_loader',
     'ui.chroma_panel',
     'ui.chroma_preview_manager',
-    'ui.chroma_scaling',
     'ui.chroma_selector',
     'ui.chroma_ui',
     'ui.user_interface',

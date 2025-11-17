@@ -339,23 +339,6 @@ CHROMA_PANEL_CONFIGS = {
 # Chroma panel button visual effects (not scaled)
 CHROMA_PANEL_GLOW_ALPHA = 60                     # Alpha value for gold glow effect on hover
 
-# Legacy constants for backward compatibility (at reference resolution)
-CHROMA_PANEL_PREVIEW_WIDTH = 380
-CHROMA_PANEL_PREVIEW_HEIGHT = 394
-CHROMA_PANEL_CIRCLE_RADIUS = 9
-CHROMA_PANEL_WINDOW_WIDTH = 275
-CHROMA_PANEL_WINDOW_HEIGHT = 346
-CHROMA_PANEL_CIRCLE_SPACING = 21
-CHROMA_PANEL_BUTTON_SIZE = 33
-CHROMA_PANEL_SCREEN_EDGE_MARGIN = 20
-CHROMA_PANEL_PREVIEW_X = 2
-CHROMA_PANEL_PREVIEW_Y = 2
-CHROMA_PANEL_ROW_Y_OFFSET = 26
-CHROMA_PANEL_GOLD_BORDER_PX = 2
-CHROMA_PANEL_DARK_BORDER_PX = 3
-CHROMA_PANEL_GRADIENT_RING_PX = 4
-CHROMA_PANEL_INNER_DISK_RADIUS_PX = 2.5
-
 # =============================================================================
 # CHROMA UI POSITIONING - FINALIZED POSITIONS
 # =============================================================================
