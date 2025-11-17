@@ -1,15 +1,15 @@
-[submodule "Pengu Loader/plugins/LPP-UI"]
-	path = Pengu Loader/plugins/LPP-UI
-	url = https://github.com/Alban1911/LPP-UI
-[submodule "Pengu Loader/plugins/LU-SkinMonitor"]
-	path = Pengu Loader/plugins/LU-SkinMonitor
-	url = https://github.com/Alban1911/LU-SkinMonitor
-[submodule "Pengu Loader/plugins/LU-ChromaWheel"]
-	path = Pengu Loader/plugins/LU-ChromaWheel
-	url = https://github.com/Alban1911/LU-ChromaWheel
-[submodule "Pengu Loader/plugins/Rose-HistoricMode"]
-	path = Pengu Loader/plugins/Rose-HistoricMode
-	url = https://github.com/FlorentTariolle/Rose-HistoricMode
-[submodule "Pengu Loader/plugins/Rose-RandomSkin"]
-	path = Pengu Loader/plugins/Rose-RandomSkin
-	url = https://github.com/FlorentTariolle/Rose-RandomSkin
+[submodule "Pengu Loader/plugins/ROSE-UI"]
+	path = Pengu Loader/plugins/ROSE-UI
+	url = https://github.com/Alban1911/ROSE-UI
+[submodule "Pengu Loader/plugins/ROSE-SkinMonitor"]
+	path = Pengu Loader/plugins/ROSE-SkinMonitor
+	url = https://github.com/Alban1911/ROSE-SkinMonitor
+[submodule "Pengu Loader/plugins/ROSE-ChromaWheel"]
+	path = Pengu Loader/plugins/ROSE-ChromaWheel
+	url = https://github.com/Alban1911/ROSE-ChromaWheel
+[submodule "Pengu Loader/plugins/ROSE-HistoricMode"]
+	path = Pengu Loader/plugins/ROSE-HistoricMode
+	url = https://github.com/FlorentTariolle/ROSE-HistoricMode
+[submodule "Pengu Loader/plugins/ROSE-RandomSkin"]
+	path = Pengu Loader/plugins/ROSE-RandomSkin
+	url = https://github.com/FlorentTariolle/ROSE-RandomSkin
