@@ -453,6 +453,31 @@ class PenguSkinMonitorThread(threading.Thread):
                 log.error(f"[SkinMonitor] Failed to handle path validation: {e}")
             return
 
+        if payload_type == "open-plugins-folder":
+            # Handle open plugins folder request from JavaScript plugin
+            try:
+                import os
+                import subprocess
+                import sys
+                from utils.pengu_loader import PENGU_DIR
+                
+                # Get plugins folder path
+                plugins_folder = PENGU_DIR / "plugins"
+                
+                if plugins_folder.exists() and plugins_folder.is_dir():
+                    # Open folder in Windows Explorer (os.startfile works on Windows)
+                    if sys.platform == "win32":
+                        os.startfile(str(plugins_folder))
+                    else:
+                        # Fallback for other platforms (Linux/macOS)
+                        subprocess.Popen(["xdg-open" if os.name != "nt" else "explorer", str(plugins_folder)])
+                    log.info(f"[SkinMonitor] Opened plugins folder: {plugins_folder}")
+                else:
+                    log.warning(f"[SkinMonitor] Plugins folder not found: {plugins_folder}")
+            except Exception as e:
+                log.error(f"[SkinMonitor] Failed to open plugins folder: {e}")
+            return
+
         if payload_type == "settings-save":
             # Handle settings save from JavaScript plugin
             try:
