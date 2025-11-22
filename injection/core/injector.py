@@ -172,7 +172,9 @@ class SkinInjector:
         zp = self._resolve_zip(skin_name, chroma_id=chroma_id, skin_name=base_skin_name, champion_name=champion_name, champion_id=champion_id)
         if not zp:
             log.error(f"[INJECT] Skin '{skin_name}' not found in {self.zips_dir}")
-            avail = list(self.zips_dir.rglob('*.zip'))
+            avail_zip = list(self.zips_dir.rglob('*.zip'))
+            avail_fantome = list(self.zips_dir.rglob('*.fantome'))
+            avail = avail_zip + avail_fantome
             if avail:
                 log.info("[INJECT] Available skins (first 10):")
                 for a in avail[:10]:

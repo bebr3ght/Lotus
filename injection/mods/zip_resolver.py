@@ -46,11 +46,17 @@ class ZipResolver:
             if chroma_id is not None:
                 return self._resolve_chroma_by_id(champion_id, chroma_id)
             
-            # This is a base skin - Look for {champion_id}/{skin_id}/{skin_id}.zip
-            skin_zip_path = self.zips_dir / str(champion_id) / str(skin_id) / f"{skin_id}.zip"
+            # This is a base skin - Look for {champion_id}/{skin_id}/{skin_id}.zip or {skin_id}.fantome
+            skin_dir = self.zips_dir / str(champion_id) / str(skin_id)
+            skin_zip_path = skin_dir / f"{skin_id}.zip"
+            skin_fantome_path = skin_dir / f"{skin_id}.fantome"
+            
             if skin_zip_path.exists():
                 log.debug(f"[INJECT] Found skin ZIP: {skin_zip_path}")
                 return skin_zip_path
+            elif skin_fantome_path.exists():
+                log.debug(f"[INJECT] Found skin FANTOME: {skin_fantome_path}")
+                return skin_fantome_path
             else:
                 # Not found as base skin - might be a chroma that was incorrectly labeled as skin_
                 # Try searching for it as a chroma in any base skin directory
@@ -82,6 +88,14 @@ class ZipResolver:
             # Special handling for Elementalist Lux forms (fake IDs 99991-99999)
             if 99991 <= chroma_id <= 99999:
                 return self._resolve_elementalist_lux_form(chroma_id)
+            
+            # Special handling for Sahn Uzal Mordekaiser forms (IDs 82998, 82999)
+            if chroma_id in (82998, 82999):
+                return self._resolve_mordekaiser_form(chroma_id)
+            
+            # Special handling for Spirit Blossom Morgana forms (ID 25999)
+            if chroma_id == 25999:
+                return self._resolve_morgana_form(chroma_id)
             
             # For regular chromas, look for {champion_id}/{skin_id}/{chroma_id}/{chroma_id}.zip
             if not champion_id:
@@ -115,9 +129,13 @@ class ZipResolver:
                 chroma_dir = skin_dir / str(chroma_id)
                 if chroma_dir.exists():
                     chroma_zip = chroma_dir / f"{chroma_id}.zip"
+                    chroma_fantome = chroma_dir / f"{chroma_id}.fantome"
                     if chroma_zip.exists():
                         log_success(log, f"Found chroma: {chroma_zip.name}", "🎨")
                         return chroma_zip
+                    elif chroma_fantome.exists():
+                        log_success(log, f"Found chroma: {chroma_fantome.name}", "🎨")
+                        return chroma_fantome
             except ValueError:
                 # Not a skin directory, skip
                 continue
@@ -145,13 +163,72 @@ class ZipResolver:
         form_name = form_names.get(chroma_id, 'Unknown')
         log.info(f"[INJECT] Looking for Elementalist Lux {form_name} form")
         
-        # Look for the form file in the Lux directory
-        form_pattern = f"Lux Elementalist {form_name}.zip"
-        form_files = list(self.zips_dir.rglob(f"**/{form_pattern}"))
-        if form_files:
-            log_success(log, f"Found Elementalist Lux {form_name} form: {form_files[0].name}", "✨")
-            return form_files[0]
+        # Look for the form file in the Lux directory (check both .zip and .fantome)
+        form_pattern_zip = f"Lux Elementalist {form_name}.zip"
+        form_pattern_fantome = f"Lux Elementalist {form_name}.fantome"
+        form_files_zip = list(self.zips_dir.rglob(f"**/{form_pattern_zip}"))
+        form_files_fantome = list(self.zips_dir.rglob(f"**/{form_pattern_fantome}"))
+        
+        if form_files_zip:
+            log_success(log, f"Found Elementalist Lux {form_name} form: {form_files_zip[0].name}", "✨")
+            return form_files_zip[0]
+        elif form_files_fantome:
+            log_success(log, f"Found Elementalist Lux {form_name} form: {form_files_fantome[0].name}", "✨")
+            return form_files_fantome[0]
         else:
-            log.warning(f"[INJECT] Elementalist Lux {form_name} form file not found: {form_pattern}")
+            log.warning(f"[INJECT] Elementalist Lux {form_name} form file not found: {form_pattern_zip} or {form_pattern_fantome}")
+            return None
+    
+    def _resolve_mordekaiser_form(self, chroma_id: int) -> Optional[Path]:
+        """Resolve Sahn Uzal Mordekaiser form by chroma ID"""
+        log.info(f"[INJECT] Detected Sahn Uzal Mordekaiser form ID: {chroma_id}")
+        
+        # Map IDs to form names
+        form_names = {
+            82998: 'Form 1',
+            82999: 'Form 2'
+        }
+        
+        form_name = form_names.get(chroma_id, 'Unknown')
+        log.info(f"[INJECT] Looking for Sahn Uzal Mordekaiser {form_name} form")
+        
+        # Look for the form file in the Mordekaiser directory (check both .zip and .fantome)
+        form_pattern_zip = f"Sahn Uzal Mordekaiser {form_name}.zip"
+        form_pattern_fantome = f"Sahn Uzal Mordekaiser {form_name}.fantome"
+        form_files_zip = list(self.zips_dir.rglob(f"**/{form_pattern_zip}"))
+        form_files_fantome = list(self.zips_dir.rglob(f"**/{form_pattern_fantome}"))
+        
+        if form_files_zip:
+            log_success(log, f"Found Sahn Uzal Mordekaiser {form_name} form: {form_files_zip[0].name}", "✨")
+            return form_files_zip[0]
+        elif form_files_fantome:
+            log_success(log, f"Found Sahn Uzal Mordekaiser {form_name} form: {form_files_fantome[0].name}", "✨")
+            return form_files_fantome[0]
+        else:
+            log.warning(f"[INJECT] Sahn Uzal Mordekaiser {form_name} form file not found: {form_pattern_zip} or {form_pattern_fantome}")
+            return None
+    
+    def _resolve_morgana_form(self, chroma_id: int) -> Optional[Path]:
+        """Resolve Spirit Blossom Morgana form by chroma ID"""
+        log.info(f"[INJECT] Detected Spirit Blossom Morgana form ID: {chroma_id}")
+        
+        # Map ID to form name
+        form_name = 'Form 1' if chroma_id == 25999 else 'Unknown'
+        log.info(f"[INJECT] Looking for Spirit Blossom Morgana {form_name} form")
+        
+        # Look for the form file in the Morgana directory (check both .zip and .fantome)
+        form_pattern_zip = f"Spirit Blossom Morgana {form_name}.zip"
+        form_pattern_fantome = f"Spirit Blossom Morgana {form_name}.fantome"
+        form_files_zip = list(self.zips_dir.rglob(f"**/{form_pattern_zip}"))
+        form_files_fantome = list(self.zips_dir.rglob(f"**/{form_pattern_fantome}"))
+        
+        if form_files_zip:
+            log_success(log, f"Found Spirit Blossom Morgana {form_name} form: {form_files_zip[0].name}", "✨")
+            return form_files_zip[0]
+        elif form_files_fantome:
+            log_success(log, f"Found Spirit Blossom Morgana {form_name} form: {form_files_fantome[0].name}", "✨")
+            return form_files_fantome[0]
+        else:
+            log.warning(f"[INJECT] Spirit Blossom Morgana {form_name} form file not found: {form_pattern_zip} or {form_pattern_fantome}")
             return None
 

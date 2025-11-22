@@ -32,6 +32,25 @@ class ChromaSpecialCases:
         return forms
     
     @staticmethod
+    def get_mordekaiser_forms() -> List[Dict]:
+        """Get Sahn Uzal Mordekaiser Forms data structure (equivalent to chromas)"""
+        forms = [
+            {'id': 82998, 'name': 'Form 1', 'colors': [], 'is_owned': False, 'form_path': 'Mordekaiser/Forms/Sahn Uzal Mordekaiser Form 1.zip'},
+            {'id': 82999, 'name': 'Form 2', 'colors': [], 'is_owned': False, 'form_path': 'Mordekaiser/Forms/Sahn Uzal Mordekaiser Form 2.zip'},
+        ]
+        log.debug(f"[CHROMA] Created {len(forms)} Sahn Uzal Mordekaiser Forms with real IDs (82998, 82999)")
+        return forms
+    
+    @staticmethod
+    def get_morgana_forms() -> List[Dict]:
+        """Get Spirit Blossom Morgana Forms data structure (equivalent to chromas)"""
+        forms = [
+            {'id': 25999, 'name': 'Form 1', 'colors': [], 'is_owned': False, 'form_path': 'Morgana/Forms/Spirit Blossom Morgana Form 1.zip'},
+        ]
+        log.debug(f"[CHROMA] Created {len(forms)} Spirit Blossom Morgana Forms with real ID (25999)")
+        return forms
+    
+    @staticmethod
     def get_hol_chromas() -> List[Dict]:
         """Get Risen Legend Kai'Sa HOL chroma data structure (equivalent to chromas)"""
         chromas = [
@@ -55,13 +74,23 @@ class ChromaSpecialCases:
         return 99991 <= chroma_id <= 99999
     
     @staticmethod
+    def is_mordekaiser_form(chroma_id: int) -> bool:
+        """Check if chroma_id is a Sahn Uzal Mordekaiser form"""
+        return chroma_id in (82998, 82999)
+    
+    @staticmethod
+    def is_morgana_form(chroma_id: int) -> bool:
+        """Check if chroma_id is a Spirit Blossom Morgana form"""
+        return chroma_id == 25999
+    
+    @staticmethod
     def is_hol_chroma(chroma_id: int) -> bool:
         """Check if chroma_id is a HOL chroma"""
         return chroma_id in (145071, 103086)
     
     @staticmethod
     def get_chromas_for_special_skin(skin_id: int) -> Optional[List[Dict]]:
-        """Get chromas for special skins (Elementalist Lux, HOL chromas)
+        """Get chromas for special skins (Elementalist Lux, HOL chromas, Sahn Uzal Mordekaiser)
         
         Returns:
             List of chroma dicts or None if not a special skin
@@ -69,6 +98,14 @@ class ChromaSpecialCases:
         # Special case: Elementalist Lux (skin ID 99007) has Forms instead of chromas
         if skin_id == 99007:
             return ChromaSpecialCases.get_elementalist_forms()
+        
+        # Special case: Sahn Uzal Mordekaiser (skin ID 82054) has Forms instead of chromas
+        elif skin_id == 82054:
+            return ChromaSpecialCases.get_mordekaiser_forms()
+        
+        # Special case: Spirit Blossom Morgana (skin ID 25080) has Forms instead of chromas
+        elif skin_id == 25080:
+            return ChromaSpecialCases.get_morgana_forms()
         
         # Special case: Risen Legend Kai'Sa (skin ID 145070) has HOL chroma instead of regular chromas
         elif skin_id == 145070:
@@ -97,6 +134,12 @@ class ChromaSpecialCases:
         """
         if ChromaSpecialCases.is_elementalist_form(chroma_id):
             return 99007  # Elementalist Lux base skin ID
+        
+        if ChromaSpecialCases.is_mordekaiser_form(chroma_id):
+            return 82054  # Sahn Uzal Mordekaiser base skin ID
+        
+        if ChromaSpecialCases.is_morgana_form(chroma_id):
+            return 25080  # Spirit Blossom Morgana base skin ID
         
         if chroma_id == 145071:
             return 145070  # Risen Legend Kai'Sa base skin ID

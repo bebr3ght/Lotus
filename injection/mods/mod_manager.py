@@ -49,14 +49,19 @@ class ModManager:
         overlay_dir.mkdir(parents=True, exist_ok=True)
     
     def extract_zip_to_mod(self, zp: Path) -> Path:
-        """Extract ZIP to mod directory"""
+        """Extract ZIP or .fantome file to mod directory
+        
+        Note: Both .zip and .fantome files are ZIP-compatible archives
+        and can be extracted using zipfile.ZipFile
+        """
         target = self.mods_dir / zp.stem
         if target.exists():
             shutil.rmtree(target, ignore_errors=True)
         target.mkdir(parents=True, exist_ok=True)
         with zipfile.ZipFile(zp, "r") as zf:
             zf.extractall(target)
-        log_success(log, f"Extracted {zp.name}", "📦")
+        file_type = "ZIP" if zp.suffix == ".zip" else ".fantome"
+        log_success(log, f"Extracted {file_type}: {zp.name}", "📦")
         return target
     
     def _get_user_mods_dir(self) -> Path:

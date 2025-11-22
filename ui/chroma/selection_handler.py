@@ -41,6 +41,12 @@ class ChromaSelectionHandler:
             # Check if this is an Elementalist Lux Form
             if ChromaSpecialCases.is_elementalist_form(chroma_id):
                 self._handle_elementalist_form_selection(chroma_id, chroma_name)
+            # Check if this is a Sahn Uzal Mordekaiser Form
+            elif ChromaSpecialCases.is_mordekaiser_form(chroma_id):
+                self._handle_mordekaiser_form_selection(chroma_id, chroma_name)
+            # Check if this is a Spirit Blossom Morgana Form
+            elif ChromaSpecialCases.is_morgana_form(chroma_id):
+                self._handle_morgana_form_selection(chroma_id, chroma_name)
             # Check if this is a HOL chroma
             elif ChromaSpecialCases.is_hol_chroma(chroma_id):
                 self._handle_hol_chroma_selection(chroma_id, chroma_name)
@@ -89,6 +95,84 @@ class ChromaSelectionHandler:
             
             # Disable HistoricMode if active
             self._disable_historic_mode(f"Elementalist Lux form selection (formId={chroma_id})")
+            
+            # Update the skin name to include the Form name for injection
+            if hasattr(self.panel, 'current_skin_name') and self.panel.current_skin_name:
+                base_skin_name = self.panel.current_skin_name
+                form_skin_name = f"{base_skin_name} {chroma_name}"
+                self.state.last_hovered_skin_key = form_skin_name
+                log.debug(f"[CHROMA] Form skin name: {form_skin_name}")
+                log.debug(f"[CHROMA] Form path: {form_data['form_path']}")
+                log.debug(f"[CHROMA] Using fake ID {chroma_id} for injection (not owned)")
+    
+    def _handle_mordekaiser_form_selection(self, chroma_id: int, chroma_name: str):
+        """Handle Sahn Uzal Mordekaiser form selection"""
+        log.info(f"[CHROMA] Form selected: {chroma_name} (Fake ID: {chroma_id})")
+        
+        # Find the Form data to get the form_path
+        form_data = None
+        if self.current_skin_id == 82054:  # Sahn Uzal Mordekaiser
+            forms = ChromaSpecialCases.get_mordekaiser_forms()
+            for form in forms:
+                if form['id'] == chroma_id:
+                    form_data = form
+                    break
+        
+        if form_data:
+            # Store the Form file path for injection
+            self.state.selected_form_path = form_data['form_path']
+            self.state.selected_chroma_id = chroma_id  # Store the fake ID
+            
+            # Update the skin ID to the fake ID so injection system treats it as unowned
+            self.state.last_hovered_skin_id = chroma_id
+            
+            # Update Swiftplay tracking dictionary if in Swiftplay mode
+            if self.state.is_swiftplay_mode:
+                champion_id = 82  # Mordekaiser champion ID
+                self.state.swiftplay_skin_tracking[champion_id] = chroma_id
+                log.info(f"[CHROMA] Updated Swiftplay tracking: champion {champion_id} -> Mordekaiser form {chroma_id}")
+            
+            # Disable HistoricMode if active
+            self._disable_historic_mode(f"Sahn Uzal Mordekaiser form selection (formId={chroma_id})")
+            
+            # Update the skin name to include the Form name for injection
+            if hasattr(self.panel, 'current_skin_name') and self.panel.current_skin_name:
+                base_skin_name = self.panel.current_skin_name
+                form_skin_name = f"{base_skin_name} {chroma_name}"
+                self.state.last_hovered_skin_key = form_skin_name
+                log.debug(f"[CHROMA] Form skin name: {form_skin_name}")
+                log.debug(f"[CHROMA] Form path: {form_data['form_path']}")
+                log.debug(f"[CHROMA] Using fake ID {chroma_id} for injection (not owned)")
+    
+    def _handle_morgana_form_selection(self, chroma_id: int, chroma_name: str):
+        """Handle Spirit Blossom Morgana form selection"""
+        log.info(f"[CHROMA] Form selected: {chroma_name} (Fake ID: {chroma_id})")
+        
+        # Find the Form data to get the form_path
+        form_data = None
+        if self.current_skin_id == 25080:  # Spirit Blossom Morgana
+            forms = ChromaSpecialCases.get_morgana_forms()
+            for form in forms:
+                if form['id'] == chroma_id:
+                    form_data = form
+                    break
+        
+        if form_data:
+            # Store the Form file path for injection
+            self.state.selected_form_path = form_data['form_path']
+            self.state.selected_chroma_id = chroma_id  # Store the fake ID
+            
+            # Update the skin ID to the fake ID so injection system treats it as unowned
+            self.state.last_hovered_skin_id = chroma_id
+            
+            # Update Swiftplay tracking dictionary if in Swiftplay mode
+            if self.state.is_swiftplay_mode:
+                champion_id = 25  # Morgana champion ID
+                self.state.swiftplay_skin_tracking[champion_id] = chroma_id
+                log.info(f"[CHROMA] Updated Swiftplay tracking: champion {champion_id} -> Morgana form {chroma_id}")
+            
+            # Disable HistoricMode if active
+            self._disable_historic_mode(f"Spirit Blossom Morgana form selection (formId={chroma_id})")
             
             # Update the skin name to include the Form name for injection
             if hasattr(self.panel, 'current_skin_name') and self.panel.current_skin_name:
