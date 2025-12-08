@@ -61,20 +61,13 @@ def _setup_pengu_after_lcu_connection(lcu) -> None:
     5. Sets league path in Pengu Loader
     6. Activates Pengu Loader
     """
-    # Wait for LCU connection (with timeout)
-    max_wait_time = 60  # seconds
+    # Wait for LCU connection
     wait_interval = 0.5  # seconds
-    elapsed = 0.0
     
     log.info("Waiting for LCU connection to setup Pengu Loader...")
-    while not lcu.ok and elapsed < max_wait_time:
+    while not lcu.ok:
         time.sleep(wait_interval)
-        elapsed += wait_interval
         lcu.refresh_if_needed()
-    
-    if not lcu.ok:
-        log.warning("LCU connection not available after %d seconds, skipping Pengu setup", max_wait_time)
-        return
     
     log.info("LCU connected, detecting League paths...")
     
