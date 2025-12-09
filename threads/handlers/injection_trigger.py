@@ -203,6 +203,113 @@ class InjectionTrigger:
                         if not historic_path:
                             return
                         
+                        # For "other" type, handle list of mods
+                        if mod_type == "other":
+                            # historic_path can be string (legacy) or list (new)
+                            historic_paths = historic_path if isinstance(historic_path, list) else [historic_path]
+                            
+                            # Check if already selected
+                            selected_other_mods = getattr(self.state, 'selected_other_mods', None)
+                            if selected_other_mods and len(selected_other_mods) > 0:
+                                return
+                            
+                            # Get mods for this category
+                            category = getattr(mod_storage, category_attr)
+                            entries = mod_storage.list_mods_for_category(category)
+                            
+                            valid_other_mods = []
+                            for historic_path_item in historic_paths:
+                                try:
+                                    # Find the mod by matching relative path
+                                    selected_mod_entry = None
+                                    for entry_dict in entries:
+                                        entry_id = entry_dict.get("id") or ""
+                                        if entry_id.replace("\\", "/") == str(historic_path_item).replace("\\", "/"):
+                                            # Found the mod - construct full path
+                                            entry_path_str = entry_dict.get("path", "").replace("/", "\\")
+                                            mod_path = mod_storage.mods_root / entry_path_str
+                                            selected_mod_entry = type('ModEntry', (), {
+                                                'mod_name': entry_dict.get("name", ""),
+                                                'path': mod_path
+                                            })()
+                                            break
+                                    
+                                    if not selected_mod_entry:
+                                        log.debug(f"[HISTORIC] Historic other mod not found in storage: {historic_path_item}")
+                                        continue
+                                    
+                                    mod_source = Path(selected_mod_entry.path)
+                                    if not mod_source.exists():
+                                        log.info(f"[HISTORIC] Historic other mod file not found (mod may have been deleted), ignoring: {mod_source}")
+                                        continue
+                                    
+                                    # Determine mod folder name
+                                    if mod_source.is_dir():
+                                        mod_folder_name = mod_source.name
+                                    elif mod_source.is_file() and mod_source.suffix.lower() in {".zip", ".fantome"}:
+                                        mod_folder_name = mod_source.stem
+                                    else:
+                                        mod_folder_name = mod_source.stem
+                                    
+                                    # Extract/copy mod to injection mods directory
+                                    if mod_source.is_dir():
+                                        mod_dest = injector.mods_dir / mod_source.name
+                                        if mod_dest.exists():
+                                            shutil.rmtree(mod_dest, ignore_errors=True)
+                                        shutil.copytree(mod_source, mod_dest, dirs_exist_ok=True)
+                                        log.info(f"[HISTORIC] Copied other mod directory to: {mod_dest}")
+                                    elif mod_source.is_file() and mod_source.suffix.lower() in {".zip", ".fantome"}:
+                                        mod_dest = injector.mods_dir / mod_source.stem
+                                        if mod_dest.exists():
+                                            shutil.rmtree(mod_dest, ignore_errors=True)
+                                        mod_dest.mkdir(parents=True, exist_ok=True)
+                                        with zipfile.ZipFile(mod_source, 'r') as zip_ref:
+                                            zip_ref.extractall(mod_dest)
+                                        file_type = "ZIP" if mod_source.suffix.lower() == ".zip" else "FANTOME"
+                                        log.info(f"[HISTORIC] Extracted {file_type} other mod to: {mod_dest}")
+                                    else:
+                                        mod_dest = injector.mods_dir / mod_folder_name
+                                        if mod_dest.exists():
+                                            shutil.rmtree(mod_dest, ignore_errors=True)
+                                        mod_dest.mkdir(parents=True, exist_ok=True)
+                                        shutil.copy2(mod_source, mod_dest / mod_source.name)
+                                        log.info(f"[HISTORIC] Copied other mod file to folder: {mod_dest}")
+                                    
+                                    # Add to valid mods list
+                                    valid_other_mods.append({
+                                        "mod_name": selected_mod_entry.mod_name,
+                                        "mod_path": str(selected_mod_entry.path),
+                                        "mod_folder_name": mod_folder_name,
+                                        "relative_path": str(historic_path_item),
+                                    })
+                                    
+                                    log.info(f"[HISTORIC] Auto-selected historic other mod: {selected_mod_entry.mod_name}")
+                                except Exception as e:
+                                    log.warning(f"[HISTORIC] Failed to auto-select historic other mod {historic_path_item}: {e}")
+                                    import traceback
+                                    log.debug(f"[HISTORIC] Traceback: {traceback.format_exc()}")
+                            
+                            # Store all valid other mods in shared state
+                            if valid_other_mods:
+                                self.state.selected_other_mods = valid_other_mods
+                                log.info(f"[HISTORIC] Auto-selected {len(valid_other_mods)} historic other mod(s)")
+                            
+                            # Update historic if some mods were missing
+                            if len(valid_other_mods) != len(historic_paths):
+                                try:
+                                    from utils.core.mod_historic import write_historic_mod
+                                    if valid_other_mods:
+                                        valid_paths = [mod["relative_path"] for mod in valid_other_mods]
+                                        write_historic_mod("other", valid_paths)
+                                    else:
+                                        from utils.core.mod_historic import clear_historic_mod
+                                        clear_historic_mod("other")
+                                except Exception as e:
+                                    log.debug(f"[HISTORIC] Failed to update historic other mods: {e}")
+                            
+                            return
+                        
+                        # For other mod types (map, font, announcer), handle single mod
                         # Check if already selected
                         selected_attr = f'selected_{mod_type}_mod'
                         if getattr(self.state, selected_attr, None):
@@ -217,7 +324,7 @@ class InjectionTrigger:
                             selected_mod_entry = None
                             for entry_dict in entries:
                                 entry_id = entry_dict.get("id") or ""
-                                if entry_id.replace("\\", "/") == historic_path.replace("\\", "/"):
+                                if entry_id.replace("\\", "/") == str(historic_path).replace("\\", "/"):
                                     # Found the mod - construct full path
                                     entry_path_str = entry_dict.get("path", "").replace("/", "\\")
                                     mod_path = mod_storage.mods_root / entry_path_str
@@ -233,7 +340,14 @@ class InjectionTrigger:
                             
                             mod_source = Path(selected_mod_entry.path)
                             if not mod_source.exists():
-                                log.warning(f"[HISTORIC] Historic {mod_type} mod file not found: {mod_source}")
+                                log.info(f"[HISTORIC] Historic {mod_type} mod file not found (mod may have been deleted), ignoring: {mod_source}")
+                                # Clear the historic mod entry since the mod no longer exists
+                                try:
+                                    from utils.core.mod_historic import clear_historic_mod
+                                    clear_historic_mod(mod_type)
+                                    log.debug(f"[HISTORIC] Cleared historic {mod_type} mod entry")
+                                except Exception as e:
+                                    log.debug(f"[HISTORIC] Failed to clear historic {mod_type} mod entry: {e}")
                                 return
                             
                             # Determine mod folder name
@@ -273,7 +387,7 @@ class InjectionTrigger:
                                 "mod_name": selected_mod_entry.mod_name,
                                 "mod_path": str(selected_mod_entry.path),
                                 "mod_folder_name": mod_folder_name,
-                                "relative_path": historic_path,
+                                "relative_path": str(historic_path),
                             })
                             
                             log.info(f"[HISTORIC] Auto-selected historic {mod_type} mod: {selected_mod_entry.mod_name}")
@@ -767,7 +881,7 @@ class InjectionTrigger:
                     import zipfile
                     mod_source = Path(mod_path)
                     if not mod_source.exists():
-                        log.warning(f"[INJECT] {mod_type_name} mod source not found: {mod_source}")
+                        log.info(f"[INJECT] {mod_type_name} mod source not found (mod may have been deleted), ignoring: {mod_source}")
                         return None
                     
                     mod_dest = injector.mods_dir / mod_folder_name
@@ -806,7 +920,9 @@ class InjectionTrigger:
                     mod_names_list.append(selected_map_mod.get("mod_name", "Map"))
                     log.info(f"[INJECT] Including map mod: {selected_map_mod.get('mod_name')}")
                 else:
-                    log.warning(f"[INJECT] Map mod selected but failed to extract: {selected_map_mod.get('mod_name', 'Unknown')}")
+                    log.info(f"[INJECT] Map mod not found (may have been deleted), ignoring: {selected_map_mod.get('mod_name', 'Unknown')}")
+                    # Clear missing mod from state
+                    self.state.selected_map_mod = None
             
             # Add font mod if selected
             selected_font_mod = getattr(self.state, 'selected_font_mod', None)
@@ -817,7 +933,9 @@ class InjectionTrigger:
                     mod_names_list.append(selected_font_mod.get("mod_name", "Font"))
                     log.info(f"[INJECT] Including font mod: {selected_font_mod.get('mod_name')}")
                 else:
-                    log.warning(f"[INJECT] Font mod selected but failed to extract: {selected_font_mod.get('mod_name', 'Unknown')}")
+                    log.info(f"[INJECT] Font mod not found (may have been deleted), ignoring: {selected_font_mod.get('mod_name', 'Unknown')}")
+                    # Clear missing mod from state
+                    self.state.selected_font_mod = None
             
             # Add announcer mod if selected
             selected_announcer_mod = getattr(self.state, 'selected_announcer_mod', None)
@@ -828,7 +946,9 @@ class InjectionTrigger:
                     mod_names_list.append(selected_announcer_mod.get("mod_name", "Announcer"))
                     log.info(f"[INJECT] Including announcer mod: {selected_announcer_mod.get('mod_name')}")
                 else:
-                    log.warning(f"[INJECT] Announcer mod selected but failed to extract: {selected_announcer_mod.get('mod_name', 'Unknown')}")
+                    log.info(f"[INJECT] Announcer mod not found (may have been deleted), ignoring: {selected_announcer_mod.get('mod_name', 'Unknown')}")
+                    # Clear missing mod from state
+                    self.state.selected_announcer_mod = None
             
             # Add other mods if selected (support multiple selections)
             selected_other_mods = getattr(self.state, 'selected_other_mods', None)
@@ -839,14 +959,26 @@ class InjectionTrigger:
                     selected_other_mods = [selected_other_mod]
             
             if selected_other_mods:
+                # Filter out missing mods and keep track of valid ones
+                valid_other_mods = []
                 for selected_other_mod in selected_other_mods:
                     other_mod_folder = re_extract_mod(selected_other_mod, "Other")
                     if other_mod_folder:
                         mod_folder_names.append(other_mod_folder)
                         mod_names_list.append(selected_other_mod.get("mod_name", "Other"))
+                        valid_other_mods.append(selected_other_mod)
                         log.info(f"[INJECT] Including other mod: {selected_other_mod.get('mod_name')}")
                     else:
-                        log.warning(f"[INJECT] Other mod selected but failed to extract: {selected_other_mod.get('mod_name', 'Unknown')}")
+                        log.info(f"[INJECT] Other mod not found (may have been deleted), ignoring: {selected_other_mod.get('mod_name', 'Unknown')}")
+                
+                # Update state to only include valid mods
+                if len(valid_other_mods) != len(selected_other_mods):
+                    if valid_other_mods:
+                        self.state.selected_other_mods = valid_other_mods
+                    else:
+                        self.state.selected_other_mods = []
+                        if hasattr(self.state, 'selected_other_mod'):
+                            self.state.selected_other_mod = None
             
             # Check if we have any mods to inject
             if not mod_folder_names:
@@ -934,7 +1066,7 @@ class InjectionTrigger:
                         write_historic_mod("announcer", selected_announcer_mod["relative_path"])
                         log.debug(f"[MOD_HISTORIC] Stored announcer mod: {selected_announcer_mod['relative_path']}")
                     
-                    # Store other mods if selected (store first one for historic)
+                    # Store other mods if selected (store all for historic)
                     selected_other_mods = getattr(self.state, 'selected_other_mods', None)
                     if not selected_other_mods:
                         # Fallback to legacy single mod
@@ -942,11 +1074,11 @@ class InjectionTrigger:
                         if selected_other_mod:
                             selected_other_mods = [selected_other_mod]
                     if selected_other_mods and len(selected_other_mods) > 0:
-                        # Store first mod for historic (legacy behavior)
-                        first_mod = selected_other_mods[0]
-                        if first_mod.get("relative_path"):
-                            write_historic_mod("other", first_mod["relative_path"])
-                            log.debug(f"[MOD_HISTORIC] Stored other mod: {first_mod['relative_path']}")
+                        # Store all mods for historic (list format)
+                        other_mod_paths = [mod.get("relative_path") for mod in selected_other_mods if mod.get("relative_path")]
+                        if other_mod_paths:
+                            write_historic_mod("other", other_mod_paths)
+                            log.debug(f"[MOD_HISTORIC] Stored {len(other_mod_paths)} other mod(s): {', '.join(other_mod_paths)}")
                 except Exception as e:
                     log.debug(f"[MOD_HISTORIC] Failed to store mod selections: {e}")
                 

@@ -494,30 +494,39 @@ class MessageHandler:
             others = []
         
         # Get historic mod and add it to response
-        historic_other_path = None
+        historic_other_paths = None
         try:
             from utils.core.mod_historic import get_historic_mod
-            historic_other_path = get_historic_mod("other")
+            historic_other_paths = get_historic_mod("other")
+            # Convert to list if it's a single string (legacy format)
+            if isinstance(historic_other_paths, str):
+                historic_other_paths = [historic_other_paths]
         except Exception:
             pass
         
         response_payload = {
             "type": "others-response",
             "others": others,
-            "historicMod": historic_other_path,  # Add historic mod identifier
+            "historicMod": historic_other_paths,  # List of historic mod identifiers (or None)
             "timestamp": int(time.time() * 1000),
         }
         self._send_response(json.dumps(response_payload))
         
-        # Auto-select historic mod if available and not already selected
+        # Auto-select historic mods if available and not already selected
         selected_other_mods = getattr(self.shared_state, 'selected_other_mods', None)
         if not selected_other_mods:
             # Fallback to legacy single mod
             selected_other_mod = getattr(self.shared_state, 'selected_other_mod', None)
             if selected_other_mod:
                 selected_other_mods = [selected_other_mod]
-        if historic_other_path and (not selected_other_mods or len(selected_other_mods) == 0):
-            self._auto_select_historic_mod("other", historic_other_path, others)
+        if historic_other_paths and (not selected_other_mods or len(selected_other_mods) == 0):
+            # Handle multiple historic other mods
+            if isinstance(historic_other_paths, list):
+                for historic_path in historic_other_paths:
+                    self._auto_select_historic_mod("other", historic_path, others)
+            else:
+                # Legacy single mod format
+                self._auto_select_historic_mod("other", historic_other_paths, others)
     
     def _handle_select_skin_mod(self, payload: dict) -> None:
         """Handle mod selection for injection over hovered skin"""
