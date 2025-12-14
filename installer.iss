@@ -2,8 +2,8 @@
 ; This creates a proper Windows installer that registers the app
 
 #define MyAppName "Rose"
-#define MyAppVersion "1.1.0"
-#define MyAppVersionInfo "1.1.0.0"
+#define MyAppVersion "999"
+#define MyAppVersionInfo "999.0.0.0"
 #define MyAppPublisher "Rose Team"
 #define MyAppURL "https://github.com/Alban1911/Rose"
 #define MyAppExeName "Rose.exe"
@@ -62,7 +62,7 @@ Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChang
 
 [UninstallRun]
 ; Always remove the Rose auto-start scheduled task (created via schtasks /TN "Rose")
-Filename: "{sys}\schtasks.exe"; Parameters: '/Delete /TN "Rose" /F'; Flags: runhidden
+Filename: "{sys}\schtasks.exe"; Parameters: "/Delete /TN Rose /F"; Flags: runhidden
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}\_internal"
@@ -120,12 +120,13 @@ begin
   end;
 end;
 
-procedure _CleanupStartupRegistry();
 const
   RunKey      = 'Software\Microsoft\Windows\CurrentVersion\Run';
   RunOnceKey  = 'Software\Microsoft\Windows\CurrentVersion\RunOnce';
   RunKey6432  = 'Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Run';
   RunOnce6432 = 'Software\WOW6432Node\Microsoft\Windows\CurrentVersion\RunOnce';
+
+procedure _CleanupStartupRegistry();
 begin
   { 64-bit and user/machine startup keys }
   _DeleteStartupValuesIfMatch(HKCU, RunKey);
