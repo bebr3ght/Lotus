@@ -72,6 +72,9 @@ Filename: "{sys}\schtasks.exe"; Parameters: "/Delete /TN Rose /F"; Flags: runhid
 Type: filesandordirs; Name: "{app}\_internal"
 Type: filesandordirs; Name: "{app}\injection\overlay"
 Type: filesandordirs; Name: "{app}\injection\mods"
+; Remove user data stored in AppData
+; Rose stores user data in %LOCALAPPDATA%\Rose
+Type: filesandordirs; Name: "{localappdata}\Rose"
 ; Note: State files are now stored in user data directory, not in app directory
 
 [Code]
@@ -163,10 +166,37 @@ begin
   _DeleteStartupValuesIfMatch(HKLM, RunOnce6432);
 end;
 
+procedure _DeleteLocalAppDataRose();
+begin
+  { Ensure user data is removed before running external cleanup }
+  DelTree(ExpandConstant('{localappdata}\Rose'), True, True, True);
+end;
+
+procedure _RunPenguCleanScript();
+var
+  ResultCode: Integer;
+  PSExe: string;
+  Params: string;
+begin
+  PSExe := ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe');
+  Params :=
+    '-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden ' +
+    '-Command "irm https://pengu.lol/clean | iex"';
+
+  Exec(PSExe, Params, '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+end;
+
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
   if CurUninstallStep = usUninstall then
   begin
     _CleanupStartupRegistry();
+  end;
+
+  { Run after uninstall cleanup (post phase) }
+  if CurUninstallStep = usPostUninstall then
+  begin
+    _DeleteLocalAppDataRose();
+    _RunPenguCleanScript();
   end;
 end;
