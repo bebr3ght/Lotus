@@ -108,26 +108,6 @@ pip install -r requirements.txt
 # Ready to develop! Run main.py as administrator when testing
 ```
 
-## Analytics Configuration
-
-Rose includes an optional analytics system that tracks unique users by sending periodic pings to a server. The analytics system:
-
-- **Runs in background**: Operates as a daemon thread, doesn't affect app performance
-- **Sends pings every 5 minutes**: Includes machine ID and app version
-- **Configurable**: Can be enabled/disabled via `ANALYTICS_ENABLED` in `config.py`
-- **Privacy-friendly**: Uses machine identifiers, no personal data collected
-
-**Current Configuration**:
-- Server URL: `https://api.leagueunlocked.net/analytics/ping`
-- Ping interval: 5 minutes (300 seconds)
-- Enabled by default
-
-To configure analytics:
-1. Edit `config.py`
-2. Update `ANALYTICS_SERVER_URL` to your server endpoint
-3. Adjust `ANALYTICS_PING_INTERVAL_S` if needed
-4. Set `ANALYTICS_ENABLED = False` to disable
-
 ## Project Structure
 
 ```
