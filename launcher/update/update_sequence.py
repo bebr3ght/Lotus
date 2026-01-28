@@ -203,19 +203,27 @@ class UpdateSequence:
         # Install update
         status_callback("Installing update")
         install_dir = Path(sys.executable).resolve().parent
-        
-        if not self.installer.prepare_installation(
+
+        # Prepare and launch standalone updater (falls back to batch script if needed)
+        updater_params = self.installer.prepare_updater_launch(
             extracted_root,
             install_dir,
             updates_root,
             zip_path,
             staging_dir,
             status_callback,
-        ):
+        )
+        if not updater_params:
             return False
-        
-        batch_path = updates_root / "apply_update.bat"
-        if not self.installer.launch_installer(batch_path, status_callback):
+
+        if not self.installer.launch_updater(
+            updater_params,
+            install_dir,
+            updates_root,
+            zip_path,
+            staging_dir,
+            status_callback,
+        ):
             return False
         
         # Update installed_version in config after successful installation

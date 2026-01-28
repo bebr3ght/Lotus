@@ -19,6 +19,9 @@ updater_log = get_named_logger("updater", prefix="log_updater")
 
 PERSISTENT_ROOT_FILES = ("icon.ico", "unins000.exe", "unins000.dat")
 
+# Standalone updater executable name
+UPDATER_EXE_NAME = "updater.exe"
+
 
 class UpdateInstaller:
     """Handles update extraction and installation"""
@@ -155,12 +158,12 @@ class UpdateInstaller:
             return False
     
     def launch_installer(self, batch_path: Path, status_callback: Callable[[str], None]) -> bool:
-        """Launch the update installer batch script
-        
+        """Launch the update installer batch script (legacy method)
+
         Args:
             batch_path: Path to the batch script
             status_callback: Callback for status updates
-            
+
         Returns:
             True if successful, False otherwise
         """
@@ -171,7 +174,151 @@ class UpdateInstaller:
             status_callback(f"Failed to launch updater: {exc}")
             updater_log.error(f"Failed to launch installer: {exc}")
             return False
-    
+
+    def prepare_updater_launch(
+        self,
+        extracted_root: Path,
+        install_dir: Path,
+        updates_root: Path,
+        zip_path: Path,
+        staging_dir: Path,
+        status_callback: Callable[[str], None],
+    ) -> Optional[dict]:
+        """Prepare parameters for launching the standalone updater
+
+        Args:
+            extracted_root: Root directory of extracted update
+            install_dir: Directory where application is installed
+            updates_root: Root directory for updates
+            zip_path: Path to the update ZIP file
+            staging_dir: Staging directory
+            status_callback: Callback for status updates
+
+        Returns:
+            Dictionary with updater arguments, or None if preparation failed
+        """
+        exe_name = Path(sys.executable).name
+
+        if not (extracted_root / exe_name).exists():
+            status_callback("Update aborted: executable missing in package")
+            updater_log.error(f"Executable {exe_name} not found in {extracted_root}")
+            return None
+
+        # Preserve persistent root files by copying to staging
+        for relative_name in PERSISTENT_ROOT_FILES:
+            source_path = install_dir / relative_name
+            if not source_path.exists():
+                continue
+            target_path = extracted_root / relative_name
+            try:
+                target_path.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source_path, target_path)
+            except Exception as exc:  # noqa: BLE001
+                status_callback(f"Warning: failed to preserve {relative_name}: {exc}")
+                updater_log.warning(f"Failed to preserve {relative_name}: {exc}")
+
+        # Return updater parameters
+        return {
+            "pid": os.getpid(),
+            "install_dir": str(install_dir),
+            "staging_dir": str(extracted_root),
+            "log_file": str(updates_root / "updater.log"),
+            "zip_file": str(zip_path),
+        }
+
+    def launch_updater(
+        self,
+        updater_params: dict,
+        install_dir: Path,
+        updates_root: Path,
+        zip_path: Path,
+        staging_dir: Path,
+        status_callback: Callable[[str], None],
+    ) -> bool:
+        """Launch the standalone updater executable
+
+        If updater.exe is not found, falls back to the batch script method.
+
+        Args:
+            updater_params: Dictionary of parameters for updater
+            install_dir: Installation directory
+            updates_root: Root directory for updates
+            zip_path: Path to the update ZIP file
+            staging_dir: Staging directory
+            status_callback: Callback for status updates
+
+        Returns:
+            True if updater launched successfully
+        """
+        updater_path = install_dir / UPDATER_EXE_NAME
+
+        if not updater_path.exists():
+            updater_log.warning(f"Updater not found at {updater_path}, falling back to batch mode")
+            status_callback("Updater not found, using fallback method...")
+            return self._launch_batch_fallback(
+                updater_params, install_dir, updates_root, zip_path, staging_dir, status_callback
+            )
+
+        try:
+            cmd = [
+                str(updater_path),
+                "--pid", str(updater_params["pid"]),
+                "--install-dir", updater_params["install_dir"],
+                "--staging-dir", updater_params["staging_dir"],
+            ]
+
+            if updater_params.get("log_file"):
+                cmd.extend(["--log-file", updater_params["log_file"]])
+
+            if updater_params.get("zip_file"):
+                cmd.extend(["--zip-file", updater_params["zip_file"]])
+
+            updater_log.info(f"Launching standalone updater: {' '.join(cmd)}")
+            subprocess.Popen(cmd, close_fds=True)
+            return True
+
+        except Exception as exc:  # noqa: BLE001
+            status_callback(f"Failed to launch updater: {exc}")
+            updater_log.error(f"Failed to launch standalone updater: {exc}")
+            # Try batch fallback
+            return self._launch_batch_fallback(
+                updater_params, install_dir, updates_root, zip_path, staging_dir, status_callback
+            )
+
+    def _launch_batch_fallback(
+        self,
+        updater_params: dict,
+        install_dir: Path,
+        updates_root: Path,
+        zip_path: Path,
+        staging_dir: Path,
+        status_callback: Callable[[str], None],
+    ) -> bool:
+        """Fallback method using batch script for legacy installations
+
+        Args:
+            updater_params: Dictionary of parameters (for extracted_root path)
+            install_dir: Installation directory
+            updates_root: Root directory for updates
+            zip_path: Path to the update ZIP file
+            staging_dir: Staging directory
+            status_callback: Callback for status updates
+
+        Returns:
+            True if batch script launched successfully
+        """
+        updater_log.info("Using batch script fallback for update installation")
+        extracted_root = Path(updater_params["staging_dir"])
+
+        # Use the existing prepare_installation method
+        if not self.prepare_installation(
+            extracted_root, install_dir, updates_root, zip_path, staging_dir, status_callback
+        ):
+            return False
+
+        batch_path = updates_root / "apply_update.bat"
+        return self.launch_installer(batch_path, status_callback)
+
     @staticmethod
     def _resolve_extracted_root(staging_dir: Path) -> Optional[Path]:
         """Return the directory that contains the update payload."""
