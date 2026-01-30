@@ -43,7 +43,8 @@ class PhaseThread(threading.Thread):
         self.skin_scraper = skin_scraper
         self.db = db
         self.last_phase = None
-        
+        self._null_phase_streak = 0
+
         # Initialize handlers
         self.swiftplay_handler = SwiftplayHandler(lcu, state, injection_manager, skin_scraper)
         self.phase_handler = PhaseHandler(lcu, state, injection_manager, skin_scraper, self.swiftplay_handler)
@@ -61,20 +62,25 @@ class PhaseThread(threading.Thread):
             if ph == "None":
                 ph = None
             
-            # If phase is unknown (None), skip handling
+            # If phase is unknown (None), skip handling.
+            # Use a grace period to avoid wiping Swiftplay state on transient
+            # API hiccups (the LCU can briefly return None during transitions).
             if ph is None:
                 self.state.phase = None
-                # Don't cleanup Swiftplay if we have extracted mods waiting for injection
-                # This can happen during phase transitions (e.g., Matchmaking -> ChampSelect)
-                has_extracted_mods = self.state.swiftplay_extracted_mods and len(self.state.swiftplay_extracted_mods) > 0
-                if self.state.is_swiftplay_mode and not has_extracted_mods:
-                    self.swiftplay_handler.cleanup_swiftplay_exit()
-                elif not self.state.is_swiftplay_mode and self.state.swiftplay_extracted_mods:
-                    self.state.swiftplay_extracted_mods = []
+                self._null_phase_streak += 1
+
+                # Only clean up after several consecutive None polls (~1.5-2.5 s)
+                if self._null_phase_streak >= 3:
+                    has_extracted_mods = self.state.swiftplay_extracted_mods and len(self.state.swiftplay_extracted_mods) > 0
+                    if self.state.is_swiftplay_mode and not has_extracted_mods:
+                        self.swiftplay_handler.cleanup_swiftplay_exit()
+                    elif not self.state.is_swiftplay_mode and self.state.swiftplay_extracted_mods:
+                        self.state.swiftplay_extracted_mods = []
 
                 time.sleep(self.interval)
                 continue
 
+            self._null_phase_streak = 0
             phase_changed = (ph != self.last_phase)
 
             if ph == "Lobby":

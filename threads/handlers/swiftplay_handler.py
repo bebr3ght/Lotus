@@ -283,7 +283,7 @@ class SwiftplayHandler:
             # Don't clear extracted_mods if we're still in Swiftplay mode and haven't built overlay yet
             # Only clear if we're actually leaving Swiftplay mode (phase is None or not Swiftplay-related)
             current_phase = getattr(self.state, 'phase', None)
-            if current_phase not in ["Matchmaking", "ChampSelect", "FINALIZATION"]:
+            if current_phase not in ["Matchmaking", "ReadyCheck", "ChampSelect", "FINALIZATION"]:
                 try:
                     self.state.swiftplay_extracted_mods.clear()
                 except Exception:

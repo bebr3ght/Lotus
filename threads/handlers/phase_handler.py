@@ -53,26 +53,38 @@ class PhaseHandler:
         
         elif phase == "ChampSelect":
             log.debug(f"[phase] ChampSelect detected - is_swiftplay_mode={self.state.is_swiftplay_mode}, extracted_mods={len(self.state.swiftplay_extracted_mods)}")
-            if self.state.is_swiftplay_mode and self.state.swiftplay_extracted_mods:
-                log.info("[phase] ChampSelect in Swiftplay mode - running overlay injection")
-                # Also ensure UI is initialized for Swiftplay mode (needed for overlay detection)
-                try:
-                    from ui.core.user_interface import get_user_interface
-                    user_interface = get_user_interface(self.state, self.skin_scraper)
-                    if not user_interface.is_ui_initialized() and not user_interface._pending_ui_initialization:
-                        log.info("[phase] ChampSelect in Swiftplay mode - requesting UI initialization for overlay detection")
-                        user_interface.request_ui_initialization()
-                except Exception as e:
-                    log.warning(f"[phase] Failed to request UI initialization in Swiftplay ChampSelect: {e}")
-                if self.swiftplay_handler:
-                    self.swiftplay_handler.run_swiftplay_overlay()
+            if self.state.is_swiftplay_mode:
+                # Fallback: if Matchmaking phase was missed by the poller, extraction
+                # never happened.  Trigger it now before attempting the overlay.
+                if not self.state.swiftplay_extracted_mods and self.swiftplay_handler:
+                    if self.state.swiftplay_skin_tracking:
+                        log.info("[phase] ChampSelect in Swiftplay mode - Matchmaking phase missed, triggering late injection")
+                        self.swiftplay_handler.trigger_swiftplay_injection()
+                    else:
+                        log.warning("[phase] ChampSelect in Swiftplay mode - no tracked skins available for injection")
+
+                if self.state.swiftplay_extracted_mods:
+                    log.info("[phase] ChampSelect in Swiftplay mode - running overlay injection")
+                    # Also ensure UI is initialized for Swiftplay mode (needed for overlay detection)
+                    try:
+                        from ui.core.user_interface import get_user_interface
+                        user_interface = get_user_interface(self.state, self.skin_scraper)
+                        if not user_interface.is_ui_initialized() and not user_interface._pending_ui_initialization:
+                            log.info("[phase] ChampSelect in Swiftplay mode - requesting UI initialization for overlay detection")
+                            user_interface.request_ui_initialization()
+                    except Exception as e:
+                        log.warning(f"[phase] Failed to request UI initialization in Swiftplay ChampSelect: {e}")
+                    if self.swiftplay_handler:
+                        self.swiftplay_handler.run_swiftplay_overlay()
+                else:
+                    log.warning("[phase] ChampSelect in Swiftplay mode - no mods to inject")
             else:
                 # Normal ChampSelect handling
                 self.state.locked_champ_id = None
                 self.state.locked_champ_timestamp = 0.0
                 self.state.champion_exchange_triggered = False
                 self.state.own_champion_locked = False
-                
+
                 # Backup UI initialization
                 try:
                     from ui.core.user_interface import get_user_interface
@@ -107,7 +119,7 @@ class PhaseHandler:
         if previous_phase == "Lobby" and phase != "Lobby":
             if self.state.is_swiftplay_mode and self.swiftplay_handler:
                 # Only cleanup if we're not going to Matchmaking/ChampSelect (where we need extracted mods)
-                if phase not in ["Matchmaking", "ChampSelect", "FINALIZATION"]:
+                if phase not in ["Matchmaking", "ReadyCheck", "ChampSelect", "FINALIZATION"]:
                     self.swiftplay_handler.cleanup_swiftplay_exit()
     
     def _handle_in_progress(self):
