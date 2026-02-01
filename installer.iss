@@ -78,6 +78,28 @@ Type: filesandordirs; Name: "{localappdata}\Rose"
 ; Note: State files are now stored in user data directory, not in app directory
 
 [Code]
+function _IsLeagueRunning(): Boolean;
+var
+  WbemLocator, WMIService, Processes: Variant;
+begin
+  Result := False;
+  try
+    WbemLocator := CreateOleObject('WbemScripting.SWbemLocator');
+    WMIService := WbemLocator.ConnectServer('localhost', 'root\CIMV2');
+    Processes := WMIService.ExecQuery(
+      'SELECT Name FROM Win32_Process WHERE ' +
+      'Name="LeagueClient.exe" OR ' +
+      'Name="LeagueClientUx.exe" OR ' +
+      'Name="LeagueClientUxRender.exe" OR ' +
+      'Name="League of Legends.exe"'
+    );
+    Result := (Processes.Count > 0);
+  except
+    { If WMI fails, don't block the uninstall }
+    Result := False;
+  end;
+end;
+
 function InitializeUninstall(): Boolean;
 begin
   if CheckForMutexes('{#MyAppMutex}') then
@@ -89,11 +111,23 @@ begin
       MB_OK
     );
     Result := False;
-  end
-  else
-  begin
-    Result := True;
+    exit;
   end;
+
+  if _IsLeagueRunning() then
+  begin
+    MsgBox(
+      'League of Legends is currently running.'#13#10 +
+      'The Pengu Loader module (core.dll) may be loaded in the League process.'#13#10 +
+      'Please close League of Legends and try uninstalling again.',
+      mbCriticalError,
+      MB_OK
+    );
+    Result := False;
+    exit;
+  end;
+
+  Result := True;
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
