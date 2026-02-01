@@ -65,6 +65,8 @@ Name: "{userappdata}\Microsoft\Internet Explorer\Quick Launch\{#MyAppName}"; Fil
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}} (as Administrator)"; Flags: nowait postinstall skipifsilent shellexec; Verb: runas
 
 [UninstallRun]
+; Uninstall Pengu Loader (removes d3d9.dll hook from the League directory)
+Filename: "{localappdata}\Rose\Pengu Loader\Pengu Loader.exe"; Parameters: "--uninstall --silent"; Flags: runhidden waituntilterminated skipifdoesntexist
 ; Always remove the Rose auto-start scheduled task (created via schtasks /TN "Rose")
 Filename: "{sys}\schtasks.exe"; Parameters: "/Delete /TN Rose /F"; Flags: runhidden
 
@@ -78,9 +80,49 @@ Type: filesandordirs; Name: "{localappdata}\Rose"
 ; Note: State files are now stored in user data directory, not in app directory
 
 [Code]
-function InitializeUninstall(): Boolean;
+function _IsLeagueRunning(): Boolean;
+var
+  WbemLocator, WMIService, Processes: Variant;
 begin
-  if CheckForMutexes('{#MyAppMutex}') then
+  Result := False;
+  try
+    WbemLocator := CreateOleObject('WbemScripting.SWbemLocator');
+    WMIService := WbemLocator.ConnectServer('localhost', 'root\CIMV2');
+    Processes := WMIService.ExecQuery(
+      'SELECT Name FROM Win32_Process WHERE ' +
+      'Name="LeagueClient.exe" OR ' +
+      'Name="LeagueClientUx.exe" OR ' +
+      'Name="LeagueClientUxRender.exe" OR ' +
+      'Name="League of Legends.exe"'
+    );
+    Result := (Processes.Count > 0);
+  except
+    { If WMI fails, don't block the uninstall }
+    Result := False;
+  end;
+end;
+
+function InitializeUninstall(): Boolean;
+var
+  RoseRunning: Boolean;
+  LeagueRunning: Boolean;
+begin
+  RoseRunning := CheckForMutexes('{#MyAppMutex}');
+  LeagueRunning := _IsLeagueRunning();
+
+  if RoseRunning and LeagueRunning then
+  begin
+    MsgBox(
+      '{#MyAppName} and League of Legends are both currently running.'#13#10 +
+      'Please close both applications and try uninstalling again.',
+      mbCriticalError,
+      MB_OK
+    );
+    Result := False;
+    exit;
+  end;
+
+  if RoseRunning then
   begin
     MsgBox(
       '{#MyAppName} is currently running.'#13#10 +
@@ -89,11 +131,22 @@ begin
       MB_OK
     );
     Result := False;
-  end
-  else
-  begin
-    Result := True;
+    exit;
   end;
+
+  if LeagueRunning then
+  begin
+    MsgBox(
+      'League of Legends is currently running.'#13#10 +
+      'Please close League of Legends and try uninstalling again.',
+      mbCriticalError,
+      MB_OK
+    );
+    Result := False;
+    exit;
+  end;
+
+  Result := True;
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
@@ -182,5 +235,8 @@ begin
   if CurUninstallStep = usPostUninstall then
   begin
     _DeleteLocalAppDataRose();
+    { Remove the entire install directory (Program Files\Rose) in case
+      runtime-generated files (logs, caches, etc.) were left behind. }
+    DelTree(ExpandConstant('{app}'), True, True, True);
   end;
 end;
