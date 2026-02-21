@@ -43,7 +43,7 @@ class SkinMapping:
         
         mapping_path = (
             get_user_data_dir()
-            / "skinid_mapping"
+            / "resources"
             / language
             / "skin_ids.json"
         )

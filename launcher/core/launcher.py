@@ -119,11 +119,12 @@ def _perform_update(dialog: UpdateDialog, dev_mode: bool = False) -> bool:
     return False
 
 
-def run_launcher(dev_mode: bool = False) -> None:
+def run_launcher(dev_mode: bool = False, test_download_fail: bool = False) -> None:
     """Display the Win32 update dialog and perform startup checks.
-    
+
     Args:
         dev_mode: If True, skip hash checks (for development)
+        test_download_fail: If True, force skin download to fail (for testing)
     """
     if sys.platform != "win32":
         log.debug("Win32 launcher skipped on non-Windows platform.")
@@ -141,13 +142,14 @@ def run_launcher(dev_mode: bool = False) -> None:
 
         def worker():
             try:
-                _perform_update(dialog, dev_mode=dev_mode)
-                
+                # Auto-update disabled - versions uploaded manually
+                # _perform_update(dialog, dev_mode=dev_mode)
+
                 hash_sequence = HashCheckSequence()
                 hash_sequence.perform_hash_check(dialog, dev_mode=dev_mode)
                 
                 skin_sequence = SkinSyncSequence()
-                skin_sequence.perform_skin_sync(dialog)
+                skin_sequence.perform_skin_sync(dialog, test_fail=test_download_fail)
 
                 dialog.set_detail("All checks complete.")
                 dialog.set_status("Launching Rose…")

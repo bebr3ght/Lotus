@@ -58,10 +58,14 @@ def setup_arguments() -> argparse.Namespace:
                    help="Disable automatic skin downloading")
     ap.add_argument("--force-update-skins", action="store_true", default=DEFAULT_FORCE_UPDATE_SKINS, 
                    help="Force update all skins (re-download existing ones)")
-    ap.add_argument("--max-champions", type=int, default=None, 
+    ap.add_argument("--max-champions", type=int, default=None,
                    help="Limit number of champions to download skins for (for testing)")
-    
+
+    # Testing arguments
+    ap.add_argument("--test-download-fail", action="store_true", default=False,
+                   help="Force skin download to fail (for testing error handling)")
+
     # Log management arguments (none - retention managed by age in utils.logging)
-    
+
     return ap.parse_args()
 

@@ -444,7 +444,10 @@ def main() -> None:
         if not args.dev:
             try:
                 from launcher import run_launcher
-                run_launcher(dev_mode=args.dev)
+                run_launcher(
+                    dev_mode=args.dev,
+                    test_download_fail=getattr(args, 'test_download_fail', False),
+                )
             except ModuleNotFoundError as err:
                 print(f"[Launcher] Unable to import launcher module: {err}")
             except Exception as err:  # noqa: BLE001

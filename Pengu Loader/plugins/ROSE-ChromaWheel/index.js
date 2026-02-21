@@ -116,7 +116,7 @@
 
     /* Normal champ select carousel positioning */
     .skin-selection-item .${BUTTON_CLASS} {
-      left: calc(50% - 4px);
+      left: 50%;
     }
 
     .${BUTTON_CLASS}[data-hidden],

@@ -8,6 +8,7 @@ Supports incremental updates by tracking repository changes
 """
 
 import json
+import time
 import zipfile
 import tempfile
 import shutil
@@ -58,9 +59,9 @@ class RepoDownloader:
         self.state_file = self.target_dir / '.repo_state.json'
         self.api_base = "https://api.github.com/repos/Alban1911/RoseSkins"
         
-        # State tracking for resources folder (skinid_mapping)
+        # State tracking for resources folder (resources)
         from utils.core.paths import get_user_data_dir
-        self.resources_state_file = get_user_data_dir() / "skinid_mapping" / ".resources_state.json"
+        self.resources_state_file = get_user_data_dir() / "resources" / ".resources_state.json"
     
     def _emit_progress(self, percent: float, message: Optional[str] = None):
         if not self.progress_callback:
@@ -191,27 +192,44 @@ class RepoDownloader:
         """Check if resources folder has changed since last update"""
         local_state = self.load_resources_state()
         if not local_state:
+            # No state file - check if resources already exist (manual download)
+            # Require at least 5 json files to consider it a valid manual download
+            MIN_RESOURCES_FOR_MANUAL_DOWNLOAD = 5
+            from utils.core.paths import get_user_data_dir
+            resources_dir = get_user_data_dir() / "resources"
+            existing_resources = list(resources_dir.rglob("*.json")) if resources_dir.exists() else []
+            if len(existing_resources) >= MIN_RESOURCES_FOR_MANUAL_DOWNLOAD:
+                # Resources exist but no state file - create state from current commit
+                log.info(f"No resources state but found {len(existing_resources)} existing files (likely manual download)")
+                current_state = self.get_resources_state()
+                if current_state and not current_state.get('rate_limited'):
+                    current_state['last_checked'] = current_state.get('last_commit_date')
+                    self.save_resources_state(current_state)
+                    log.info("Created resources state file from current GitHub commit")
+                    return False  # No update needed
+            elif existing_resources:
+                log.info(f"Found only {len(existing_resources)} resource files (need {MIN_RESOURCES_FOR_MANUAL_DOWNLOAD}+), will download full set")
             log.info("No local resources state found, resources will be downloaded")
             return True
-        
+
         current_state = self.get_resources_state()
         if not current_state:
             log.warning("Failed to get current resources state, assuming no changes")
             return False
-        
+
         # Check if rate limited - if so, force update via ZIP
         if current_state.get('rate_limited'):
             log.info("Rate limited detected for resources, will force ZIP download")
             return True
-        
+
         # Compare commit SHAs
         local_sha = local_state.get('last_commit_sha')
         current_sha = current_state.get('last_commit_sha')
-        
+
         if local_sha != current_sha:
             log.info(f"Resources folder changed: {local_sha[:8] if local_sha else 'None'} -> {current_sha[:8] if current_sha else 'None'}")
             return True
-        
+
         log.info("Resources folder unchanged, skipping download")
         return False
     
@@ -219,27 +237,45 @@ class RepoDownloader:
         """Check if repository has changed since last update"""
         local_state = self.load_local_state()
         if not local_state:
+            # No state file - check if skins already exist (manual download)
+            # Count champion folders (top-level directories in skins folder)
+            # League has 172+ champions, require at least 150 to consider valid
+            MIN_CHAMPIONS_FOR_MANUAL_DOWNLOAD = 150
+            champion_folders = []
+            if self.target_dir.exists():
+                champion_folders = [d for d in self.target_dir.iterdir() if d.is_dir()]
+            if len(champion_folders) >= MIN_CHAMPIONS_FOR_MANUAL_DOWNLOAD:
+                # Enough champion folders exist - create state from current commit
+                log.info(f"No state file but found {len(champion_folders)} champion folders (likely manual download)")
+                current_state = self.get_repo_state()
+                if current_state and not current_state.get('rate_limited'):
+                    current_state['last_checked'] = current_state.get('last_commit_date')
+                    self.save_local_state(current_state)
+                    log.info("Created state file from current GitHub commit")
+                    return False  # No update needed
+            elif champion_folders:
+                log.info(f"Found only {len(champion_folders)} champion folders (need {MIN_CHAMPIONS_FOR_MANUAL_DOWNLOAD}+), will download full set")
             log.info("No local state found, repository will be downloaded")
             return True
-        
+
         current_state = self.get_repo_state()
         if not current_state:
             log.warning("Failed to get current repository state, assuming no changes")
             return False
-        
+
         # Check if rate limited - if so, force update via ZIP
         if current_state.get('rate_limited'):
             log.info("Rate limited detected, will force ZIP download")
             return True
-        
+
         # Compare commit SHAs
         local_sha = local_state.get('last_commit_sha')
         current_sha = current_state.get('last_commit_sha')
-        
+
         if local_sha != current_sha:
             log.info(f"Repository changed: {local_sha[:8] if local_sha else 'None'} -> {current_sha[:8] if current_sha else 'None'}")
             return True
-        
+
         log.info("Repository unchanged, skipping download")
         return False
     
@@ -340,90 +376,121 @@ class RepoDownloader:
             return False, None
         
     def download_repo_zip(self, progress_start: float = 0.0, progress_end: float = 70.0, download_label: str = "skins") -> Optional[Path]:
-        """Download the entire repository as a ZIP file"""
+        """Download the entire repository as a ZIP file with retry logic"""
         # GitHub's ZIP download URL format
         zip_url = f"{self.repo_url}/archive/refs/heads/main.zip"
-        
+
         log.info(f"Downloading repository ZIP from: {zip_url}")
-        
-        try:
-            # Create temporary file for ZIP
-            temp_zip = tempfile.NamedTemporaryFile(delete=False, suffix='.zip')
-            temp_zip_path = Path(temp_zip.name)
-            temp_zip.close()
 
-            # Try to resolve total size via HEAD request first
-            total_size: Optional[int] = None
+        # Retry configuration
+        max_retries = 3
+        base_delay = 2  # seconds
+
+        for attempt in range(1, max_retries + 1):
+            temp_zip_path = None
             try:
-                head_response = self.session.head(zip_url, allow_redirects=True, timeout=SKIN_DOWNLOAD_STREAM_TIMEOUT_S)
-                head_response.raise_for_status()
-                total_size_header = head_response.headers.get('Content-Length')
-                if total_size_header:
-                    total_size = int(total_size_header)
-            except requests.RequestException:
-                total_size = None
-            except ValueError:
-                total_size = None
+                # Create temporary file for ZIP
+                temp_zip = tempfile.NamedTemporaryFile(delete=False, suffix='.zip')
+                temp_zip_path = Path(temp_zip.name)
+                temp_zip.close()
 
-            # Download ZIP file
-            response = self.session.get(zip_url, stream=True, timeout=SKIN_DOWNLOAD_STREAM_TIMEOUT_S)
-            response.raise_for_status()
-            if total_size is None:
-                total_size_header = response.headers.get('Content-Length')
+                # Try to resolve total size via HEAD request first
+                total_size: Optional[int] = None
                 try:
-                    total_size = int(total_size_header) if total_size_header else None
+                    head_response = self.session.head(zip_url, allow_redirects=True, timeout=SKIN_DOWNLOAD_STREAM_TIMEOUT_S)
+                    head_response.raise_for_status()
+                    total_size_header = head_response.headers.get('Content-Length')
+                    if total_size_header:
+                        total_size = int(total_size_header)
+                except requests.RequestException:
+                    total_size = None
                 except ValueError:
                     total_size = None
-            downloaded = 0
-            last_emit = -1
-            last_reported_bytes = 0
-            unknown_estimated_total = total_size if total_size else 200 * 1024 * 1024
-            
-            # Use appropriate label based on what's being downloaded
-            # Note: We must download the full ZIP, but will only extract what's needed
-            if download_label == "resources":
-                progress_msg = "Downloading repository ZIP (will extract skin ID mapping only)..."
-            elif download_label == "both":
-                progress_msg = "Downloading repository ZIP (skins + skin ID mapping)..."
-            else:
-                progress_msg = "Downloading repository ZIP (will extract skins only)..."
-            
-            self._emit_progress(progress_start, progress_msg)
-            
-            # Save ZIP file
-            with open(temp_zip_path, 'wb') as f:
-                for chunk in response.iter_content(chunk_size=8192):
-                    if chunk:
-                        f.write(chunk)
-                        downloaded += len(chunk)
-                        if total_size and total_size > 0:
-                            fraction = downloaded / total_size
-                        else:
-                            if downloaded > unknown_estimated_total:
-                                unknown_estimated_total = int(downloaded * 1.25)
-                            fraction = min(downloaded / max(unknown_estimated_total, 1), 0.99)
-                        percent = progress_start + fraction * (progress_end - progress_start)
-                        emit_value = int(percent * 10)
-                        if emit_value != last_emit:
-                            last_emit = emit_value
-                            downloaded_mb = _format_size(downloaded)
-                            total_mb = _format_size(total_size) if total_size else "?"
-                            self._emit_progress(
-                                percent,
-                                f"{progress_msg} {downloaded_mb} / {total_mb}",
-                            )
- 
-            log.info(f"Repository ZIP downloaded: {temp_zip_path}")
-            final_total = total_size if total_size else downloaded
-            self._emit_progress(progress_end, f"Download complete ({_format_size(downloaded)} / {_format_size(final_total)})")
-            return temp_zip_path
-            
-        except requests.RequestException as e:
-            log.error(f"Failed to download repository ZIP: {e}")
-            return None
-        except Exception as e:
-            log.error(f"Error downloading repository: {e}")
-            return None
+
+                # Download ZIP file
+                response = self.session.get(zip_url, stream=True, timeout=SKIN_DOWNLOAD_STREAM_TIMEOUT_S)
+                response.raise_for_status()
+                if total_size is None:
+                    total_size_header = response.headers.get('Content-Length')
+                    try:
+                        total_size = int(total_size_header) if total_size_header else None
+                    except ValueError:
+                        total_size = None
+                downloaded = 0
+                last_emit = -1
+                unknown_estimated_total = total_size if total_size else 200 * 1024 * 1024
+
+                # Use appropriate label based on what's being downloaded
+                # Note: We must download the full ZIP, but will only extract what's needed
+                if download_label == "resources":
+                    progress_msg = "Downloading repository ZIP (will extract skin ID mapping only)..."
+                elif download_label == "both":
+                    progress_msg = "Downloading repository ZIP (skins + skin ID mapping)..."
+                else:
+                    progress_msg = "Downloading repository ZIP (will extract skins only)..."
+
+                if attempt > 1:
+                    progress_msg = f"[Retry {attempt}/{max_retries}] {progress_msg}"
+
+                self._emit_progress(progress_start, progress_msg)
+
+                # Save ZIP file
+                with open(temp_zip_path, 'wb') as f:
+                    for chunk in response.iter_content(chunk_size=8192):
+                        if chunk:
+                            f.write(chunk)
+                            downloaded += len(chunk)
+                            if total_size and total_size > 0:
+                                fraction = downloaded / total_size
+                            else:
+                                if downloaded > unknown_estimated_total:
+                                    unknown_estimated_total = int(downloaded * 1.25)
+                                fraction = min(downloaded / max(unknown_estimated_total, 1), 0.99)
+                            percent = progress_start + fraction * (progress_end - progress_start)
+                            emit_value = int(percent * 10)
+                            if emit_value != last_emit:
+                                last_emit = emit_value
+                                downloaded_mb = _format_size(downloaded)
+                                total_mb = _format_size(total_size) if total_size else "?"
+                                self._emit_progress(
+                                    percent,
+                                    f"{progress_msg} {downloaded_mb} / {total_mb}",
+                                )
+
+                log.info(f"Repository ZIP downloaded: {temp_zip_path}")
+                final_total = total_size if total_size else downloaded
+                self._emit_progress(progress_end, f"Download complete ({_format_size(downloaded)} / {_format_size(final_total)})")
+                return temp_zip_path
+
+            except requests.RequestException as e:
+                log.warning(f"Download attempt {attempt}/{max_retries} failed: {e}")
+                # Clean up partial download
+                if temp_zip_path and temp_zip_path.exists():
+                    try:
+                        temp_zip_path.unlink()
+                    except Exception:
+                        pass
+
+                if attempt < max_retries:
+                    delay = base_delay * (2 ** (attempt - 1))  # Exponential backoff: 2s, 4s, 8s
+                    log.info(f"Retrying in {delay} seconds...")
+                    self._emit_progress(progress_start, f"Download failed, retrying in {delay}s...")
+                    time.sleep(delay)
+                else:
+                    log.error(f"Failed to download repository ZIP after {max_retries} attempts: {e}")
+                    return None
+
+            except Exception as e:
+                log.error(f"Error downloading repository: {e}")
+                # Clean up partial download
+                if temp_zip_path and temp_zip_path.exists():
+                    try:
+                        temp_zip_path.unlink()
+                    except Exception:
+                        pass
+                return None
+
+        return None
     
     def _cleanup_removed_skin_files(
         self,
@@ -589,8 +656,8 @@ class RepoDownloader:
                 processed_bytes = 0
 
                 from utils.core.paths import get_user_data_dir
-                # Place the entire resources folder as skinid_mapping
-                mapping_target_dir = get_user_data_dir() / "skinid_mapping"
+                # Place the entire resources folder as resources
+                mapping_target_dir = get_user_data_dir() / "resources"
 
                 # Reserve 5% of progress range for cleanup operations
                 cleanup_reserve = 5.0
@@ -622,7 +689,7 @@ class RepoDownloader:
                             extract_path = self.target_dir / relative_path
                         else:
                             # Extract entire resources folder structure, removing 'resources/' prefix
-                            # so it becomes the skinid_mapping folder
+                            # so it becomes the resources folder
                             if relative_path.startswith('resources/'):
                                 relative_path = relative_path.replace('resources/', '', 1)
                             extract_path = mapping_target_dir / relative_path
@@ -759,57 +826,34 @@ class RepoDownloader:
             if not local_state:
                 existing_skins = list(self.target_dir.rglob("*.zip"))
                 existing_previews = list(self.target_dir.rglob("*.png"))
-                
-                # Check if skinid_mapping exists
+
+                # Check if resources exists
                 from utils.core.paths import get_user_data_dir
-                mapping_dir = get_user_data_dir() / "skinid_mapping"
+                mapping_dir = get_user_data_dir() / "resources"
                 existing_mappings = list(mapping_dir.rglob("*.json")) if mapping_dir.exists() else []
-                
+
                 if existing_skins or existing_previews or existing_mappings:
-                    log.warning(f"No state file found but found existing files:")
-                    log.warning(f"  - {len(existing_skins)} skin .zip files")
-                    log.warning(f"  - {len(existing_previews)} preview .png files")
-                    log.warning(f"  - {len(existing_mappings)} skin ID mapping files")
-                    log.info("Cannot track commits without state file - deleting all files and performing full ZIP download")
-                    
-                    # Delete all existing skins and previews
-                    for file_path in existing_skins + existing_previews:
-                        try:
-                            file_path.unlink()
-                        except Exception as e:
-                            log.warning(f"Failed to delete {file_path}: {e}")
-                    
-                    # Delete all existing mappings
-                    for mapping_file in existing_mappings:
-                        try:
-                            mapping_file.unlink()
-                        except Exception as e:
-                            log.warning(f"Failed to delete {mapping_file}: {e}")
-                    
-                    # Also delete empty directories
-                    for dir_path in list(self.target_dir.rglob("*")):
-                        if dir_path.is_dir() and not any(dir_path.iterdir()):
-                            try:
-                                dir_path.rmdir()
-                            except Exception:
-                                pass
-                    
-                    if mapping_dir.exists():
-                        for dir_path in list(mapping_dir.rglob("*")):
-                            if dir_path.is_dir() and not any(dir_path.iterdir()):
-                                try:
-                                    dir_path.rmdir()
-                                except Exception:
-                                    pass
-                        # Try to remove the mapping dir itself if empty
-                        try:
-                            if not any(mapping_dir.iterdir()):
-                                mapping_dir.rmdir()
-                        except Exception:
-                            pass
-                    
-                    # Now do full download
-                    return self.download_and_extract_skins(force_update=True)
+                    # Skins exist but no state file (likely manual download)
+                    # Create state file from current commit instead of deleting everything
+                    log.info(f"No state file found but found existing files (likely manual download):")
+                    log.info(f"  - {len(existing_skins)} skin .zip files")
+                    log.info(f"  - {len(existing_previews)} preview .png files")
+                    log.info(f"  - {len(existing_mappings)} skin ID mapping files")
+                    log.info("Creating state file from current GitHub commit to enable future updates...")
+
+                    # Save current state so future updates work
+                    current_state['last_checked'] = current_state.get('last_commit_date')
+                    self.save_local_state(current_state)
+
+                    # Also save resources state if mappings exist
+                    if existing_mappings:
+                        resources_state = self.get_resources_state()
+                        if resources_state and not resources_state.get('rate_limited'):
+                            resources_state['last_checked'] = resources_state.get('last_commit_date')
+                            self.save_resources_state(resources_state)
+
+                    self._emit_progress(100, "Skins detected, ready for future updates")
+                    return True
                 else:
                     log.info("No local state and no existing files found, performing full download")
                     return self.download_and_extract_skins(force_update=True)
