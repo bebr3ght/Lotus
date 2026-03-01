@@ -24,6 +24,7 @@ APP_VERSION = "1.1.14"                          # Application version
 APP_USER_AGENT = f"Rose/{APP_VERSION}"  # User-Agent header for HTTP requests
 
 _CONFIG = configparser.ConfigParser()
+_CONFIG_MTIME: float = 0.0  # Last known modification time of config.ini
 
 
 def get_config_file_path() -> Path:
@@ -33,8 +34,11 @@ def get_config_file_path() -> Path:
 
 
 def _reload_config() -> None:
-    _CONFIG.clear()
+    """Reload config from disk only when the file has actually been modified."""
+    global _CONFIG_MTIME
     config_path = get_config_file_path()
+
+    # One-time migration of legacy config
     if not config_path.exists():
         legacy_path = Path("config.ini")
         if legacy_path.exists():
@@ -42,6 +46,18 @@ def _reload_config() -> None:
                 shutil.copy2(legacy_path, config_path)
             except Exception as e:
                 log.debug(f"Failed to migrate legacy config: {e}")
+
+    # Check file mtime, skip re-read if unchanged
+    try:
+        current_mtime = config_path.stat().st_mtime
+    except OSError:
+        current_mtime = 0.0
+
+    if current_mtime == _CONFIG_MTIME and _CONFIG.sections():
+        return  # File unchanged = use cached config
+
+    _CONFIG_MTIME = current_mtime
+    _CONFIG.clear()
     if config_path.exists():
         try:
             _CONFIG.read(config_path)
