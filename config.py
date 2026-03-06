@@ -168,8 +168,9 @@ GAME_RESUME_VERIFICATION_WAIT_S = 0.1       # Seconds to wait after resume for s
 GAME_RESUME_MAX_ATTEMPTS = 3                # Max attempts to resume game (handles multiple suspensions)
 
 # Game delay strategies
-ENABLE_PRIORITY_BOOST = True         # Boost injection process priority to HIGH
-ENABLE_GAME_SUSPENSION = True        # Suspend game process during injection (RISKY - may trigger anti-cheat)
+ENABLE_MKOVERLAY_PRIORITY_BOOST = True   # Boost short-lived mkoverlay process priority during injection setup
+ENABLE_RUNOVERLAY_PRIORITY_BOOST = False  # Runoverlay runs for the entire game session; boosting its priority would compete with the game for CPU and cause perf decrease
+ENABLE_GAME_SUSPENSION = True            # Suspend game process during injection (RISKY - may trigger anti-cheat)
 
 
 # =============================================================================
@@ -336,4 +337,3 @@ ANALYTICS_TIMEOUT_S = 30  # Request timeout in seconds
 DEFAULT_VERBOSE = True
 DEFAULT_DOWNLOAD_SKINS = True
 DEFAULT_FORCE_UPDATE_SKINS = False
-

@@ -30,7 +30,8 @@ from utils.core.issue_reporter import report_issue
 from config import (
     PROCESS_TERMINATE_TIMEOUT_S,
     PROCESS_MONITOR_SLEEP_S,
-    ENABLE_PRIORITY_BOOST
+    ENABLE_MKOVERLAY_PRIORITY_BOOST,
+    ENABLE_RUNOVERLAY_PRIORITY_BOOST
 )
 
 log = get_logger()
@@ -108,7 +109,7 @@ class OverlayManager:
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=creationflags, text=True, bufsize=1)
             
             # Boost process priority to maximize CPU contention if enabled
-            if ENABLE_PRIORITY_BOOST and PSUTIL_AVAILABLE:
+            if ENABLE_MKOVERLAY_PRIORITY_BOOST and PSUTIL_AVAILABLE:
                 try:
                     p = psutil.Process(proc.pid)
                     p.nice(psutil.HIGH_PRIORITY_CLASS)
@@ -211,7 +212,7 @@ class OverlayManager:
             proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=creationflags)
             
             # Boost process priority to maximize CPU contention if enabled
-            if ENABLE_PRIORITY_BOOST and PSUTIL_AVAILABLE:
+            if ENABLE_RUNOVERLAY_PRIORITY_BOOST and PSUTIL_AVAILABLE:
                 try:
                     p = psutil.Process(proc.pid)
                     p.nice(psutil.HIGH_PRIORITY_CLASS)
@@ -402,4 +403,3 @@ class OverlayManager:
         except Exception as e:
             log.error(f"[INJECT] Error running pre-built overlay: {e}")
             return False
-
