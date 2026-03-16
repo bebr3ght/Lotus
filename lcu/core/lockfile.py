@@ -17,6 +17,7 @@ from utils.core.logging import get_logger
 log = get_logger()
 
 SWIFTPLAY_MODES = {"SWIFTPLAY", "BRAWL"}
+SWIFTPLAY_QUEUE_ID = 480
 
 
 @dataclass

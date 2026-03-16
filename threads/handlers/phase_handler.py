@@ -7,11 +7,14 @@ Handles phase-specific logic and UI management
 
 import logging
 from lcu import LCU
+from lcu.core.lockfile import SWIFTPLAY_QUEUE_ID
 from state import SharedState
 from ui.chroma.selector import get_chroma_selector
 from utils.core.logging import get_logger, log_action
 
 log = get_logger()
+
+_SWIFTPLAY_ACTIVE_PHASES = {"Matchmaking", "ReadyCheck", "ChampSelect", "FINALIZATION", "GameStart"}
 
 
 class PhaseHandler:
@@ -42,6 +45,7 @@ class PhaseHandler:
     
     def handle_phase_change(self, phase: str, previous_phase: str):
         """Handle phase change"""
+        log.info(f"[phase] Phase transition: {previous_phase} → {phase} (swiftplay={self.state.is_swiftplay_mode}, extracted={len(self.state.swiftplay_extracted_mods)}, queue={self.state.current_queue_id})")
         if phase == "Matchmaking":
             if self.state.is_swiftplay_mode:
                 log.info("[phase] Matchmaking phase detected in Swiftplay mode - triggering injection")
@@ -54,7 +58,7 @@ class PhaseHandler:
         elif phase == "ChampSelect":
             # Queue ID 480 fallback - handles race condition where game_mode_detector
             # hasn't set is_swiftplay_mode yet when we enter ChampSelect
-            if not self.state.is_swiftplay_mode and self.state.current_queue_id == 480:
+            if not self.state.is_swiftplay_mode and self.state.current_queue_id == SWIFTPLAY_QUEUE_ID:
                 log.info("[phase] ChampSelect - queue ID 480 detected, setting Swiftplay mode")
                 self.state.is_swiftplay_mode = True
                 # Ensure handler state is initialized
@@ -150,11 +154,10 @@ class PhaseHandler:
         # Handle returning to Lobby from a Swiftplay game flow (dodge, decline, etc.)
         # Only cleanup if we're NOT returning to a Swiftplay lobby (queue ID 480).
         # If queue ID is still 480, user wants to requeue with same skins — preserve tracking.
-        _SWIFTPLAY_ACTIVE_PHASES = {"Matchmaking", "ReadyCheck", "ChampSelect", "FINALIZATION", "GameStart"}
         if phase == "Lobby" and previous_phase in _SWIFTPLAY_ACTIVE_PHASES:
             if self.state.is_swiftplay_mode and self.swiftplay_handler:
                 # Check if we're still in a Swiftplay lobby (queue ID 480)
-                if self.state.current_queue_id == 480:
+                if self.state.current_queue_id == SWIFTPLAY_QUEUE_ID:
                     log.info(f"[phase] Returned to Lobby from {previous_phase} - still in Swiftplay queue (480), preserving skin tracking")
                 else:
                     log.info(f"[phase] Returned to Lobby from {previous_phase} - queue changed, cleaning up Swiftplay state")
@@ -169,8 +172,10 @@ class PhaseHandler:
             if overlay_lock.locked():
                 log.info("[phase] InProgress - waiting for Swiftplay overlay to finish before UI destruction")
             # Acquire and immediately release — just waits for any in-flight overlay
-            overlay_lock.acquire()
-            overlay_lock.release()
+            if overlay_lock.acquire(timeout=30):
+                overlay_lock.release()
+            else:
+                log.warning("[phase] InProgress - timed out waiting for overlay lock after 30s, proceeding anyway")
 
         try:
             from ui.core.user_interface import get_user_interface
@@ -198,13 +203,18 @@ class PhaseHandler:
             log_action(log, "UI destruction requested for EndOfGame", "")
         except Exception as e:
             log.warning(f"[phase] Failed to request UI destruction for EndOfGame: {e}")
-        
+
         if self.injection_manager:
             try:
                 self.injection_manager.stop_overlay_process()
                 log_action(log, "Stopped overlay process for EndOfGame", "🛑")
             except Exception as e:
                 log.warning(f"[phase] Failed to stop overlay process: {e}")
+
+        # Clean up Swiftplay state after game ends to prevent stale data
+        if self.state.is_swiftplay_mode and self.swiftplay_handler:
+            log.info("[phase] EndOfGame - cleaning up Swiftplay state")
+            self.swiftplay_handler.cleanup_swiftplay_exit()
     
     def _request_ui_destruction(self):
         """Request UI destruction"""

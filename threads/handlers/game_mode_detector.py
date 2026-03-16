@@ -8,12 +8,11 @@ Detects game mode and map information from LCU
 import logging
 import traceback
 from lcu import LCU
+from lcu.core.lockfile import SWIFTPLAY_MODES, SWIFTPLAY_QUEUE_ID
 from state import SharedState
 from utils.core.logging import get_logger
 
 log = get_logger()
-
-SWIFTPLAY_MODES = {"SWIFTPLAY", "BRAWL"}
 
 
 class GameModeDetector:
@@ -82,7 +81,7 @@ class GameModeDetector:
 
             # Compute is_swiftplay_mode without intermediate False visible to other threads
             # Explicit queue ID 480 check for Swiftplay (may have queue_id without gameMode)
-            if queue_id == 480:
+            if queue_id == SWIFTPLAY_QUEUE_ID:
                 new_swiftplay_mode = True
 
             if isinstance(game_mode, str) and game_mode.upper() in SWIFTPLAY_MODES:

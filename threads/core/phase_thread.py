@@ -52,6 +52,7 @@ class PhaseThread(threading.Thread):
 
         # Expose callback so the message handler can trigger base skin forcing directly
         state.force_base_skins_callback = self.swiftplay_handler.force_base_skins_if_needed
+        state.swiftplay_handler = self.swiftplay_handler
 
     def run(self):
         """Main thread loop"""
