@@ -52,6 +52,7 @@
     autostart: false,
     gamePath: "",
     gamePathValid: false,
+    version: "",
   };
   let pathValidationTimeout = null;
 
@@ -953,7 +954,13 @@
       autostart: payload.autostart || false,
       gamePath: payload.gamePath || "",
       gamePathValid: payload.gamePathValid || false,
+      version: payload.version || "",
     };
+    // Update version badge if the panel is already open
+    const badge = document.getElementById("rose-version-badge");
+    if (badge && payload.version) {
+      badge.textContent = `v${payload.version}`;
+    }
     updateSettingsForm();
     // Badge count should reflect what's actually in diagnostics (and not change while dragging sliders).
     const localCount = Array.isArray(diagnosticsState.errors) ? diagnosticsState.errors.length : 0;
@@ -1519,6 +1526,22 @@
     title.className = "settings-title";
     title.textContent = "Settings";
     form.appendChild(title);
+
+    // Version badge
+    const versionBadge = document.createElement("div");
+    versionBadge.id = "rose-version-badge";
+    versionBadge.style.cssText = [
+      "width: 100%",
+      "text-align: center",
+      "font-size: 11px",
+      "color: #cdbe91",
+      "font-family: Beaufort for LOL, serif",
+      "margin-top: -8px",
+      "margin-bottom: 10px",
+      "letter-spacing: 0.06em",
+    ].join(";");
+    versionBadge.textContent = `v${currentSettings.version || "1.1.14"}`;
+    form.appendChild(versionBadge);
 
     // Injection threshold section
     const thresholdSection = document.createElement("div");
@@ -2088,6 +2111,7 @@
     });
     form.appendChild(troubleshootButton);
 
+
     // Open Pengu Loader UI button
     const penguUIButton = document.createElement("lol-uikit-flat-button-secondary");
     penguUIButton.id = "pengu-ui-button";
@@ -2394,6 +2418,12 @@
           requestPathValidation(path);
         }
       }
+    }
+
+    // Update version badge
+    const versionBadge = document.getElementById("rose-version-badge");
+    if (versionBadge && currentSettings.version) {
+      versionBadge.textContent = `v${currentSettings.version}`;
     }
   }
 
