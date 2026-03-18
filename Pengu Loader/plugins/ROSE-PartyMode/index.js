@@ -511,7 +511,6 @@
     #${LOBBY_BUTTON_ID} {
       position: relative;
       cursor: pointer;
-      overflow: visible;
     }
 
     #${LOBBY_BUTTON_ID} .party-mode-icon {
@@ -537,29 +536,6 @@
     }
 
 
-    /* Riot-style tooltip */
-    .rose-tooltip {
-      position: absolute;
-      bottom: calc(100% + 8px);
-      left: 50%;
-      transform: translateX(-50%);
-      background: #010a13;
-      border: 1px solid #463714;
-      padding: 6px 10px;
-      white-space: nowrap;
-      font-family: var(--font-body), Arial, sans-serif;
-      font-size: 12px;
-      color: #a09b8c;
-      pointer-events: none;
-      opacity: 0;
-      transition: opacity 0.15s;
-      z-index: 10000;
-    }
-
-    #${LOBBY_BUTTON_ID}:hover .rose-tooltip,
-    #${BUTTON_ID}:hover .rose-tooltip {
-      opacity: 1;
-    }
     `;
   }
 
@@ -571,6 +547,44 @@
     style.id = styleId;
     style.textContent = getCSSRules();
     document.head.appendChild(style);
+  }
+
+  // Attach a native Riot tooltip to an element
+  function attachTooltip(el, text) {
+    let wrapper = null;
+    el.addEventListener("mouseenter", () => {
+      // Wrapper div to control positioning (native tooltip may override its own styles)
+      wrapper = document.createElement("div");
+      wrapper.style.cssText = "position:fixed;pointer-events:none;z-index:10000;visibility:hidden";
+      const tip = document.createElement("lol-uikit-tooltip");
+      tip.setAttribute("data-tooltip-position", "bottom");
+      const content = document.createElement("lol-uikit-content-block");
+      content.setAttribute("type", "tooltip-system");
+      const p = document.createElement("p");
+      p.textContent = text;
+      content.appendChild(p);
+      tip.appendChild(content);
+      wrapper.appendChild(tip);
+      document.body.appendChild(wrapper);
+      // Wait for render then position the wrapper
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          if (!wrapper || !wrapper.isConnected) return;
+          const btnRect = el.getBoundingClientRect();
+          const wrapRect = wrapper.getBoundingClientRect();
+          const centerX = btnRect.left + btnRect.width / 2;
+          wrapper.style.left = `${centerX - wrapRect.width / 2}px`;
+          wrapper.style.top = `${btnRect.bottom}px`;
+          wrapper.style.visibility = "visible";
+        });
+      });
+    });
+    el.addEventListener("mouseleave", () => {
+      if (wrapper) {
+        wrapper.remove();
+        wrapper = null;
+      }
+    });
   }
 
   // Create button in social actions bar
@@ -593,13 +607,13 @@
     button.className = "action-bar-button";
     button.innerHTML = `
       <span class="party-mode-icon"></span>
-      <span class="rose-tooltip">Party Mode</span>
     `;
 
     button.addEventListener("click", (e) => {
       e.stopPropagation();
       togglePanel();
     });
+    attachTooltip(button, "Party Mode");
 
     // Insert before the add friend button, or append to the end
     if (friendFinderParent) {
