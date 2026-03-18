@@ -215,7 +215,7 @@ class UDPTransport:
 
         # Try each address
         for addr in addresses:
-            log.debug(f"[UDP] Trying to punch through to {addr}")
+            log.info(f"[UDP] Trying to punch through to {addr}")
 
             # Send multiple punch packets
             for attempt in range(max_attempts):

@@ -278,10 +278,10 @@ class StunClient:
                         local_port=local_port,
                     )
             except asyncio.TimeoutError:
-                log.debug(f"[STUN] Timeout waiting for response from {server_host}")
+                log.info(f"[STUN] Timeout waiting for response from {server_host}")
                 continue
             except Exception as e:
-                log.debug(f"[STUN] Failed to query {server_host}: {e}")
+                log.info(f"[STUN] Failed to query {server_host}: {e}")
                 continue
 
         log.warning("[STUN] All STUN servers failed (with socket)")

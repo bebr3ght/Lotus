@@ -361,7 +361,7 @@ class PeerConnection:
                     await self.send_message(hello_msg)
                     continue
                 except Exception as e:
-                    log.debug(f"[PEER] Handshake recv error: {e}")
+                    log.info(f"[PEER] Handshake recv error: {e}")
                     continue
 
             return False
@@ -398,7 +398,7 @@ class PeerConnection:
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                log.debug(f"[PEER] Keepalive error: {e}")
+                log.info(f"[PEER] Keepalive error: {e}")
 
     async def _send_pong(self, sequence: int):
         """Send pong response"""
@@ -418,6 +418,6 @@ class PeerConnection:
         if self.state != new_state:
             old_state = self.state
             self.state = new_state
-            log.debug(f"[PEER] {self.summoner_id}: {old_state.value} -> {new_state.value}")
+            log.info(f"[PEER] {self.summoner_id}: {old_state.value} -> {new_state.value}")
             if self._on_state_change:
                 self._on_state_change(new_state)

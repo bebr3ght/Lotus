@@ -334,7 +334,7 @@ class PartyManager:
                 try:
                     await peer.send_message(msg)
                 except Exception as e:
-                    log.debug(f"[PARTY] Failed to send skin update to {peer.summoner_id}: {e}")
+                    log.info(f"[PARTY] Failed to send skin update to {peer.summoner_id}: {e}")
 
     def get_party_skins(self) -> List[PartySkinData]:
         """Get all skin selections for injection
@@ -380,7 +380,7 @@ class PartyManager:
             try:
                 await peer.send_skin_update(selection)
             except Exception as e:
-                log.debug(f"[PARTY] Failed to send skin to peer: {e}")
+                log.info(f"[PARTY] Failed to send skin to peer: {e}")
 
     def _handle_peer_message(self, summoner_id: int, msg: Message):
         """Handle message from peer"""
@@ -451,7 +451,7 @@ class PartyManager:
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                log.debug(f"[PARTY] Lobby check error: {e}")
+                log.info(f"[PARTY] Lobby check error: {e}")
 
     async def _skin_broadcast_loop(self):
         """Background loop to broadcast skin updates"""
@@ -479,7 +479,7 @@ class PartyManager:
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                log.debug(f"[PARTY] Skin broadcast error: {e}")
+                log.info(f"[PARTY] Skin broadcast error: {e}")
 
     def _notify_state_change(self):
         """Notify UI of state change"""
