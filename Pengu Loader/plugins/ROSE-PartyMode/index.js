@@ -20,7 +20,6 @@
   let bridgeReady = false;
   let bridgeQueue = [];
   let partyPanel = null;
-  let partyButton = null;
   let lobbyButton = null;
   let isVisible = false;
   let currentUIMode = null; // 'lobby' or 'champselect'
@@ -152,63 +151,6 @@
     }
 
     /* Party Button */
-    #${BUTTON_ID} {
-      position: fixed;
-      bottom: 120px;
-      right: 20px;
-      width: 48px;
-      height: 48px;
-      border-radius: 50%;
-      background: linear-gradient(180deg, #1e2328 0%, #0a0c0e 100%);
-      border: 2px solid #463714;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      z-index: 9999;
-      transition: all 0.2s ease;
-      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
-    }
-
-    #${BUTTON_ID}:hover {
-      border-color: #c89b3c;
-      transform: scale(1.05);
-    }
-
-    #${BUTTON_ID}.active {
-      border-color: #0acbe6;
-      box-shadow: 0 0 12px rgba(10, 203, 230, 0.5);
-    }
-
-    #${BUTTON_ID} svg {
-      width: 24px;
-      height: 24px;
-      fill: #a09b8c;
-      transition: fill 0.2s ease;
-    }
-
-    #${BUTTON_ID}:hover svg,
-    #${BUTTON_ID}.active svg {
-      fill: #f0e6d2;
-    }
-
-    #${BUTTON_ID} .peer-count {
-      position: absolute;
-      top: -4px;
-      right: -4px;
-      min-width: 18px;
-      height: 18px;
-      background: #0acbe6;
-      border-radius: 9px;
-      font-size: 11px;
-      font-weight: bold;
-      color: #010a13;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: 0 4px;
-    }
-
     /* Party Panel */
     /* ===== Panel: Riot dialog-frame style ===== */
     #${PANEL_ID} {
@@ -569,6 +511,7 @@
     #${LOBBY_BUTTON_ID} {
       position: relative;
       cursor: pointer;
+      overflow: visible;
     }
 
     #${LOBBY_BUTTON_ID} .party-mode-icon {
@@ -593,24 +536,30 @@
       background-color: #0acbe6;
     }
 
-    #${LOBBY_BUTTON_ID} .lobby-peer-count {
+
+    /* Riot-style tooltip */
+    .rose-tooltip {
       position: absolute;
-      top: -4px;
-      right: -6px;
-      min-width: 14px;
-      height: 14px;
-      background: #0acbe6;
-      border-radius: 7px;
-      font-size: 9px;
-      font-weight: bold;
-      color: #010a13;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: 0 3px;
+      bottom: calc(100% + 8px);
+      left: 50%;
+      transform: translateX(-50%);
+      background: #010a13;
+      border: 1px solid #463714;
+      padding: 6px 10px;
+      white-space: nowrap;
+      font-family: var(--font-body), Arial, sans-serif;
+      font-size: 12px;
+      color: #a09b8c;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.15s;
+      z-index: 10000;
     }
 
-    /* Panel positioning for lobby mode (centered by default now) */
+    #${LOBBY_BUTTON_ID}:hover .rose-tooltip,
+    #${BUTTON_ID}:hover .rose-tooltip {
+      opacity: 1;
+    }
     `;
   }
 
@@ -624,27 +573,7 @@
     document.head.appendChild(style);
   }
 
-  // Create floating button for champion select
-  function createPartyButton() {
-    if (document.getElementById(BUTTON_ID)) return;
-
-    const button = document.createElement("div");
-    button.id = BUTTON_ID;
-    button.title = "Party Mode - Share skins with friends";
-    button.innerHTML = `
-      <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-        <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3zm0 14.2c-2.5 0-4.71-1.28-6-3.22.03-1.99 4-3.08 6-3.08 1.99 0 5.97 1.09 6 3.08-1.29 1.94-3.5 3.22-6 3.22z"/>
-      </svg>
-      <span class="peer-count" style="display: none;">0</span>
-    `;
-
-    button.addEventListener("click", togglePanel);
-    document.body.appendChild(button);
-    partyButton = button;
-    updateButtonState();
-  }
-
-  // Create button in social actions bar for lobby
+  // Create button in social actions bar
   function createLobbyButton() {
     if (document.getElementById(LOBBY_BUTTON_ID)) return;
 
@@ -662,10 +591,9 @@
     const button = document.createElement("span");
     button.id = LOBBY_BUTTON_ID;
     button.className = "action-bar-button";
-    button.title = "Party Mode - Share skins with friends";
     button.innerHTML = `
       <span class="party-mode-icon"></span>
-      <span class="lobby-peer-count" style="display: none;">0</span>
+      <span class="rose-tooltip">Party Mode</span>
     `;
 
     button.addEventListener("click", (e) => {
@@ -694,20 +622,10 @@
   function updateLobbyButtonState() {
     if (!lobbyButton) return;
 
-    const connectedPeers = partyState.peers.filter((p) => p.connected).length;
-    const peerCount = lobbyButton.querySelector(".lobby-peer-count");
-
     if (partyState.enabled) {
       lobbyButton.classList.add("active");
-      if (connectedPeers > 0) {
-        peerCount.textContent = connectedPeers;
-        peerCount.style.display = "flex";
-      } else {
-        peerCount.style.display = "none";
-      }
     } else {
       lobbyButton.classList.remove("active");
-      peerCount.style.display = "none";
     }
   }
 
@@ -799,26 +717,6 @@
   }
 
   function updateButtonState() {
-    // Update floating button (champ select)
-    if (partyButton) {
-      const connectedPeers = partyState.peers.filter((p) => p.connected).length;
-      const peerCount = partyButton.querySelector(".peer-count");
-
-      if (partyState.enabled) {
-        partyButton.classList.add("active");
-        if (connectedPeers > 0) {
-          peerCount.textContent = connectedPeers;
-          peerCount.style.display = "flex";
-        } else {
-          peerCount.style.display = "none";
-        }
-      } else {
-        partyButton.classList.remove("active");
-        peerCount.style.display = "none";
-      }
-    }
-
-    // Update lobby button
     updateLobbyButtonState();
   }
 
@@ -976,6 +874,7 @@
           my_summoner_name: data.my_summoner_name || "Unknown",
           peers: data.peers || [],
         };
+        updateButtonState();
         updatePanelState();
         break;
 
@@ -994,6 +893,7 @@
           }
           console.error(`${LOG_PREFIX} Failed to enable:`, data.error);
         }
+        updateButtonState();
         updatePanelState();
         break;
 
@@ -1005,6 +905,7 @@
         partyState.my_token = null;
         partyState.peers = [];
         console.log(`${LOG_PREFIX} Party mode disabled`);
+        updateButtonState();
         updatePanelState();
         break;
 
@@ -1109,23 +1010,6 @@
   }
 
   // Remove all party UI elements
-  function removePartyUI() {
-    if (partyPanel) {
-      partyPanel.classList.remove("visible");
-      partyPanel.remove();
-      partyPanel = null;
-      isVisible = false;
-    }
-    if (partyButton) {
-      partyButton.remove();
-      partyButton = null;
-    }
-    if (lobbyButton) {
-      lobbyButton.remove();
-      lobbyButton = null;
-    }
-    currentUIMode = null;
-  }
 
   // Monitor for lobby/champ select
   function startGamePhaseMonitor() {
@@ -1147,33 +1031,15 @@
         createPartyPanel();
       }
 
-      // Also show floating button in champ select (no social bar there)
-      if (inChampSelect) {
-        if (currentUIMode !== "champselect") {
-          console.log(`${LOG_PREFIX} Entered champion select`);
-          currentUIMode = "champselect";
-          createPartyButton();
-          if (partyPanel) partyPanel.classList.remove("lobby-mode");
-        }
-        if (!partyButton || !partyButton.isConnected) {
-          partyButton = null;
-          createPartyButton();
-        }
-      } else {
-        // Outside champ select - remove floating button, social bar button is enough
-        if (partyButton && partyButton.isConnected) {
-          partyButton.remove();
-        }
-        partyButton = null;
-
-        if (inLobby && currentUIMode !== "lobby") {
-          console.log(`${LOG_PREFIX} Entered lobby`);
-          currentUIMode = "lobby";
-          if (partyPanel) partyPanel.classList.add("lobby-mode");
-        } else if (!inLobby && currentUIMode !== "default") {
-          currentUIMode = "default";
-          if (partyPanel) partyPanel.classList.remove("lobby-mode");
-        }
+      // Track UI mode changes
+      if (inChampSelect && currentUIMode !== "champselect") {
+        console.log(`${LOG_PREFIX} Entered champion select`);
+        currentUIMode = "champselect";
+      } else if (inLobby && currentUIMode !== "lobby") {
+        console.log(`${LOG_PREFIX} Entered lobby`);
+        currentUIMode = "lobby";
+      } else if (!inChampSelect && !inLobby && currentUIMode !== "default") {
+        currentUIMode = "default";
       }
     }, 500);
   }
@@ -1193,10 +1059,8 @@
     // Set initial UI mode
     if (isInChampSelect()) {
       currentUIMode = "champselect";
-      createPartyButton();
     } else if (isInLobby()) {
       currentUIMode = "lobby";
-      if (partyPanel) partyPanel.classList.add("lobby-mode");
     } else {
       currentUIMode = "default";
     }

@@ -1521,27 +1521,28 @@
       return wrapper;
     }
 
-    // Title
+    // Title + version badge inline
+    const titleRow = document.createElement("div");
+    titleRow.style.cssText = "display:flex;align-items:baseline;justify-content:center;gap:8px;margin-bottom:4px";
+
     const title = document.createElement("div");
     title.className = "settings-title";
     title.textContent = "Settings";
-    form.appendChild(title);
+    title.style.marginBottom = "0";
+    titleRow.appendChild(title);
 
-    // Version badge
-    const versionBadge = document.createElement("div");
+    const versionBadge = document.createElement("span");
     versionBadge.id = "rose-version-badge";
     versionBadge.style.cssText = [
-      "width: 100%",
-      "text-align: center",
       "font-size: 11px",
-      "color: #cdbe91",
+      "color: #a09b8c",
       "font-family: Beaufort for LOL, serif",
-      "margin-top: -8px",
-      "margin-bottom: 10px",
       "letter-spacing: 0.06em",
     ].join(";");
     versionBadge.textContent = `v${currentSettings.version || "1.1.14"}`;
-    form.appendChild(versionBadge);
+    titleRow.appendChild(versionBadge);
+
+    form.appendChild(titleRow);
 
     // Injection threshold section
     const thresholdSection = document.createElement("div");
