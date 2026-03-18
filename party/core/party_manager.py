@@ -7,7 +7,7 @@ Main orchestrator for party mode P2P skin sharing
 
 import asyncio
 import time
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, List, Optional, Tuple
 
 from lcu import LCU
 from state import SharedState
@@ -205,18 +205,18 @@ class PartyManager:
         log.info("[PARTY] Party mode disabled")
         self._notify_state_change()
 
-    async def add_peer(self, token_str: str) -> bool:
+    async def add_peer(self, token_str: str) -> Tuple[bool, Optional[str]]:
         """Add a peer from their party token
 
         Args:
             token_str: Peer's party token string (whitespace and newlines are stripped)
 
         Returns:
-            True if peer added and connected successfully
+            Tuple of (success, error_message). error_message is None on success.
         """
         if not self.party_state.enabled:
             log.warning("[PARTY] Cannot add peer - party mode not enabled")
-            return False
+            return False, "Party mode not enabled"
 
         # Normalize token: strip and remove all whitespace (spaces, \n, \r, \t)
         token_str = "".join(token_str.split())
@@ -231,7 +231,7 @@ class PartyManager:
                 existing = self._peers[token.summoner_id]
                 if existing.is_connected:
                     log.info(f"[PARTY] Already connected to summoner {token.summoner_id}")
-                    return True
+                    return True, None
                 else:
                     # Remove stale connection
                     await existing.disconnect()
@@ -240,7 +240,7 @@ class PartyManager:
             # Check if trying to connect to self
             if token.summoner_id == self.party_state.my_summoner_id:
                 log.warning("[PARTY] Cannot add self as peer")
-                return False
+                return False, "You cannot add yourself as a peer"
 
             # Create peer connection
             peer = PeerConnection(
@@ -282,18 +282,22 @@ class PartyManager:
                 # Send our current skin selection
                 await self._send_my_skin_to_peer(peer)
 
-                return True
+                return True, None
             else:
                 self.party_state.remove_peer(token.summoner_id)
                 self._notify_state_change()
-                return False
+                return False, "Connection failed (hole punch or handshake timed out)"
 
         except ValueError as e:
+            error_str = str(e)
+            if "expired" in error_str.lower():
+                log.warning(f"[PARTY] Token expired: {e}")
+                return False, "Token has expired. Ask your friend for a new one."
             log.warning(f"[PARTY] Invalid token: {e}")
-            return False
+            return False, f"Invalid token: {error_str}"
         except Exception as e:
             log.error(f"[PARTY] Failed to add peer: {e}")
-            return False
+            return False, f"Unexpected error: {e}"
 
     async def remove_peer(self, summoner_id: int):
         """Remove a peer connection
