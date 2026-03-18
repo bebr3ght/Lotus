@@ -519,33 +519,32 @@
       border-radius: 3px;
     }
 
-    /* Lobby action bar button */
+    /* Lobby action bar button - matches native social bar buttons */
     #${LOBBY_BUTTON_ID} {
       position: relative;
       cursor: pointer;
-      width: 24px;
-      height: 24px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
     }
 
     #${LOBBY_BUTTON_ID} .party-mode-icon {
-      width: 20px;
-      height: 20px;
-      background-image: url('data:image/svg+xml,<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path fill="%23a09b8c" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3zm0 14.2c-2.5 0-4.71-1.28-6-3.22.03-1.99 4-3.08 6-3.08 1.99 0 5.97 1.09 6 3.08-1.29 1.94-3.5 3.22-6 3.22z"/></svg>');
-      background-size: contain;
-      background-repeat: no-repeat;
-      background-position: center;
-      transition: filter 0.2s ease;
+      background-color: #c8aa6e;
+      cursor: pointer;
+      display: block;
+      height: inherit;
+      width: inherit;
+      -webkit-mask: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3zm0 14.2c-2.5 0-4.71-1.28-6-3.22.03-1.99 4-3.08 6-3.08 1.99 0 5.97 1.09 6 3.08-1.29 1.94-3.5 3.22-6 3.22z'/%3E%3C/svg%3E") no-repeat center;
+      -webkit-mask-size: 18px;
     }
 
     #${LOBBY_BUTTON_ID}:hover .party-mode-icon {
-      filter: brightness(1.3);
+      background-color: #f0e6d2;
+    }
+
+    #${LOBBY_BUTTON_ID}:active .party-mode-icon {
+      background-color: #463714;
     }
 
     #${LOBBY_BUTTON_ID}.active .party-mode-icon {
-      background-image: url('data:image/svg+xml,<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path fill="%230acbe6" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3zm0 14.2c-2.5 0-4.71-1.28-6-3.22.03-1.99 4-3.08 6-3.08 1.99 0 5.97 1.09 6 3.08-1.29 1.94-3.5 3.22-6 3.22z"/></svg>');
+      background-color: #0acbe6;
     }
 
     #${LOBBY_BUTTON_ID} .lobby-peer-count {
@@ -631,7 +630,10 @@
       <span class="lobby-peer-count" style="display: none;">0</span>
     `;
 
-    button.addEventListener("click", togglePanel);
+    button.addEventListener("click", (e) => {
+      e.stopPropagation();
+      togglePanel();
+    });
 
     // Insert before the add friend button, or append to the end
     if (friendFinderParent) {
@@ -672,7 +674,15 @@
   }
 
   function createPartyPanel() {
-    if (document.getElementById(PANEL_ID)) return;
+    // Remove any existing panel (may be detached/stale)
+    const existing = document.getElementById(PANEL_ID);
+    if (existing) {
+      if (existing.isConnected && partyPanel === existing) return; // Already good
+      existing.remove();
+    }
+
+    // Find a persistent container to attach the panel to
+    const container = document.querySelector(".lol-social-actions-bar") || document.body;
 
     const panel = document.createElement("div");
     panel.id = PANEL_ID;
@@ -714,30 +724,33 @@
       </div>
     `;
 
-    document.body.appendChild(panel);
-    partyPanel = panel;
-
-    // Event listeners
-    document
-      .getElementById("party-toggle-btn")
-      .addEventListener("click", handleToggleParty);
-    document
-      .getElementById("copy-token-btn")
-      .addEventListener("click", handleCopyToken);
-    document
-      .getElementById("add-peer-btn")
-      .addEventListener("click", handleAddPeer);
-    document
-      .getElementById("add-peer-input")
-      .addEventListener("keypress", (e) => {
+    try {
+      container.appendChild(panel);
+      partyPanel = panel;
+      // Use querySelector on panel directly instead of document to avoid ID conflicts
+      panel.querySelector("#party-toggle-btn").addEventListener("click", handleToggleParty);
+      panel.querySelector("#copy-token-btn").addEventListener("click", handleCopyToken);
+      panel.querySelector("#add-peer-btn").addEventListener("click", handleAddPeer);
+      panel.querySelector("#add-peer-input").addEventListener("keypress", (e) => {
         if (e.key === "Enter") handleAddPeer();
       });
+    } catch (e) {
+      console.error(`${LOG_PREFIX} Failed to create panel:`, e);
+      partyPanel = null;
+    }
   }
 
   function togglePanel() {
+    // Recreate panel if it was removed from DOM
+    if (!partyPanel || !partyPanel.isConnected) {
+      partyPanel = null;
+      isVisible = false;
+      createPartyPanel();
+    }
     if (!partyPanel) return;
     isVisible = !isVisible;
     partyPanel.classList.toggle("visible", isVisible);
+    updatePanelState();
   }
 
   function updateButtonState() {
@@ -1071,73 +1084,52 @@
 
   // Monitor for lobby/champ select
   function startGamePhaseMonitor() {
-    let wasInGamePhase = false;
-    let lobbyButtonRetryCount = 0;
-
     setInterval(() => {
       const inChampSelect = isInChampSelect();
       const inLobby = isInLobby();
-      const inGamePhase = inChampSelect || inLobby;
 
-      if (inGamePhase && !wasInGamePhase) {
-        // Entering a game phase
-        if (inChampSelect) {
+      // Always keep the party button in the social actions bar
+      // (it's always present, not just in lobby)
+      if (!lobbyButton || !lobbyButton.isConnected) {
+        lobbyButton = null;
+        createLobbyButton();
+      }
+
+      // Ensure panel exists
+      if (!partyPanel || !partyPanel.isConnected) {
+        partyPanel = null;
+        isVisible = false;
+        createPartyPanel();
+      }
+
+      // Also show floating button in champ select (no social bar there)
+      if (inChampSelect) {
+        if (currentUIMode !== "champselect") {
           console.log(`${LOG_PREFIX} Entered champion select`);
           currentUIMode = "champselect";
           createPartyButton();
-          createPartyPanel();
-          if (partyPanel) {
-            partyPanel.classList.remove("lobby-mode");
-          }
-        } else if (inLobby) {
+          if (partyPanel) partyPanel.classList.remove("lobby-mode");
+        }
+        if (!partyButton || !partyButton.isConnected) {
+          partyButton = null;
+          createPartyButton();
+        }
+      } else {
+        // Outside champ select - remove floating button, social bar button is enough
+        if (partyButton && partyButton.isConnected) {
+          partyButton.remove();
+        }
+        partyButton = null;
+
+        if (inLobby && currentUIMode !== "lobby") {
           console.log(`${LOG_PREFIX} Entered lobby`);
           currentUIMode = "lobby";
-          lobbyButtonRetryCount = 0;
-          const success = createLobbyButton();
-          createPartyPanel();
-          if (partyPanel) {
-            partyPanel.classList.add("lobby-mode");
-          }
-          if (!success) {
-            lobbyButtonRetryCount = 1;
-          }
+          if (partyPanel) partyPanel.classList.add("lobby-mode");
+        } else if (!inLobby && currentUIMode !== "default") {
+          currentUIMode = "default";
+          if (partyPanel) partyPanel.classList.remove("lobby-mode");
         }
-      } else if (inGamePhase && wasInGamePhase) {
-        // Still in game phase - check if phase changed (lobby <-> champ select)
-        if (inChampSelect && currentUIMode === "lobby") {
-          console.log(`${LOG_PREFIX} Transitioned from lobby to champion select`);
-          removePartyUI();
-          currentUIMode = "champselect";
-          createPartyButton();
-          createPartyPanel();
-          if (partyPanel) {
-            partyPanel.classList.remove("lobby-mode");
-          }
-        } else if (inLobby && currentUIMode === "champselect") {
-          console.log(`${LOG_PREFIX} Transitioned from champion select to lobby`);
-          removePartyUI();
-          currentUIMode = "lobby";
-          lobbyButtonRetryCount = 0;
-          createLobbyButton();
-          createPartyPanel();
-          if (partyPanel) {
-            partyPanel.classList.add("lobby-mode");
-          }
-        } else if (inLobby && currentUIMode === "lobby" && !lobbyButton && lobbyButtonRetryCount < 10) {
-          // Retry creating lobby button if it failed (social bar might not be ready)
-          const success = createLobbyButton();
-          if (success) {
-            lobbyButtonRetryCount = 0;
-          } else {
-            lobbyButtonRetryCount++;
-          }
-        }
-      } else if (!inGamePhase && wasInGamePhase) {
-        console.log(`${LOG_PREFIX} Left game phase`);
-        removePartyUI();
       }
-
-      wasInGamePhase = inGamePhase;
     }, 500);
   }
 
@@ -1148,21 +1140,23 @@
     await loadBridgePort();
     injectStyles();
     connectBridge();
-    startGamePhaseMonitor();
 
-    // Also create button immediately if already in lobby/champ select
+    // Always create social bar button and panel
+    createLobbyButton();
+    createPartyPanel();
+
+    // Set initial UI mode
     if (isInChampSelect()) {
       currentUIMode = "champselect";
       createPartyButton();
-      createPartyPanel();
     } else if (isInLobby()) {
       currentUIMode = "lobby";
-      createLobbyButton();
-      createPartyPanel();
-      if (partyPanel) {
-        partyPanel.classList.add("lobby-mode");
-      }
+      if (partyPanel) partyPanel.classList.add("lobby-mode");
+    } else {
+      currentUIMode = "default";
     }
+
+    startGamePhaseMonitor();
 
     console.log(`${LOG_PREFIX} Initialized`);
   }
