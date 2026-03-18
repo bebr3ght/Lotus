@@ -66,15 +66,31 @@ class SkinProcessor:
             return
         
         champion_id = get_champion_id_from_skin_id(skin_id)
-        self.shared_state.swiftplay_skin_tracking[champion_id] = skin_id
+        if not champion_id:
+            log.warning(
+                "[SkinMonitor] Could not derive champion ID from skin %s — skipping tracking",
+                skin_id,
+            )
+            return
+
+        with self.shared_state.swiftplay_lock:
+            self.shared_state.swiftplay_skin_tracking[champion_id] = skin_id
+            tracking_snapshot = dict(self.shared_state.swiftplay_skin_tracking)
         self.shared_state.ui_skin_id = skin_id
         self.shared_state.last_hovered_skin_id = skin_id
-        
+
+        # Mark this champion as explicitly changed so the restore logic
+        # won't override the user's choice on re-queue
+        swiftplay_handler = getattr(self.shared_state, "swiftplay_handler", None)
+        if swiftplay_handler is not None:
+            swiftplay_handler.mark_champion_changed(champion_id)
+
         log.info(
-            "[SkinMonitor] Swiftplay skin '%s' mapped to champion %s (id=%s)",
+            "[SkinMonitor] Swiftplay skin '%s' → champion %s (skin_id=%s) | tracking: %s",
             skin_name,
             champion_id,
             skin_id,
+            tracking_snapshot,
         )
         
         if broadcaster:

@@ -10,7 +10,7 @@ from typing import Optional
 from config import LCU_API_TIMEOUT_S
 from utils.core.logging import get_logger
 
-from ..core.lockfile import SWIFTPLAY_MODES
+from ..core.lockfile import SWIFTPLAY_MODES, SWIFTPLAY_QUEUE_ID
 
 log = get_logger()
 
@@ -66,12 +66,12 @@ class LCUSwiftplay:
                 log.debug("Found Swiftplay-like game mode in lobby data")
                 return True
             
-            # Check for other Swiftplay-specific indicators
+            # Check for Swiftplay queue ID (480)
             if "queueId" in data:
                 queue_id = data.get("queueId")
                 log.debug(f"Found queue ID: {queue_id}")
-                if queue_id is not None and any(tag in str(queue_id).lower() for tag in ("swift", "brawl")):
-                    log.debug("Queue ID indicates Swiftplay-like mode")
+                if queue_id == SWIFTPLAY_QUEUE_ID:
+                    log.debug("Queue ID 480 indicates Swiftplay mode")
                     return True
             
             # If we're already detected as Swiftplay mode, any lobby data is likely Swiftplay

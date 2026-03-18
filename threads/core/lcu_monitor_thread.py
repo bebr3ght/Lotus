@@ -68,17 +68,10 @@ class LCUMonitorThread(threading.Thread):
                     log.info("WebSocket connected - detecting language...")
                     self.ws_connected = True
 
-                    # Wait longer for WebSocket and LCU to fully stabilize
-                    time.sleep(2.0)
+                    # Brief wait for LCU API to stabilize after WebSocket connects
+                    time.sleep(1.0)
 
-                    # Validate connection is actually responsive before proceeding
-                    if not self._validate_connection():
-                        log.warning("[LCU] Connection validation failed - forcing reconnect...")
-                        self.ws_connected = False
-                        self.lcu.refresh_if_needed(force=True)
-                        continue
-
-                    # Try to detect language first (will retry if this fails)
+                    # Try to detect language (will retry via the retry loop below if this fails)
                     self._try_detect_language()
 
                     # Check initial champion select state (for issue #29: app starting after lock)
@@ -114,21 +107,6 @@ class LCUMonitorThread(threading.Thread):
             
             time.sleep(LCU_MONITOR_INTERVAL)
 
-    def _validate_connection(self) -> bool:
-        """Validate LCU connection is actually responsive (not stale)"""
-        try:
-            # Try a simple API call to verify the connection works
-            result = self.lcu.get("/lol-summoner/v1/current-summoner")
-            if result is not None:
-                log.debug("[LCU] Connection validated - API is responsive")
-                return True
-            else:
-                log.debug("[LCU] Connection validation failed - API returned None")
-                return False
-        except Exception as e:
-            log.debug(f"[LCU] Connection validation error: {e}")
-            return False
-
     def _try_detect_language(self):
         """Try to detect and initialize language from LCU"""
         self.last_language_check = time.time()
@@ -159,11 +137,13 @@ class LCUMonitorThread(threading.Thread):
                 self.language_retry_count += 1
                 log.warning(f"[LCU] Failed to get LCU language - client returned None (attempt {self.language_retry_count}/{self.max_language_retries})")
 
-                # Force reconnect after too many failures (stale connection)
+                # After max retries, stop retrying — the app works without language
+                # detection (phases, skins, injection all work via WebSocket).
+                # Forcing a reconnect here disrupts the working WebSocket connection.
                 if self.language_retry_count >= self.max_language_retries:
-                    log.warning("[LCU] Too many failed attempts - connection may be stale, forcing reconnect...")
+                    log.warning("[LCU] Language detection unavailable after max retries - proceeding without it")
+                    self.language_initialized = True  # Stop retrying
                     self.language_retry_count = 0
-                    self.lcu.refresh_if_needed(force=True)
         except Exception as e:
             log.warning(f"[LCU] Failed to get LCU language: {e}")
     

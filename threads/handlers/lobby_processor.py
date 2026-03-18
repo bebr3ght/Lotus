@@ -8,12 +8,11 @@ Processes lobby state and detects Swiftplay mode
 import logging
 import time
 from lcu import LCU
+from lcu.core.lockfile import SWIFTPLAY_MODES, SWIFTPLAY_QUEUE_ID
 from state import SharedState
 from utils.core.logging import get_logger, log_action
 
 log = get_logger()
-
-SWIFTPLAY_MODES = {"SWIFTPLAY", "BRAWL"}
 
 
 class LobbyProcessor:
@@ -47,8 +46,6 @@ class LobbyProcessor:
         self._last_lobby_check = 0.0
         self._last_lobby_mode = None
         self._last_lobby_queue = None
-        self._last_logged_mode = None
-        self._last_logged_queue = None
     
     def process_lobby_state(self, force: bool = False):
         """Monitor lobby state and detect Swiftplay mode changes."""
@@ -76,19 +73,23 @@ class LobbyProcessor:
         if detected_mode and isinstance(detected_mode, str) and detected_mode.upper() in SWIFTPLAY_MODES:
             is_swiftplay = True
         # Queue ID 480 fallback - reliable Swiftplay indicator even when game_mode is missing
-        elif detected_queue == 480:
+        elif detected_queue == SWIFTPLAY_QUEUE_ID:
             is_swiftplay = True
+            log.debug(f"[phase] lobby: Swiftplay via queue 480 fallback (detected_mode={detected_mode})")
             if not detected_mode:
                 detected_mode = "SWIFTPLAY"
-        # Also check stored queue ID as fallback (may still have 480 from before game ended)
-        elif detected_queue is None and self.state.current_queue_id == 480:
+        # Stored queue ID fallback: only trust if we were already in Swiftplay mode
+        # (prevents stale queue ID from a previous session from triggering false detection)
+        elif detected_queue is None and self.state.current_queue_id == SWIFTPLAY_QUEUE_ID and self.state.is_swiftplay_mode:
             is_swiftplay = True
             detected_queue = 480
+            log.debug("[phase] lobby: Swiftplay via stored queue 480 fallback (already in swiftplay mode)")
             if not detected_mode:
                 detected_mode = "SWIFTPLAY"
         elif detected_mode is None and self.lcu.ok and self.lcu.is_swiftplay:
             is_swiftplay = True
             fallback_mode = self.lcu.game_mode
+            log.debug(f"[phase] lobby: Swiftplay via LCU.is_swiftplay fallback (game_mode={fallback_mode})")
             if fallback_mode and isinstance(fallback_mode, str) and fallback_mode.upper() in SWIFTPLAY_MODES:
                 detected_mode = fallback_mode
 
@@ -117,7 +118,10 @@ class LobbyProcessor:
                     mode_label = (effective_mode or "Swiftplay").upper()
                     log_action(log, f"{mode_label} lobby detected - triggering early skin detection", "⚡")
                 if self.swiftplay_handler:
-                    self.swiftplay_handler.handle_swiftplay_lobby()
+                    self.swiftplay_handler.handle_swiftplay_lobby(
+                        detected_mode=effective_mode,
+                        detected_queue=detected_queue,
+                    )
             else:
                 # Already in Swiftplay mode, continue monitoring
                 if self.swiftplay_handler:
@@ -150,10 +154,6 @@ class LobbyProcessor:
             self._last_lobby_mode = effective_mode
         if detected_queue is not None:
             self._last_lobby_queue = detected_queue
-        if effective_mode is not None:
-            self._last_logged_mode = effective_mode
-        if detected_queue is not None:
-            self._last_logged_queue = detected_queue
     
     def reset_lobby_tracking(self):
         """Reset lobby tracking when leaving the lobby phase"""
