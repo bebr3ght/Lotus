@@ -264,6 +264,23 @@ hiddenimports = [
     'urllib3',
     'websocket',
     'websocket_client',
+    'websockets',
+
+    # Party mode (WebSocket relay)
+    'party',
+    'party.core',
+    'party.core.party_manager',
+    'party.core.party_state',
+    'party.network',
+    'party.network.peer_connection',
+    'party.network.ws_relay',
+    'party.protocol',
+    'party.protocol.crypto',
+    'party.protocol.message_types',
+    'party.protocol.token_codec',
+    'party.discovery',
+    'party.discovery.lobby_matcher',
+    'party.discovery.skin_collector',
     
     # System tray
     'pystray',
@@ -335,7 +352,17 @@ excludes = [
     'botocore',
     'boto3',
     's3transfer',
+    # Exclude old P2P/test modules (replaced by WebSocket relay)
+    'miniupnpc',
+    'test_party_punch',
+    'test_party_relay',
+    'relay_server',
 ]
+
+# Filter out cslol-dll.dll from binaries (users must provide their own due to DMCA)
+def filter_binaries(binaries_list):
+    return [(name, path, typ) for name, path, typ in binaries_list
+            if 'cslol-dll' not in name.lower()]
 
 a = Analysis(
     ['main.py'],
@@ -352,6 +379,9 @@ a = Analysis(
     cipher=block_cipher,
     noarchive=False,
 )
+
+# Remove cslol-dll.dll if PyInstaller auto-detected it
+a.binaries = filter_binaries(a.binaries)
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 

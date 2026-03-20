@@ -126,12 +126,31 @@ class PartyInjectionHook:
         skin_name = f"skin_{skin_id}"
 
         if custom_mod_path:
-            # Party member has a custom mod - we can't inject that
-            # (custom mods are local to each user's machine)
-            log.info(
-                f"[PARTY_INJECT] {skin_data.summoner_name} has custom mod - "
-                f"using base skin {skin_name} instead"
-            )
+            # Party member has a custom mod that we also have locally (matched by hash)
+            from utils.core.paths import get_user_data_dir
+            mods_root = get_user_data_dir() / "mods"
+            local_mod = mods_root / custom_mod_path
+            if local_mod.exists():
+                log.info(
+                    f"[PARTY_INJECT] {skin_data.summoner_name} has custom mod, "
+                    f"using local match: {custom_mod_path}"
+                )
+                try:
+                    mod_folder = injector._extract_zip_to_mod(local_mod)
+                    if mod_folder:
+                        log.info(
+                            f"[PARTY_INJECT] Prepared {skin_data.summoner_name}'s custom mod: "
+                            f"{mod_folder.name}"
+                        )
+                        return mod_folder.name
+                except Exception as e:
+                    log.warning(f"[PARTY_INJECT] Failed to extract custom mod: {e}")
+                    return None
+            else:
+                log.warning(
+                    f"[PARTY_INJECT] Custom mod path not found: {custom_mod_path}"
+                )
+                return None
 
         # Resolve the skin ZIP
         try:

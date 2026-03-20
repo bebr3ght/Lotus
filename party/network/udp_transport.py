@@ -16,9 +16,11 @@ from utils.core.logging import get_logger
 log = get_logger()
 
 # Hole punching configuration
-HOLE_PUNCH_ATTEMPTS = 10
-HOLE_PUNCH_INTERVAL = 0.3   # seconds between attempts
-HOLE_PUNCH_RECV_TIMEOUT = 0.8  # wait for reply (NAT + RTT can be slow)
+HOLE_PUNCH_TIMEOUT = 60.0          # total time to keep punching (seconds)
+HOLE_PUNCH_BURST_COUNT = 10        # fast initial burst packet count
+HOLE_PUNCH_BURST_INTERVAL = 0.3    # seconds between burst packets
+HOLE_PUNCH_SUSTAINED_INTERVAL = 1.5  # seconds between sustained packets
+HOLE_PUNCH_RECV_TIMEOUT = 0.8      # wait for reply per iteration
 
 # Keepalive configuration
 KEEPALIVE_INTERVAL = 15.0  # seconds
@@ -195,14 +197,18 @@ class UDPTransport:
         self,
         endpoint: PeerEndpoint,
         punch_data: bytes = b"PUNCH",
-        max_attempts: int = HOLE_PUNCH_ATTEMPTS,
+        timeout: float = HOLE_PUNCH_TIMEOUT,
     ) -> Optional[Tuple[str, int]]:
-        """Attempt UDP hole punching to establish connection
+        """Attempt UDP hole punching to establish connection.
+
+        Punches ALL addresses in parallel (external + internal simultaneously)
+        and keeps retrying for up to `timeout` seconds so both sides have time
+        to start punching.
 
         Args:
             endpoint: Peer endpoint to punch through to
             punch_data: Data to send in punch packets
-            max_attempts: Maximum number of punch attempts per address
+            timeout: Total seconds to keep trying (default 60)
 
         Returns:
             Working address (ip, port) or None if punching failed
@@ -211,46 +217,86 @@ class UDPTransport:
             await self.bind()
 
         addresses = endpoint.get_addresses()
-        log.info(f"[UDP] Starting hole punch to {len(addresses)} address(es)")
+        all_peer_ips = {endpoint.external_ip, endpoint.internal_ip}
+        log.info(f"[UDP] Starting parallel hole punch to {len(addresses)} address(es) (timeout={timeout}s)")
 
-        # Try each address
+        result: list = [None]
+        success_event = asyncio.Event()
+
+        # Launch one puncher task per address, all run simultaneously
+        tasks = []
         for addr in addresses:
-            log.info(f"[UDP] Trying to punch through to {addr}")
+            task = asyncio.create_task(
+                self._punch_one_address(addr, all_peer_ips, punch_data, success_event, result)
+            )
+            tasks.append(task)
 
-            # Send multiple punch packets
-            for attempt in range(max_attempts):
+        try:
+            await asyncio.wait_for(success_event.wait(), timeout=timeout)
+        except asyncio.TimeoutError:
+            pass
+
+        # Cancel all tasks
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+        if result[0]:
+            log.info(f"[UDP] Hole punch successful! Connected via {result[0]}")
+        else:
+            log.warning(f"[UDP] Hole punch failed after {timeout}s")
+        return result[0]
+
+    async def _punch_one_address(
+        self,
+        addr: Tuple[str, int],
+        all_peer_ips: set,
+        punch_data: bytes,
+        success_event: asyncio.Event,
+        result: list,
+    ):
+        """Punch a single address: fast burst then sustained pings until success or cancelled."""
+        log.info(f"[UDP] Punching {addr}")
+        packet_num = 0
+
+        try:
+            while not success_event.is_set():
+                packet_num += 1
+
+                # Send punch packet
                 try:
                     await self.send(punch_data, addr)
-                    log.debug(f"[UDP] Sent punch packet {attempt + 1}/{max_attempts} to {addr}")
+                    if packet_num <= HOLE_PUNCH_BURST_COUNT or packet_num % 10 == 0:
+                        log.debug(f"[UDP] Sent punch #{packet_num} to {addr}")
                 except Exception as e:
-                    log.debug(f"[UDP] Punch send failed: {e}")
+                    log.debug(f"[UDP] Punch send to {addr} failed: {e}")
 
-                # Wait a bit between sends
-                await asyncio.sleep(HOLE_PUNCH_INTERVAL)
+                # Choose interval: fast burst first, then slower sustained
+                interval = HOLE_PUNCH_BURST_INTERVAL if packet_num <= HOLE_PUNCH_BURST_COUNT else HOLE_PUNCH_SUSTAINED_INTERVAL
+                await asyncio.sleep(interval)
 
-                # Check if we received a response (reply from other side, or HELLO if they initiated first)
+                # Check for response from any peer address
                 try:
                     data, recv_addr = await asyncio.wait_for(
                         self._pending_receives.get(),
                         timeout=HOLE_PUNCH_RECV_TIMEOUT,
                     )
 
-                    # Check if response is from expected peer (or their external address)
-                    if recv_addr[0] == addr[0] or recv_addr[0] == endpoint.external_ip:
-                        log.info(f"[UDP] Hole punch successful! Connected via {recv_addr}")
-                        # If it's not a PUNCH reply (e.g. encrypted HELLO from them), put back for handshake
+                    if recv_addr[0] in all_peer_ips:
+                        # Got a response from the peer
                         if not data.startswith(b"PUNCH"):
                             await self._pending_receives.put((data, recv_addr))
-                        return recv_addr
+                        result[0] = recv_addr
+                        success_event.set()
+                        return
 
-                    # Put back if not from expected peer
+                    # Not from expected peer, put back
                     await self._pending_receives.put((data, recv_addr))
-
                 except asyncio.TimeoutError:
                     continue
 
-        log.warning(f"[UDP] Hole punch failed after {max_attempts} attempts per address")
-        return None
+        except asyncio.CancelledError:
+            return
 
     async def _receive_loop(self):
         """Background loop to receive packets"""

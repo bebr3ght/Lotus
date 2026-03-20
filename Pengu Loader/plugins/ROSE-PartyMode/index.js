@@ -310,6 +310,12 @@
       color: #0acbe6;
     }
 
+    .add-btn:disabled, .add-peer-input:disabled {
+      opacity: 0.5;
+      cursor: default;
+      pointer-events: none;
+    }
+
     /* Toggle button — matches lol-uikit-flat-button (primary) */
     .party-toggle-btn {
       width: 100%;
@@ -855,6 +861,7 @@
 
   function handleAddPeer() {
     const input = document.getElementById("add-peer-input");
+    const addBtn = document.getElementById("add-peer-btn");
     const messageEl = document.getElementById("add-peer-message");
     // Strip and remove all whitespace (spaces, newlines, tabs) so pasted tokens work
     const token = input.value.replace(/\s+/g, "").trim();
@@ -865,8 +872,16 @@
       return;
     }
 
+    // Lock the entire panel during connection
+    input.disabled = true;
+    addBtn.disabled = true;
+    addBtn.innerHTML = '<span class="spinner"></span>';
+    const toggleBtn = document.getElementById("party-toggle-btn");
+    if (toggleBtn) toggleBtn.disabled = true;
+    const closeBtn = partyPanel ? partyPanel.querySelector("#party-close-btn") : null;
+    if (closeBtn) closeBtn.style.display = "none";
     messageEl.innerHTML =
-      '<div class="success-msg"><span class="spinner"></span> Waiting for your friend...</div>';
+      '<div class="success-msg"><span class="spinner"></span> Connecting to your friend...</div>';
     sendBridgeMessage({ type: "party-add-peer", token: token });
     input.value = "";
   }
@@ -923,20 +938,39 @@
         updatePanelState();
         break;
 
-      case "party-peer-added":
+      case "party-peer-added": {
+        const addInput = document.getElementById("add-peer-input");
+        const addBtn = document.getElementById("add-peer-btn");
         const addMessageEl = document.getElementById("add-peer-message");
+
+        // Unlock the panel
+        if (addInput) addInput.disabled = false;
+        if (addBtn) {
+          addBtn.disabled = false;
+          addBtn.textContent = "Add";
+        }
+        const unlockToggleBtn = document.getElementById("party-toggle-btn");
+        if (unlockToggleBtn) unlockToggleBtn.disabled = false;
+        const unlockCloseBtn = partyPanel ? partyPanel.querySelector("#party-close-btn") : null;
+        if (unlockCloseBtn) unlockCloseBtn.style.display = "";
+
         if (data.success) {
-          addMessageEl.innerHTML =
-            '<div class="success-msg">Friend connected!</div>';
-          setTimeout(() => {
-            addMessageEl.innerHTML = "";
-          }, 3000);
+          if (addMessageEl) {
+            addMessageEl.innerHTML =
+              '<div class="success-msg">Friend connected!</div>';
+            setTimeout(() => {
+              addMessageEl.innerHTML = "";
+            }, 3000);
+          }
         } else {
-          addMessageEl.innerHTML = `<div class="error-msg">${escapeHtml(data.error || "Failed to connect")}</div>`;
+          if (addMessageEl) {
+            addMessageEl.innerHTML = `<div class="error-msg">${escapeHtml(data.error || "Failed to connect")}</div>`;
+          }
         }
         // Request updated state
         sendBridgeMessage({ type: "party-get-state" });
         break;
+      }
 
       case "party-peer-removed":
         // Request updated state

@@ -104,3 +104,17 @@ chroma_issue.txt
 CLAUDE.md
 injection/tools/cslol-dll.dll
 Pengu Loader/rose.log
+
+# Test artifacts
+test_party_punch.py
+test_party_relay.py
+Rose_PunchTest*.spec
+Rose_PartyTest.spec
+relay_server.py
+
+# Relay config (contains Worker URL — keep secret)
+party/network/relay_config.py
+
+# Relay worker (deployed separately to Cloudflare)
+relay-worker/node_modules/
+relay-worker/.wrangler/

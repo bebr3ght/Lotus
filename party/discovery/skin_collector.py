@@ -180,6 +180,76 @@ class SkinCollector:
 
         return skins
 
+    def collect_relay_skins(
+        self,
+        members: list,
+        my_summoner_id: int,
+        team_champions: Dict[int, int],
+    ) -> List[PartySkinData]:
+        """Collect skins from relay room members for injection.
+
+        Args:
+            members: List of member dicts from the relay (each has summoner_id, skin, etc.)
+            my_summoner_id: Our summoner ID (to exclude ourselves)
+            team_champions: Mapping of summoner_id -> champion_id
+
+        Returns:
+            List of PartySkinData for party members
+        """
+        skins = []
+
+        for member in members:
+            sid = member.get("summoner_id", 0)
+            if sid == my_summoner_id or not sid:
+                continue
+
+            skin = member.get("skin")
+            if not skin:
+                # Try cached selection
+                cached = self._selections.get(sid)
+                if cached:
+                    skin = {
+                        "champion_id": cached.champion_id,
+                        "skin_id": cached.skin_id,
+                        "chroma_id": cached.chroma_id,
+                    }
+
+            if not skin or not skin.get("skin_id"):
+                continue
+
+            champion_id = skin.get("champion_id", 0)
+            expected = team_champions.get(sid)
+            if expected and expected != champion_id:
+                log.warning(f"[SKIN_COLLECT] Champion mismatch for {sid}")
+                continue
+
+            # For custom mods, try to find a local match by content hash
+            custom_mod_path = None
+            if skin.get("is_custom") and skin.get("custom_mod_hash"):
+                from ..core.party_manager import PartyManager
+                local_path = PartyManager.find_local_mod_by_hash(
+                    skin["custom_mod_hash"], champion_id
+                )
+                if local_path:
+                    custom_mod_path = local_path
+                    log.info(f"[SKIN_COLLECT] Matched custom mod for peer {sid}: {local_path}")
+                else:
+                    log.info(f"[SKIN_COLLECT] No local match for peer {sid}'s custom mod, skipping")
+                    continue
+
+            skins.append(PartySkinData(
+                summoner_id=sid,
+                summoner_name=member.get("summoner_name", "Unknown"),
+                champion_id=champion_id,
+                skin_id=skin.get("skin_id", 0),
+                chroma_id=skin.get("chroma_id"),
+                custom_mod_path=custom_mod_path,
+                is_local=False,
+            ))
+
+        log.info(f"[SKIN_COLLECT] Collected {len(skins)} relay skin selections")
+        return skins
+
     def get_peer_selections(self) -> Dict[int, SkinSelection]:
         """Get all cached peer selections
 
