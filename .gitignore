@@ -119,6 +119,12 @@ party/network/relay_config.py
 tools/
 utils/crypto/skin_config.py
 
+# Cython build artifacts
+*.pyd
+*.c
+*.py.bak
+_cython_setup.py
+
 # Relay worker (deployed separately to Cloudflare)
 relay-worker/node_modules/
 relay-worker/.wrangler/

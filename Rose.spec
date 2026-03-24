@@ -85,6 +85,13 @@ if Path('injection/mods_map.json').exists():
 else:
     print("[WARNING] injection/mods_map.json not found")
 
+# Skin encryption config (worker URL - gitignored but needed at runtime)
+if Path('utils/crypto/skin_config.py').exists():
+    datas += [('utils/crypto/skin_config.py', 'utils/crypto')]
+    print("[OK] Skin encryption config bundled")
+else:
+    print("[WARNING] utils/crypto/skin_config.py not found - skin decryption will not work")
+
 # Collect Pillow data files (fonts, etc.) to prevent version mismatch issues
 try:
     pillow_datas = collect_data_files('PIL')
@@ -291,6 +298,11 @@ hiddenimports = [
     # Other dependencies
     'psutil',
     
+    # Skin encryption
+    'utils.crypto',
+    'utils.crypto.skin_crypto',
+    'utils.crypto.key_provider',
+
     # Top-level modules
     'config',
 ]

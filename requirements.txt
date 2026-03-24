@@ -12,3 +12,4 @@ pystray==0.19.5
 
 # Build requirements
 pyinstaller==6.3.0
+cython==3.0.11
