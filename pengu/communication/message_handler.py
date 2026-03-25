@@ -2121,6 +2121,9 @@ class MessageHandler:
 
                 party_manager = PartyManager(lcu, self.shared_state, self.injection_manager)
                 self.shared_state.party_manager = party_manager
+                party_manager.set_callbacks(
+                    on_state_change=lambda state: self.broadcaster.broadcast_party_state()
+                )
 
             # Enable party mode (async operation)
             import asyncio

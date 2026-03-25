@@ -227,7 +227,7 @@ class SmartSkinDownloader:
                 # Extract skin files from the batch data
                 skin_files = []
                 for item in champion_data[champion_path]:
-                    if item.get('type') == 'file' and item['name'].endswith('.zip'):
+                    if item.get('type') == 'file' and item['name'].endswith('.rse'):
                         skin_files.append(item)
                 
                 # Download all skins for this champion
@@ -272,9 +272,9 @@ class SmartSkinDownloader:
         stats = {}
         for champion_dir in self.target_dir.iterdir():
             if champion_dir.is_dir():
-                zip_files = list(champion_dir.glob("*.zip"))
-                stats[champion_dir.name] = len(zip_files)
-        
+                skin_files = list(champion_dir.glob("*.rse"))
+                stats[champion_dir.name] = len(skin_files)
+
         return stats
     
     def get_detailed_stats(self) -> Dict[str, int]:
@@ -298,18 +298,17 @@ class SmartSkinDownloader:
             if not champion_dir.is_dir():
                 continue
             
-            # Count base skins (zip files in champion root)
-            base_skins = list(champion_dir.glob("*.zip"))
+            # Count base skins (skin files in champion root)
+            base_skins = list(champion_dir.glob("*.rse"))
             total_skins += len(base_skins)
-            
-            # Count chromas (zip files in chromas/*/  subdirectories)
-            # Structure: Champion/chromas/SkinName/SkinName CHROMAID.zip
+
+            # Count chromas (skin files in chromas/*/ subdirectories)
+            # Structure: Champion/chromas/SkinName/SkinName CHROMAID.zip or .rse
             chromas_dir = champion_dir / "chromas"
             if chromas_dir.exists() and chromas_dir.is_dir():
-                # Chromas are in subdirectories under chromas/
                 for skin_chroma_dir in chromas_dir.iterdir():
                     if skin_chroma_dir.is_dir():
-                        chroma_files = list(skin_chroma_dir.glob("*.zip"))
+                        chroma_files = list(skin_chroma_dir.glob("*.rse"))
                         total_chromas += len(chroma_files)
         
         return {

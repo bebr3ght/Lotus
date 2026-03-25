@@ -309,6 +309,9 @@ class PartyManager:
         stale = [sid for sid in self.party_state.peers if sid not in current_peer_ids]
         for sid in stale:
             self.party_state.remove_peer(sid)
+            if self._skin_collector:
+                self._skin_collector.clear_peer(sid)
+            log.info(f"[PARTY] Removed peer {sid}")
 
         self._notify_state_change()
 

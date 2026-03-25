@@ -607,7 +607,7 @@ class RepoDownloader:
                             skins_files.append(file_info)
                             
                             # Count file types for accurate reporting
-                            if file_info.filename.endswith(('.zip', '.rse')):
+                            if file_info.filename.endswith('.rse'):
                                 zip_count += 1
                             elif file_info.filename.endswith('.png'):
                                 png_count += 1
@@ -635,7 +635,7 @@ class RepoDownloader:
                 if extract_resources and not resources_files:
                     log.warning("No resources folder found in repository ZIP, but resources extraction was requested")
                 
-                log.info(f"Found {zip_count} skin .zip files, {png_count} preview .png files, and {resources_count} resource files in repository")
+                log.info(f"Found {zip_count} skin .rse files, {png_count} preview .png files, and {resources_count} resource files in repository")
                 
                 # Extract all skins and resource files with byte-level progress tracking
                 extracted_zip_count = 0
@@ -680,7 +680,7 @@ class RepoDownloader:
 
                         label = "Extracting skins..." if entry_type == "skin" else "Extracting skin ID mapping..."
                         relative_path = file_info.filename.replace('RoseSkin-main/', '')
-                        is_zip = relative_path.endswith(('.zip', '.rse'))
+                        is_zip = relative_path.endswith('.rse')
                         is_png = relative_path.endswith('.png')
 
                         if entry_type == "skin":
@@ -755,7 +755,7 @@ class RepoDownloader:
                     if deleted_resources_count > 0:
                         log.info(f"Removed {deleted_resources_count} resource files that no longer exist in repository")
 
-                log.info(f"Extracted {extracted_zip_count} new skin .zip files, {extracted_png_count} preview .png files, "
+                log.info(f"Extracted {extracted_zip_count} new skin .rse files, {extracted_png_count} preview .png files, "
                         f"and {extracted_resources_count} resource files (skipped {skipped_skin_count} existing skin files, "
                         f"{skipped_resources_count} existing resource files)")
 
@@ -826,7 +826,7 @@ class RepoDownloader:
             
             # If no local state, check if we have existing skins or mappings
             if not local_state:
-                existing_skins = list(self.target_dir.rglob("*.zip"))
+                existing_skins = list(self.target_dir.rglob("*.rse"))
                 existing_previews = list(self.target_dir.rglob("*.png"))
 
                 # Check if resources exists
@@ -838,7 +838,7 @@ class RepoDownloader:
                     # Skins exist but no state file (likely manual download)
                     # Create state file from current commit instead of deleting everything
                     log.info(f"No state file found but found existing files (likely manual download):")
-                    log.info(f"  - {len(existing_skins)} skin .zip files")
+                    log.info(f"  - {len(existing_skins)} skin files (.rse)")
                     log.info(f"  - {len(existing_previews)} preview .png files")
                     log.info(f"  - {len(existing_mappings)} skin ID mapping files")
                     log.info("Creating state file from current GitHub commit to enable future updates...")
@@ -939,7 +939,7 @@ class RepoDownloader:
             
             # Check if skins already exist and we're not forcing update
             if not force_update and self.target_dir.exists():
-                existing_skins = list(self.target_dir.rglob("*.zip"))
+                existing_skins = list(self.target_dir.rglob("*.rse"))
                 if existing_skins:
                     # Still check if resources need updating
                     self._emit_progress(2, "Checking skin ID mapping...")
@@ -966,7 +966,7 @@ class RepoDownloader:
             skins_need_update = force_update or self.has_repository_changed()
             
             # If skins exist (files are there) but only resources need updating, use resources-only method
-            existing_skins = list(self.target_dir.rglob("*.zip")) if self.target_dir.exists() else []
+            existing_skins = list(self.target_dir.rglob("*.rse")) if self.target_dir.exists() else []
             if existing_skins and resources_need_update and not skins_need_update:
                 # Only resources need updating, use resources-only method
                 log.info("Only resources folder needs updating (skins already exist)")
@@ -1222,9 +1222,9 @@ class RepoDownloader:
         stats = {}
         for champion_dir in self.target_dir.iterdir():
             if champion_dir.is_dir():
-                zip_files = list(champion_dir.glob("*.zip"))
-                stats[champion_dir.name] = len(zip_files)
-        
+                skin_files = list(champion_dir.glob("*.zip")) + list(champion_dir.glob("*.rse"))
+                stats[champion_dir.name] = len(skin_files)
+
         return stats
     
     def get_detailed_stats(self) -> Dict[str, int]:
@@ -1261,24 +1261,26 @@ class RepoDownloader:
                     
                     # Count base skin files
                     skin_zip = skin_dir / f"{skin_dir.name}.zip"
+                    skin_rse = skin_dir / f"{skin_dir.name}.rse"
                     skin_png = skin_dir / f"{skin_dir.name}.png"
-                    
-                    if skin_zip.exists():
+
+                    if skin_zip.exists() or skin_rse.exists():
                         total_skins += 1
                     if skin_png.exists():
                         total_previews += 1
-                    
+
                     # Count chromas in this skin's chroma subdirectories
-                    # Structure: {champion_id}/{skin_id}/{chroma_id}/{chroma_id}.zip and {chroma_id}.png
+                    # Structure: {champion_id}/{skin_id}/{chroma_id}/{chroma_id}.zip or .rse
                     for chroma_dir in skin_dir.iterdir():
                         if chroma_dir.is_dir():
                             try:
                                 int(chroma_dir.name)  # If this succeeds, it's a chroma ID directory
-                                
+
                                 chroma_zip = chroma_dir / f"{chroma_dir.name}.zip"
+                                chroma_rse = chroma_dir / f"{chroma_dir.name}.rse"
                                 chroma_png = chroma_dir / f"{chroma_dir.name}.png"
-                                
-                                if chroma_zip.exists():
+
+                                if chroma_zip.exists() or chroma_rse.exists():
                                     total_chromas += 1
                                 if chroma_png.exists():
                                     total_previews += 1

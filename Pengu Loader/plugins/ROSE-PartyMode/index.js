@@ -541,6 +541,10 @@
       background-color: #0acbe6;
     }
 
+    #${LOBBY_BUTTON_ID}.connected .party-mode-icon {
+      background-color: #4ade80;
+    }
+
 
     `;
   }
@@ -595,7 +599,12 @@
 
   // Create button in social actions bar
   function createLobbyButton() {
-    if (document.getElementById(LOBBY_BUTTON_ID)) return;
+    const existing = document.getElementById(LOBBY_BUTTON_ID);
+    if (existing) {
+      lobbyButton = existing;
+      updateLobbyButtonState();
+      return;
+    }
 
     // Find the social actions bar buttons container
     const buttonsContainer = document.querySelector(".lol-social-actions-bar .buttons");
@@ -642,10 +651,16 @@
   function updateLobbyButtonState() {
     if (!lobbyButton) return;
 
+    const connectedPeers = (partyState.peers || []).filter((p) => p.connected);
     if (partyState.enabled) {
       lobbyButton.classList.add("active");
     } else {
       lobbyButton.classList.remove("active");
+    }
+    if (partyState.enabled && connectedPeers.length > 0) {
+      lobbyButton.classList.add("connected");
+    } else {
+      lobbyButton.classList.remove("connected");
     }
   }
 
@@ -928,7 +943,7 @@
 
       case "party-disabled":
         const toggleBtnDisable = document.getElementById("party-toggle-btn");
-        toggleBtnDisable.disabled = false;
+        if (toggleBtnDisable) toggleBtnDisable.disabled = false;
 
         partyState.enabled = false;
         partyState.my_token = null;

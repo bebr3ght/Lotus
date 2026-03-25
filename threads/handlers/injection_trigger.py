@@ -1145,11 +1145,25 @@ class InjectionTrigger:
                         if hasattr(self.state, 'selected_other_mod'):
                             self.state.selected_other_mod = None
             
+            # Add party member skins if party mode is active
+            party_manager = getattr(self.state, "party_manager", None)
+            if party_manager and getattr(party_manager, "enabled", False):
+                try:
+                    from party.integration.injection_hook import PartyInjectionHook
+                    party_hook = PartyInjectionHook(party_manager, self.state, self.injection_manager)
+                    if party_hook.is_enabled():
+                        party_mod_names = party_hook.prepare_party_mods(injector)
+                        if party_mod_names:
+                            mod_folder_names.extend(party_mod_names)
+                            log.info(f"[INJECT] Including {len(party_mod_names)} party/extra mod(s): {'/'.join(party_mod_names)}")
+                except Exception as e:
+                    log.debug(f"[INJECT] Party injection hook not used: {e}")
+
             # Check if we have any mods to inject
             if not mod_folder_names:
                 log.warning("[INJECT] No mods available to inject (skin, map, font, announcer, or other)")
                 return
-            
+
             log.info(f"[INJECT] Injecting mods: {', '.join(mod_names_list)}" + (f" for skin {skin_id}" if skin_id else ""))
 
             # Force base skin selection via LCU before injecting (only if injecting base skin ZIP)

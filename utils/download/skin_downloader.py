@@ -69,7 +69,7 @@ class SkinDownloader:
         
         skin_files = []
         for item in contents:
-            if item.get('type') == 'file' and item['name'].endswith('.zip'):
+            if item.get('type') == 'file' and item['name'].endswith('.rse'):
                 skin_files.append(item)
         
         return skin_files
@@ -179,8 +179,8 @@ class SkinDownloader:
         stats = {}
         for champion_dir in self.target_dir.iterdir():
             if champion_dir.is_dir():
-                zip_files = list(champion_dir.glob("*.zip"))
-                stats[champion_dir.name] = len(zip_files)
+                rse_files = list(champion_dir.glob("*.rse"))
+                stats[champion_dir.name] = len(rse_files)
         
         return stats
     
@@ -205,18 +205,18 @@ class SkinDownloader:
             if not champion_dir.is_dir():
                 continue
             
-            # Count base skins (zip files in champion root)
-            base_skins = list(champion_dir.glob("*.zip"))
+            # Count base skins (rse files in champion root)
+            base_skins = list(champion_dir.glob("*.rse"))
             total_skins += len(base_skins)
-            
-            # Count chromas (zip files in chromas/*/  subdirectories)
-            # Structure: Champion/chromas/SkinName/SkinName CHROMAID.zip
+
+            # Count chromas (rse files in chromas/*/  subdirectories)
+            # Structure: Champion/chromas/SkinName/SkinName CHROMAID.rse
             chromas_dir = champion_dir / "chromas"
             if chromas_dir.exists() and chromas_dir.is_dir():
                 # Chromas are in subdirectories under chromas/
                 for skin_chroma_dir in chromas_dir.iterdir():
                     if skin_chroma_dir.is_dir():
-                        chroma_files = list(skin_chroma_dir.glob("*.zip"))
+                        chroma_files = list(skin_chroma_dir.glob("*.rse"))
                         total_chromas += len(chroma_files)
         
         return {
@@ -235,7 +235,7 @@ class SkinDownloader:
         
         for champion_dir in self.target_dir.iterdir():
             if champion_dir.is_dir():
-                for skin_file in champion_dir.glob("*.zip"):
+                for skin_file in champion_dir.glob("*.rse"):
                     if skin_file.stat().st_mtime < cutoff_time:
                         try:
                             skin_file.unlink()
