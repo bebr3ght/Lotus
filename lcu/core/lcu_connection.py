@@ -31,11 +31,22 @@ class LCUConnection:
         self.port = None
         self.pw = None
         self.base = None
-        self.session = None
+        self.session = self._prepare_session()
         self._explicit_lockfile = lockfile_path
         self.lf_path = None
         self.lf_mtime = 0.0
         self._init_from_lockfile()
+
+    def _prepare_session(self) -> requests.Session:
+        """Create a requests session pre-configured for localhost LCU access."""
+        session = requests.Session()
+        session.verify = False  # self-signed cert on 127.0.0.1
+        session.trust_env = False  # ignore system/corporate proxy settings
+        session.proxies.update({
+            "http": None,
+            "https": None,
+        })  # explicit None keeps Requests from re-reading env vars later
+        return session
     
     def _init_from_lockfile(self):
         """Initialize from lockfile"""
@@ -61,14 +72,13 @@ class LCUConnection:
             self.port = lockfile_data.port
             self.pw = lockfile_data.password
             self.base = f"https://127.0.0.1:{self.port}"
-            self.session = requests.Session()
+            self.session = self._prepare_session()
             # Security Note: SSL verification is intentionally disabled for LCU connection.
             # The League Client uses self-signed certificates on localhost (127.0.0.1).
             # This is safe because:
             # 1. Connection is only to localhost - no external network exposure
             # 2. LCU authentication uses riot:password from lockfile (local file only)
             # 3. This is the standard approach used by all LCU API tools
-            self.session.verify = False
             self.session.auth = ("riot", self.pw)
             self.session.headers.update({"Content-Type": "application/json"})
             self.ok = True
@@ -89,9 +99,7 @@ class LCUConnection:
         self.base = None
         self.port = None
         self.pw = None
-        self.session = requests.Session()
-        # Security Note: SSL verify=False is safe here - see comment in _init_from_lockfile()
-        self.session.verify = False
+        self.session = self._prepare_session()
     
     def refresh_if_needed(self, force: bool = False):
         """Refresh connection if needed"""
