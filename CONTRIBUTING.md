@@ -17,8 +17,8 @@ git clone https://github.com/Alban1911/Rose.git
 # Navigate to project directory
 cd Rose
 
-# Switch to dev branch
-git checkout dev
+# Create a feature branch (e.g. feat/skin-preview, fix/chroma-crash, docs/readme)
+git checkout -b feat/your-feature-name
 
 # Install all dependencies
 pip install -r requirements.txt
