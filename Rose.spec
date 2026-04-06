@@ -85,12 +85,24 @@ if Path('injection/mods_map.json').exists():
 else:
     print("[WARNING] injection/mods_map.json not found")
 
-# Skin encryption config (worker URL - gitignored but needed at runtime)
+# Skin encryption config and secrets (gitignored but needed at runtime)
 if Path('utils/crypto/skin_config.py').exists():
     datas += [('utils/crypto/skin_config.py', 'utils/crypto')]
     print("[OK] Skin encryption config bundled")
 else:
     print("[WARNING] utils/crypto/skin_config.py not found - skin decryption will not work")
+
+for _crypto_mod in ['client_secrets', 'integrity']:
+    _py = Path(f'utils/crypto/{_crypto_mod}.py')
+    _pyd = list(Path('utils/crypto').glob(f'{_crypto_mod}*.pyd'))
+    if _pyd:
+        datas += [(_pyd[0], 'utils/crypto')]
+        print(f"[OK] Crypto module bundled (compiled): {_pyd[0].name}")
+    elif _py.exists():
+        datas += [(str(_py), 'utils/crypto')]
+        print(f"[OK] Crypto module bundled: {_crypto_mod}.py")
+    else:
+        print(f"[WARNING] utils/crypto/{_crypto_mod} not found - skin decryption will not work")
 
 # Collect Pillow data files (fonts, etc.) to prevent version mismatch issues
 try:
@@ -302,6 +314,8 @@ hiddenimports = [
     'utils.crypto',
     'utils.crypto.skin_crypto',
     'utils.crypto.key_provider',
+    'utils.crypto.client_secrets',
+    'utils.crypto.integrity',
 
     # Top-level modules
     'config',

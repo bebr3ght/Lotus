@@ -217,8 +217,9 @@ class UpdateSequence:
             if effective_local is None or _cmp_version(v, effective_local) == 1:
                 effective_local = v
 
-        # If versions match, we are up to date.
-        if _cmp_version(effective_local, remote_parsed) == 0 or (
+        # If local version is equal or newer, we are up to date.
+        cmp_result = _cmp_version(effective_local, remote_parsed)
+        if cmp_result is not None and cmp_result >= 0 or (
             remote_version and (installed_version == remote_version or APP_VERSION == remote_version)
         ):
             # Successful update — clear retry counter if it was set.
