@@ -488,3 +488,67 @@ class InjectionManager:
             injection_dir = Path(__file__).parent.parent
         
         return injection_dir
+
+    def prepare_custom_mod(self, mod_dict: dict, mod_type_name: str) -> Optional[str]:
+            """Extract or link a custom mod to the active mods directory (Shared Utility)"""
+            if not mod_dict or not mod_dict.get("mod_folder_name") or not mod_dict.get("mod_path"):
+                return None
+                
+            self._ensure_initialized()
+            if not self.injector:
+                log.warning(f"[INJECT] Cannot extract {mod_type_name} mod - injector not available")
+                return None
+                
+            try:
+                import shutil
+                import zipfile
+                from pathlib import Path
+                from utils.core.junction import is_junction, safe_remove_entry, link_or_extract
+                from utils.core.paths import get_injection_dir
+                from utils.core.safe_extract import safe_extractall
+                
+                mod_source = Path(mod_dict["mod_path"])
+                if not mod_source.exists():
+                    log.info(f"[INJECT] {mod_type_name} mod source not found (may have been deleted), ignoring: {mod_source}")
+                    return None
+                    
+                mod_folder_name = mod_dict["mod_folder_name"]
+                mod_dest = self.injector.mods_dir / mod_folder_name
+                extract_cache_dir = get_injection_dir() / ".extract_cache"
+                
+                # Удаляем старые хвосты, если они есть
+                if mod_dest.exists() or is_junction(mod_dest):
+                    safe_remove_entry(mod_dest)
+                    
+                # --- ИСПРАВЛЕНИЕ: БЕЗОПАСНАЯ РАСПАКОВКА ДЛЯ КАРТ И FORCER-ОВ ---
+                # Карты и патчи движка (Map, System Forcer) ОЧЕНЬ тяжелые. 
+                # CSLOL (mod-tools.exe) иногда криво собирает WAD из junction-ссылок,
+                # что вызывает "тихий" краш игры (Reconnect loop).
+                # Поэтому мы заставляем их физически распаковываться/копироваться в папку mods.
+                if mod_type_name in ("Map", "System Forcer"):
+                    if mod_source.is_dir():
+                        shutil.copytree(mod_source, mod_dest, dirs_exist_ok=True)
+                        log.info(f"[INJECT] {mod_type_name} directory fully copied (no junction): {mod_folder_name}")
+                    elif mod_source.is_file() and mod_source.suffix.lower() in {".zip", ".fantome"}:
+                        mod_dest.mkdir(parents=True, exist_ok=True)
+                        safe_extractall(mod_source, mod_dest)
+                        log.info(f"[INJECT] {mod_type_name} archive physically extracted (no junction): {mod_folder_name}")
+                    else:
+                        mod_dest.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(mod_source, mod_dest / mod_source.name)
+                else:
+                    # Для скинов, UI, анонсеров и шрифтов безопасно использовать быстрый junction (link_or_extract)
+                    link_or_extract(mod_source, mod_dest, cache_dir=extract_cache_dir)
+                    log.info(f"[INJECT] {mod_type_name} mod linked/extracted via cache: {mod_folder_name}")
+                
+                if mod_dest.exists() or is_junction(mod_dest):
+                    return mod_folder_name
+                else:
+                    log.warning(f"[INJECT] {mod_type_name} mod folder not found after extraction: {mod_dest}")
+                    return None
+                    
+            except Exception as e:
+                log.error(f"[INJECT] Error preparing {mod_type_name} mod: {e}")
+                import traceback
+                log.debug(f"[INJECT] Traceback: {traceback.format_exc()}")
+                return None

@@ -62,11 +62,20 @@ class ChampionLockHandler:
                     self.last_locked_champion_id != new_champ_id and
                     self.state.locked_champ_id is not None and
                     self.state.locked_champ_id != new_champ_id):
-                    # Champion exchange
-                    champ_label = f"#{new_champ_id}"
-                    log_event(log, f"Champion exchange detected: {champ_label}", "", {"From": self.last_locked_champion_id, "To": new_champ_id})
-                    self.handle_champion_exchange(self.last_locked_champion_id, new_champ_id, champ_label)
-                    self.last_locked_champion_id = new_champ_id
+                    
+                    # --- ИСПРАВЛЕНИЕ: Блокируем фальшивый обмен в Swiftplay ---
+                    if self.state.is_swiftplay_mode:
+                        log.debug(f"[exchange_debug] Ignoring false exchange in Swiftplay mode. Updating ID from {self.last_locked_champion_id} to {new_champ_id}")
+                        self.last_locked_champion_id = new_champ_id
+                        self.state.locked_champ_id = new_champ_id
+                        self.state.locked_champ_timestamp = time.time()
+                    else:
+                        # Champion exchange для классического режима
+                        champ_label = f"#{new_champ_id}"
+                        log_event(log, f"Champion exchange detected: {champ_label}", "", {"From": self.last_locked_champion_id, "To": new_champ_id})
+                        self.handle_champion_exchange(self.last_locked_champion_id, new_champ_id, champ_label)
+                        self.last_locked_champion_id = new_champ_id
+                    # ----------------------------------------------------------
                 else:
                     # New champion lock
                     champ_label = f"#{new_champ_id}"

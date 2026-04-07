@@ -917,432 +917,431 @@ class InjectionTrigger:
             log.error(f"[INJECT] Traceback: {traceback.format_exc()}")
     
     def _inject_custom_mod(self, custom_mod: dict, base_skin_name: Optional[str] = None, champion_name: str = ""):
-        """Inject custom mod from mods storage (mod should already be extracted)
-        
-        Args:
-            custom_mod: Custom mod dictionary
-            base_skin_name: Optional base skin name to extract and inject (for unowned skins)
-            champion_name: Optional champion name for base skin extraction
-        
-        Note: custom_mod can have mod_folder_name=None if only map/font/announcer mods are selected
-        """
-        try:
-            from pathlib import Path
-            
-            if not self.injection_manager:
-                log.error("[INJECT] Cannot inject custom mod - injection manager not available")
-                return
-            
-            injector = self.injection_manager.injector
-            if not injector:
-                log.error("[INJECT] Cannot inject custom mod - injector not available")
-                return
-            
-            mod_name = custom_mod.get("mod_name")
-            mod_folder_name = custom_mod.get("mod_folder_name")
-            mod_path = custom_mod.get("mod_path")
-            skin_id = custom_mod.get("skin_id")
-            champion_id = custom_mod.get("champion_id")
-            
-            # Clean mods directory first (before extracting base skin and custom mod)
-            injector._clean_mods_dir()
-            injector._clean_overlay_dir()
-
-            # Start game monitor early so it can suspend the game while mods are
-            # extracted/linked.  Large mods (e.g. 3 GB voiceover packs) may need
-            # several seconds on first extraction to cache, and the game can
-            # transition to InProgress in the meantime.
-            if self.injection_manager and not self.injection_manager._monitor_active:
-                log.info("[INJECT] Starting game monitor for custom mod injection (early start)")
-                self.injection_manager._start_monitor()
-
-            # Collect all mods to inject (base skin + custom skin mod + map + font + announcer + other)
-            mod_folder_names = []
-            mod_names_list = []
-            # Track missing mods to clean up from historic
-            missing_map_mod_path = None
-            missing_font_mod_path = None
-            missing_announcer_mod_path = None
-            missing_other_mod_paths = []
-            
-            # Extract and add base skin ZIP if provided (for unowned skins)
-            if base_skin_name:
-                log.info(f"[INJECT] Extracting base skin ZIP: {base_skin_name}")
-                try:
-                    # Resolve the base skin ZIP
-                    zp = injector._resolve_zip(
-                        base_skin_name,
-                        skin_name=base_skin_name,
-                        champion_name=champion_name,
-                        champion_id=champion_id
-                    )
-                    if zp and zp.exists():
-                        # Extract base skin ZIP to mods directory
-                        base_mod_folder = injector._extract_zip_to_mod(zp)
-                        if base_mod_folder:
-                            mod_folder_names.append(base_mod_folder.name)
-                            mod_names_list.append(f"Base Skin ({base_skin_name})")
-                            log.info(f"[INJECT] Base skin ZIP extracted: {base_mod_folder.name}")
-                        else:
-                            log.warning(f"[INJECT] Failed to extract base skin ZIP: {base_skin_name}")
-                    else:
-                        log.warning(f"[INJECT] Base skin ZIP not found: {base_skin_name}")
-                except Exception as e:
-                    log.error(f"[INJECT] Error extracting base skin ZIP: {e}")
-                    import traceback
-                    log.debug(f"[INJECT] Traceback: {traceback.format_exc()}")
-            
-            # Re-extract custom skin mod if available (after cleaning mods directory)
-            if mod_folder_name and mod_path:
-                log.info(f"[INJECT] Re-extracting custom mod from: {mod_path}")
-                try:
-                    mod_source = Path(mod_path)
-                    if not mod_source.exists():
-                        log.warning(f"[INJECT] Custom mod source not found: {mod_source}")
-                    else:
-                        extract_cache_dir = get_injection_dir() / ".extract_cache"
-                        mod_dest = injector.mods_dir / mod_folder_name
-                        if mod_dest.exists() or is_junction(mod_dest):
-                            safe_remove_entry(mod_dest)
-                        link_or_extract(mod_source, mod_dest, cache_dir=extract_cache_dir)
-                        log.info(f"[INJECT] Custom mod linked/extracted: {mod_folder_name}")
-                        
-                        # Verify mod folder exists after extraction (junctions count too)
-                        if mod_dest.exists() or is_junction(mod_dest):
-                            mod_folder_names.append(mod_folder_name)
-                            mod_names_list.append(mod_name or "Custom Mod")
-                            log.info(f"[INJECT] Custom skin mod ready: {mod_folder_name}")
-                        else:
-                            log.warning(f"[INJECT] Custom mod folder not found after extraction: {mod_dest}")
-                except Exception as e:
-                    log.error(f"[INJECT] Error re-extracting custom mod: {e}")
-                    import traceback
-                    log.debug(f"[INJECT] Traceback: {traceback.format_exc()}")
-            elif mod_folder_name:
-                log.warning(f"[INJECT] Custom mod folder name provided but no mod_path - cannot re-extract")
-            else:
-                log.info(f"[INJECT] No custom skin mod selected, injecting base skin + map/font/announcer/other mods only")
-            
-            # Helper function to re-extract a mod from its source path
-            def re_extract_mod(mod_dict, mod_type_name):
-                """Re-extract a mod from its source path after cleaning"""
-                if not mod_dict or not mod_dict.get("mod_folder_name"):
-                    return None
-                
-                mod_folder_name = mod_dict.get("mod_folder_name")
-                mod_path = mod_dict.get("mod_path")
-                
-                if not mod_path:
-                    log.warning(f"[INJECT] {mod_type_name} mod folder name provided but no mod_path - cannot re-extract")
-                    return None
-                
-                try:
-                    mod_source = Path(mod_path)
-                    if not mod_source.exists():
-                        log.info(f"[INJECT] {mod_type_name} mod source not found (mod may have been deleted), ignoring: {mod_source}")
-                        return None
-
-                    extract_cache_dir = get_injection_dir() / ".extract_cache"
-                    mod_dest = injector.mods_dir / mod_folder_name
-                    if mod_dest.exists() or is_junction(mod_dest):
-                        safe_remove_entry(mod_dest)
-                    link_or_extract(mod_source, mod_dest, cache_dir=extract_cache_dir)
-                    log.info(f"[INJECT] {mod_type_name} mod linked/extracted: {mod_folder_name}")
-
-                    if mod_dest.exists() or is_junction(mod_dest):
-                        return mod_folder_name
-                    else:
-                        log.warning(f"[INJECT] {mod_type_name} mod folder not found after extraction: {mod_dest}")
-                        return None
-                except Exception as e:
-                    log.error(f"[INJECT] Error re-extracting {mod_type_name} mod: {e}")
-                    import traceback
-                    log.debug(f"[INJECT] Traceback: {traceback.format_exc()}")
-                    return None
-            
-            # Add map mod if selected
-            selected_map_mod = getattr(self.state, 'selected_map_mod', None)
-            if selected_map_mod:
-                map_mod_folder = re_extract_mod(selected_map_mod, "Map")
-                if map_mod_folder:
-                    mod_folder_names.append(map_mod_folder)
-                    mod_names_list.append(selected_map_mod.get("mod_name", "Map"))
-                    log.info(f"[INJECT] Including map mod: {selected_map_mod.get('mod_name')}")
-                else:
-                    # Track missing mod's relative path for cleanup
-                    relative_path = selected_map_mod.get("relative_path")
-                    if relative_path:
-                        missing_map_mod_path = relative_path
-                    log.info(f"[INJECT] Map mod not found (may have been deleted), ignoring: {selected_map_mod.get('mod_name', 'Unknown')}")
-                    # Clear missing mod from state
-                    self.state.selected_map_mod = None
-            
-            # Add font mod if selected
-            selected_font_mod = getattr(self.state, 'selected_font_mod', None)
-            if selected_font_mod:
-                font_mod_folder = re_extract_mod(selected_font_mod, "Font")
-                if font_mod_folder:
-                    mod_folder_names.append(font_mod_folder)
-                    mod_names_list.append(selected_font_mod.get("mod_name", "Font"))
-                    log.info(f"[INJECT] Including font mod: {selected_font_mod.get('mod_name')}")
-                else:
-                    # Track missing mod's relative path for cleanup
-                    relative_path = selected_font_mod.get("relative_path")
-                    if relative_path:
-                        missing_font_mod_path = relative_path
-                    log.info(f"[INJECT] Font mod not found (may have been deleted), ignoring: {selected_font_mod.get('mod_name', 'Unknown')}")
-                    # Clear missing mod from state
-                    self.state.selected_font_mod = None
-            
-            # Add announcer mod if selected
-            selected_announcer_mod = getattr(self.state, 'selected_announcer_mod', None)
-            if selected_announcer_mod:
-                announcer_mod_folder = re_extract_mod(selected_announcer_mod, "Announcer")
-                if announcer_mod_folder:
-                    mod_folder_names.append(announcer_mod_folder)
-                    mod_names_list.append(selected_announcer_mod.get("mod_name", "Announcer"))
-                    log.info(f"[INJECT] Including announcer mod: {selected_announcer_mod.get('mod_name')}")
-                else:
-                    # Track missing mod's relative path for cleanup
-                    relative_path = selected_announcer_mod.get("relative_path")
-                    if relative_path:
-                        missing_announcer_mod_path = relative_path
-                    log.info(f"[INJECT] Announcer mod not found (may have been deleted), ignoring: {selected_announcer_mod.get('mod_name', 'Unknown')}")
-                    # Clear missing mod from state
-                    self.state.selected_announcer_mod = None
-            
-            # Add other mods if selected (support multiple selections)
-            selected_other_mods = getattr(self.state, 'selected_other_mods', None)
-            if not selected_other_mods:
-                # Fallback to legacy single mod for backward compatibility
-                selected_other_mod = getattr(self.state, 'selected_other_mod', None)
-                if selected_other_mod:
-                    selected_other_mods = [selected_other_mod]
-            
-            if selected_other_mods:
-                # Filter out missing mods and keep track of valid ones
-                valid_other_mods = []
-                for selected_other_mod in selected_other_mods:
-                    other_mod_folder = re_extract_mod(selected_other_mod, "Other")
-                    if other_mod_folder:
-                        mod_folder_names.append(other_mod_folder)
-                        mod_names_list.append(selected_other_mod.get("mod_name", "Other"))
-                        valid_other_mods.append(selected_other_mod)
-                        log.info(f"[INJECT] Including other mod: {selected_other_mod.get('mod_name')}")
-                    else:
-                        # Track missing mod's relative path for cleanup
-                        relative_path = selected_other_mod.get("relative_path")
-                        if relative_path:
-                            missing_other_mod_paths.append(relative_path)
-                        log.info(f"[INJECT] Other mod not found (may have been deleted), ignoring: {selected_other_mod.get('mod_name', 'Unknown')}")
-                
-                # Update state to only include valid mods
-                if len(valid_other_mods) != len(selected_other_mods):
-                    if valid_other_mods:
-                        self.state.selected_other_mods = valid_other_mods
-                    else:
-                        self.state.selected_other_mods = []
-                        if hasattr(self.state, 'selected_other_mod'):
-                            self.state.selected_other_mod = None
-            
-            # Add party member skins if party mode is active
-            party_manager = getattr(self.state, "party_manager", None)
-            if party_manager and getattr(party_manager, "enabled", False):
-                try:
-                    from party.integration.injection_hook import PartyInjectionHook
-                    party_hook = PartyInjectionHook(party_manager, self.state, self.injection_manager)
-                    if party_hook.is_enabled():
-                        party_mod_names = party_hook.prepare_party_mods(injector)
-                        if party_mod_names:
-                            mod_folder_names.extend(party_mod_names)
-                            log.info(f"[INJECT] Including {len(party_mod_names)} party/extra mod(s): {'/'.join(party_mod_names)}")
-                except Exception as e:
-                    log.debug(f"[INJECT] Party injection hook not used: {e}")
-
-            # Check if we have any mods to inject
-            if not mod_folder_names:
-                log.warning("[INJECT] No mods available to inject (skin, map, font, announcer, or other)")
-                return
-
-            log.info(f"[INJECT] Injecting mods: {', '.join(mod_names_list)}" + (f" for skin {skin_id}" if skin_id else ""))
-
-            # Force base skin selection via LCU before injecting (only if injecting base skin ZIP)
-            # For owned skins, user can select them normally - no need to force
-            champion_id = self.state.locked_champ_id or self.state.hovered_champ_id
-            if champion_id and base_skin_name:
-                # Injecting base skin ZIP for unowned skin - force base skin
-                base_skin_id = champion_id * 1000
-                self._force_base_skin(base_skin_id)
-            
-            # Create callback to check if game ended
-            has_been_in_progress = False
-
-            def game_ended_callback():
-                nonlocal has_been_in_progress
-                phase = self.state.phase
-                if phase == "InProgress":
-                    has_been_in_progress = True
-                    return False
-                if phase in ("Reconnect", "GameStart"):
-                    return False
-                return has_been_in_progress and phase not in ("InProgress", "Reconnect", "GameStart")
-            
-            # All mods are already extracted, create and run overlay with all mods
-            result = injector.overlay_manager.mk_run_overlay(
-                mod_folder_names,
-                timeout=120,
-                stop_callback=game_ended_callback,
-                injection_manager=self.injection_manager
-            )
-            
-            # Clean up missing mods from historic after overlay starts
-            try:
-                from utils.core.mod_historic import get_historic_mod, write_historic_mod, clear_historic_mod
-                
-                # Normalize paths for comparison (handle both forward and backslashes)
-                def normalize_path(p):
-                    return str(p).replace("\\", "/").lower()
-                
-                # Clean up map mod if it was missing
-                if missing_map_mod_path:
-                    historic_map_path = get_historic_mod("map")
-                    if historic_map_path and normalize_path(historic_map_path) == normalize_path(missing_map_mod_path):
-                        clear_historic_mod("map")
-                        log.info(f"[MOD_HISTORIC] Cleaned missing map mod from historic: {missing_map_mod_path}")
-                
-                # Clean up font mod if it was missing
-                if missing_font_mod_path:
-                    historic_font_path = get_historic_mod("font")
-                    if historic_font_path and normalize_path(historic_font_path) == normalize_path(missing_font_mod_path):
-                        clear_historic_mod("font")
-                        log.info(f"[MOD_HISTORIC] Cleaned missing font mod from historic: {missing_font_mod_path}")
-                
-                # Clean up announcer mod if it was missing
-                if missing_announcer_mod_path:
-                    historic_announcer_path = get_historic_mod("announcer")
-                    if historic_announcer_path and normalize_path(historic_announcer_path) == normalize_path(missing_announcer_mod_path):
-                        clear_historic_mod("announcer")
-                        log.info(f"[MOD_HISTORIC] Cleaned missing announcer mod from historic: {missing_announcer_mod_path}")
-                
-                # Clean up other mods (can be multiple) - same pattern as above
-                if missing_other_mod_paths:
-                    historic_other_paths = get_historic_mod("other")
-                    if historic_other_paths:
-                        # Convert to list if needed
-                        if isinstance(historic_other_paths, str):
-                            historic_other_paths = [historic_other_paths]
-                        elif not isinstance(historic_other_paths, list):
-                            historic_other_paths = []
-                        
-                        normalized_missing = [normalize_path(p) for p in missing_other_mod_paths]
-                        
-                        # Remove missing mod paths from historic
-                        cleaned_paths = [
-                            path for path in historic_other_paths
-                            if normalize_path(path) not in normalized_missing
-                        ]
-                        
-                        # Update historic if paths were removed
-                        if len(cleaned_paths) != len(historic_other_paths):
-                            if cleaned_paths:
-                                write_historic_mod("other", cleaned_paths)
-                                removed_count = len(historic_other_paths) - len(cleaned_paths)
-                                log.info(f"[MOD_HISTORIC] Cleaned {removed_count} missing other mod(s) from historic")
-                            else:
-                                clear_historic_mod("other")
-                                log.info(f"[MOD_HISTORIC] Cleared historic other mods (all were missing)")
-            except Exception as e:
-                log.debug(f"[MOD_HISTORIC] Failed to clean up missing mods from historic: {e}")
-                import traceback
-                log.debug(f"[MOD_HISTORIC] Traceback: {traceback.format_exc()}")
-            
-            # Stop monitor after injection completes
-            if self.injection_manager:
-                self.injection_manager._stop_monitor()
-            
-            if result == 0:
-                log.info("=" * LOG_SEPARATOR_WIDTH)
-                injection_label = " + ".join([m.upper() for m in mod_names_list])
-                log.info(f"CUSTOM MOD INJECTION COMPLETED >>> {injection_label} <<<")
-                log.info(f"   Verify in-game - timing determines if mod appears")
-                log.info("=" * LOG_SEPARATOR_WIDTH)
-                
-                # Store mod selections in historic before clearing
-                try:
-                    from utils.core.mod_historic import write_historic_mod
-                    from utils.core.historic import write_historic_entry
-                    
-                    # Store custom skin mod in historic if selected
-                    selected_custom_mod = getattr(self.state, 'selected_custom_mod', None)
-                    if selected_custom_mod and selected_custom_mod.get("relative_path"):
-                        champion_id = selected_custom_mod.get("champion_id") or self.state.locked_champ_id or self.state.hovered_champ_id
-                        if champion_id:
-                            # Store custom mod path with "path:" prefix
-                            custom_mod_path = f"path:{selected_custom_mod['relative_path']}"
-                            write_historic_entry(int(champion_id), custom_mod_path)
-                            log.debug(f"[HISTORIC] Stored custom mod path for champion {champion_id}: {selected_custom_mod['relative_path']}")
-                    elif base_skin_name:
-                        # Store base skin ID in historic if injecting base skin with mods (no custom mod)
-                        try:
-                            # Extract skin ID from base_skin_name (e.g., "skin_84002" -> 84002)
-                            injected_id = None
-                            if isinstance(base_skin_name, str) and '_' in base_skin_name:
-                                parts = base_skin_name.split('_', 1)
-                                if len(parts) == 2 and parts[1].isdigit():
-                                    injected_id = int(parts[1])
-                            
-                            champion_id = self.state.locked_champ_id or self.state.hovered_champ_id
-                            if champion_id is not None and injected_id is not None:
-                                write_historic_entry(int(champion_id), int(injected_id))
-                                log.info(f"[HISTORIC] Stored last injected ID {injected_id} for champion {champion_id}")
-                        except Exception as e:
-                            log.debug(f"[HISTORIC] Failed to store base skin entry: {e}")
-                    
-                    # Store map mod if selected
-                    selected_map_mod = getattr(self.state, 'selected_map_mod', None)
-                    if selected_map_mod and selected_map_mod.get("relative_path"):
-                        write_historic_mod("map", selected_map_mod["relative_path"])
-                        log.debug(f"[MOD_HISTORIC] Stored map mod: {selected_map_mod['relative_path']}")
-                    
-                    # Store font mod if selected
-                    selected_font_mod = getattr(self.state, 'selected_font_mod', None)
-                    if selected_font_mod and selected_font_mod.get("relative_path"):
-                        write_historic_mod("font", selected_font_mod["relative_path"])
-                        log.debug(f"[MOD_HISTORIC] Stored font mod: {selected_font_mod['relative_path']}")
-                    
-                    # Store announcer mod if selected
-                    selected_announcer_mod = getattr(self.state, 'selected_announcer_mod', None)
-                    if selected_announcer_mod and selected_announcer_mod.get("relative_path"):
-                        write_historic_mod("announcer", selected_announcer_mod["relative_path"])
-                        log.debug(f"[MOD_HISTORIC] Stored announcer mod: {selected_announcer_mod['relative_path']}")
-                    
-                    # Store other mods if selected (store all for historic)
-                    selected_other_mods = getattr(self.state, 'selected_other_mods', None)
-                    if not selected_other_mods:
-                        # Fallback to legacy single mod
-                        selected_other_mod = getattr(self.state, 'selected_other_mod', None)
-                        if selected_other_mod:
-                            selected_other_mods = [selected_other_mod]
-                    if selected_other_mods and len(selected_other_mods) > 0:
-                        # Store all mods for historic (list format)
-                        other_mod_paths = [mod.get("relative_path") for mod in selected_other_mods if mod.get("relative_path")]
-                        if other_mod_paths:
-                            write_historic_mod("other", other_mod_paths)
-                            log.debug(f"[MOD_HISTORIC] Stored {len(other_mod_paths)} other mod(s): {', '.join(other_mod_paths)}")
-                except Exception as e:
-                    log.debug(f"[MOD_HISTORIC] Failed to store mod selections: {e}")
-                
-                # Keep mod selections in state so they persist across games.
-                # Users can deselect manually; historic files handle cross-session persistence.
-            else:
-                log.error("=" * LOG_SEPARATOR_WIDTH)
-                injection_label = " + ".join([m.upper() for m in mod_names_list])
-                log.error(f"CUSTOM MOD INJECTION FAILED >>> {injection_label} <<<")
-                log.error("=" * LOG_SEPARATOR_WIDTH)
-                log.error(f"[INJECT] Mods will likely NOT appear in-game")
-        
-        except Exception as e:
-            log.error(f"[INJECT] Error injecting custom mod: {e}")
-            import traceback
-            log.error(f"[INJECT] Traceback: {traceback.format_exc()}")
-
+         """Inject custom mod from mods storage (mod should already be extracted)
+         
+         Args:
+             custom_mod: Custom mod dictionary
+             base_skin_name: Optional base skin name to extract and inject (for unowned skins)
+             champion_name: Optional champion name for base skin extraction
+         
+         Note: custom_mod can have mod_folder_name=None if only map/font/announcer mods are selected
+         """
+         try:
+             from pathlib import Path
+             
+             if not self.injection_manager:
+                 log.error("[INJECT] Cannot inject custom mod - injection manager not available")
+                 return
+             
+             injector = self.injection_manager.injector
+             if not injector:
+                 log.error("[INJECT] Cannot inject custom mod - injector not available")
+                 return
+             
+             mod_name = custom_mod.get("mod_name")
+             mod_folder_name = custom_mod.get("mod_folder_name")
+             mod_path = custom_mod.get("mod_path")
+             skin_id = custom_mod.get("skin_id")
+             champion_id = custom_mod.get("champion_id")
+             
+             # Clean mods directory first (before extracting base skin and custom mod)
+             injector._clean_mods_dir()
+             injector._clean_overlay_dir()
+ 
+             # Start game monitor early so it can suspend the game while mods are
+             # extracted/linked.  Large mods (e.g. 3 GB voiceover packs) may need
+             # several seconds on first extraction to cache, and the game can
+             # transition to InProgress in the meantime.
+             if self.injection_manager and not self.injection_manager._monitor_active:
+                 log.info("[INJECT] Starting game monitor for custom mod injection (early start)")
+                 self.injection_manager._start_monitor()
+ 
+             # Collect all mods to inject (base skin + custom skin mod + map + font + announcer + other)
+             mod_folder_names = []
+             mod_names_list = []
+             # Track missing mods to clean up from historic
+             missing_map_mod_path = None
+             missing_font_mod_path = None
+             missing_announcer_mod_path = None
+             missing_other_mod_paths = []
+             
+             # Extract and add base skin ZIP if provided (for unowned skins)
+             if base_skin_name:
+                 log.info(f"[INJECT] Extracting base skin ZIP: {base_skin_name}")
+                 try:
+                     # Resolve the base skin ZIP
+                     zp = injector._resolve_zip(
+                         base_skin_name,
+                         skin_name=base_skin_name,
+                         champion_name=champion_name,
+                         champion_id=champion_id
+                     )
+                     if zp and zp.exists():
+                         # Extract base skin ZIP to mods directory
+                         base_mod_folder = injector._extract_zip_to_mod(zp)
+                         if base_mod_folder:
+                             mod_folder_names.append(base_mod_folder.name)
+                             mod_names_list.append(f"Base Skin ({base_skin_name})")
+                             log.info(f"[INJECT] Base skin ZIP extracted: {base_mod_folder.name}")
+                         else:
+                             log.warning(f"[INJECT] Failed to extract base skin ZIP: {base_skin_name}")
+                     else:
+                         log.warning(f"[INJECT] Base skin ZIP not found: {base_skin_name}")
+                 except Exception as e:
+                     log.error(f"[INJECT] Error extracting base skin ZIP: {e}")
+                     import traceback
+                     log.debug(f"[INJECT] Traceback: {traceback.format_exc()}")
+             
+             # Re-extract custom skin mod if available (after cleaning mods directory)
+             if mod_folder_name and mod_path:
+                 log.info(f"[INJECT] Re-extracting custom mod from: {mod_path}")
+                 try:
+                     mod_source = Path(mod_path)
+                     if not mod_source.exists():
+                         log.warning(f"[INJECT] Custom mod source not found: {mod_source}")
+                     else:
+                         extract_cache_dir = get_injection_dir() / ".extract_cache"
+                         mod_dest = injector.mods_dir / mod_folder_name
+                         if mod_dest.exists() or is_junction(mod_dest):
+                             safe_remove_entry(mod_dest)
+                         link_or_extract(mod_source, mod_dest, cache_dir=extract_cache_dir)
+                         log.info(f"[INJECT] Custom mod linked/extracted: {mod_folder_name}")
+                         
+                         # Verify mod folder exists after extraction (junctions count too)
+                         if mod_dest.exists() or is_junction(mod_dest):
+                             mod_folder_names.append(mod_folder_name)
+                             mod_names_list.append(mod_name or "Custom Mod")
+                             log.info(f"[INJECT] Custom skin mod ready: {mod_folder_name}")
+                         else:
+                             log.warning(f"[INJECT] Custom mod folder not found after extraction: {mod_dest}")
+                 except Exception as e:
+                     log.error(f"[INJECT] Error re-extracting custom mod: {e}")
+                     import traceback
+                     log.debug(f"[INJECT] Traceback: {traceback.format_exc()}")
+             elif mod_folder_name:
+                 log.warning(f"[INJECT] Custom mod folder name provided but no mod_path - cannot re-extract")
+             else:
+                 log.info(f"[INJECT] No custom skin mod selected, injecting base skin + map/font/announcer/other mods only")
+             
+             # Helper function to re-extract a mod from its source path
+             def re_extract_mod(mod_dict, mod_type_name):
+                 """Re-extract a mod from its source path after cleaning"""
+                 if not mod_dict or not mod_dict.get("mod_folder_name"):
+                     return None
+                 
+                 mod_folder_name = mod_dict.get("mod_folder_name")
+                 mod_path = mod_dict.get("mod_path")
+                 
+                 if not mod_path:
+                     log.warning(f"[INJECT] {mod_type_name} mod folder name provided but no mod_path - cannot re-extract")
+                     return None
+                 
+                 try:
+                     mod_source = Path(mod_path)
+                     if not mod_source.exists():
+                         log.info(f"[INJECT] {mod_type_name} mod source not found (mod may have been deleted), ignoring: {mod_source}")
+                         return None
+ 
+                     extract_cache_dir = get_injection_dir() / ".extract_cache"
+                     mod_dest = injector.mods_dir / mod_folder_name
+                     if mod_dest.exists() or is_junction(mod_dest):
+                         safe_remove_entry(mod_dest)
+                     link_or_extract(mod_source, mod_dest, cache_dir=extract_cache_dir)
+                     log.info(f"[INJECT] {mod_type_name} mod linked/extracted: {mod_folder_name}")
+ 
+                     if mod_dest.exists() or is_junction(mod_dest):
+                         return mod_folder_name
+                     else:
+                         log.warning(f"[INJECT] {mod_type_name} mod folder not found after extraction: {mod_dest}")
+                         return None
+                 except Exception as e:
+                     log.error(f"[INJECT] Error re-extracting {mod_type_name} mod: {e}")
+                     import traceback
+                     log.debug(f"[INJECT] Traceback: {traceback.format_exc()}")
+                     return None
+             
+             # Add map mod if selected
+             selected_map_mod = getattr(self.state, 'selected_map_mod', None)
+             if selected_map_mod:
+                 map_mod_folder = re_extract_mod(selected_map_mod, "Map")
+                 if map_mod_folder:
+                     mod_folder_names.append(map_mod_folder)
+                     mod_names_list.append(selected_map_mod.get("mod_name", "Map"))
+                     log.info(f"[INJECT] Including map mod: {selected_map_mod.get('mod_name')}")
+                 else:
+                     # Track missing mod's relative path for cleanup
+                     relative_path = selected_map_mod.get("relative_path")
+                     if relative_path:
+                         missing_map_mod_path = relative_path
+                     log.info(f"[INJECT] Map mod not found (may have been deleted), ignoring: {selected_map_mod.get('mod_name', 'Unknown')}")
+                     # Clear missing mod from state
+                     self.state.selected_map_mod = None
+             
+             # Add font mod if selected
+             selected_font_mod = getattr(self.state, 'selected_font_mod', None)
+             if selected_font_mod:
+                 font_mod_folder = re_extract_mod(selected_font_mod, "Font")
+                 if font_mod_folder:
+                     mod_folder_names.append(font_mod_folder)
+                     mod_names_list.append(selected_font_mod.get("mod_name", "Font"))
+                     log.info(f"[INJECT] Including font mod: {selected_font_mod.get('mod_name')}")
+                 else:
+                     # Track missing mod's relative path for cleanup
+                     relative_path = selected_font_mod.get("relative_path")
+                     if relative_path:
+                         missing_font_mod_path = relative_path
+                     log.info(f"[INJECT] Font mod not found (may have been deleted), ignoring: {selected_font_mod.get('mod_name', 'Unknown')}")
+                     # Clear missing mod from state
+                     self.state.selected_font_mod = None
+             
+             # Add announcer mod if selected
+             selected_announcer_mod = getattr(self.state, 'selected_announcer_mod', None)
+             if selected_announcer_mod:
+                 announcer_mod_folder = re_extract_mod(selected_announcer_mod, "Announcer")
+                 if announcer_mod_folder:
+                     mod_folder_names.append(announcer_mod_folder)
+                     mod_names_list.append(selected_announcer_mod.get("mod_name", "Announcer"))
+                     log.info(f"[INJECT] Including announcer mod: {selected_announcer_mod.get('mod_name')}")
+                 else:
+                     # Track missing mod's relative path for cleanup
+                     relative_path = selected_announcer_mod.get("relative_path")
+                     if relative_path:
+                         missing_announcer_mod_path = relative_path
+                     log.info(f"[INJECT] Announcer mod not found (may have been deleted), ignoring: {selected_announcer_mod.get('mod_name', 'Unknown')}")
+                     # Clear missing mod from state
+                     self.state.selected_announcer_mod = None
+             
+             # Add other mods if selected (support multiple selections)
+             selected_other_mods = getattr(self.state, 'selected_other_mods', None)
+             if not selected_other_mods:
+                 # Fallback to legacy single mod for backward compatibility
+                 selected_other_mod = getattr(self.state, 'selected_other_mod', None)
+                 if selected_other_mod:
+                     selected_other_mods = [selected_other_mod]
+             
+             if selected_other_mods:
+                 # Filter out missing mods and keep track of valid ones
+                 valid_other_mods = []
+                 for selected_other_mod in selected_other_mods:
+                     other_mod_folder = re_extract_mod(selected_other_mod, "Other")
+                     if other_mod_folder:
+                         mod_folder_names.append(other_mod_folder)
+                         mod_names_list.append(selected_other_mod.get("mod_name", "Other"))
+                         valid_other_mods.append(selected_other_mod)
+                         log.info(f"[INJECT] Including other mod: {selected_other_mod.get('mod_name')}")
+                     else:
+                         # Track missing mod's relative path for cleanup
+                         relative_path = selected_other_mod.get("relative_path")
+                         if relative_path:
+                             missing_other_mod_paths.append(relative_path)
+                         log.info(f"[INJECT] Other mod not found (may have been deleted), ignoring: {selected_other_mod.get('mod_name', 'Unknown')}")
+                 
+                 # Update state to only include valid mods
+                 if len(valid_other_mods) != len(selected_other_mods):
+                     if valid_other_mods:
+                         self.state.selected_other_mods = valid_other_mods
+                     else:
+                         self.state.selected_other_mods = []
+                         if hasattr(self.state, 'selected_other_mod'):
+                             self.state.selected_other_mod = None
+             
+             # Add party member skins if party mode is active
+             party_manager = getattr(self.state, "party_manager", None)
+             if party_manager and getattr(party_manager, "enabled", False):
+                 try:
+                     from party.integration.injection_hook import PartyInjectionHook
+                     party_hook = PartyInjectionHook(party_manager, self.state, self.injection_manager)
+                     if party_hook.is_enabled():
+                         party_mod_names = party_hook.prepare_party_mods(injector)
+                         if party_mod_names:
+                             mod_folder_names.extend(party_mod_names)
+                             log.info(f"[INJECT] Including {len(party_mod_names)} party/extra mod(s): {'/'.join(party_mod_names)}")
+                 except Exception as e:
+                     log.debug(f"[INJECT] Party injection hook not used: {e}")
+ 
+             # Check if we have any mods to inject
+             if not mod_folder_names:
+                 log.warning("[INJECT] No mods available to inject (skin, map, font, announcer, or other)")
+                 return
+ 
+             log.info(f"[INJECT] Injecting mods: {', '.join(mod_names_list)}" + (f" for skin {skin_id}" if skin_id else ""))
+ 
+             # Force base skin selection via LCU before injecting (only if injecting base skin ZIP)
+             # For owned skins, user can select them normally - no need to force
+             champion_id = self.state.locked_champ_id or self.state.hovered_champ_id
+             if champion_id and base_skin_name:
+                 # Injecting base skin ZIP for unowned skin - force base skin
+                 base_skin_id = champion_id * 1000
+                 self._force_base_skin(base_skin_id)
+             
+             # Create callback to check if game ended
+             has_been_in_progress = False
+ 
+             def game_ended_callback():
+                 nonlocal has_been_in_progress
+                 phase = self.state.phase
+                 if phase == "InProgress":
+                     has_been_in_progress = True
+                     return False
+                 if phase in ("Reconnect", "GameStart"):
+                     return False
+                 return has_been_in_progress and phase not in ("InProgress", "Reconnect", "GameStart")
+             
+             # All mods are already extracted, create and run overlay with all mods
+             result = injector.overlay_manager.mk_run_overlay(
+                 mod_folder_names,
+                 timeout=120,
+                 stop_callback=game_ended_callback,
+                 injection_manager=self.injection_manager
+             )
+             
+             # Clean up missing mods from historic after overlay starts
+             try:
+                 from utils.core.mod_historic import get_historic_mod, write_historic_mod, clear_historic_mod
+                 
+                 # Normalize paths for comparison (handle both forward and backslashes)
+                 def normalize_path(p):
+                     return str(p).replace("\\", "/").lower()
+                 
+                 # Clean up map mod if it was missing
+                 if missing_map_mod_path:
+                     historic_map_path = get_historic_mod("map")
+                     if historic_map_path and normalize_path(historic_map_path) == normalize_path(missing_map_mod_path):
+                         clear_historic_mod("map")
+                         log.info(f"[MOD_HISTORIC] Cleaned missing map mod from historic: {missing_map_mod_path}")
+                 
+                 # Clean up font mod if it was missing
+                 if missing_font_mod_path:
+                     historic_font_path = get_historic_mod("font")
+                     if historic_font_path and normalize_path(historic_font_path) == normalize_path(missing_font_mod_path):
+                         clear_historic_mod("font")
+                         log.info(f"[MOD_HISTORIC] Cleaned missing font mod from historic: {missing_font_mod_path}")
+                 
+                 # Clean up announcer mod if it was missing
+                 if missing_announcer_mod_path:
+                     historic_announcer_path = get_historic_mod("announcer")
+                     if historic_announcer_path and normalize_path(historic_announcer_path) == normalize_path(missing_announcer_mod_path):
+                         clear_historic_mod("announcer")
+                         log.info(f"[MOD_HISTORIC] Cleaned missing announcer mod from historic: {missing_announcer_mod_path}")
+                 
+                 # Clean up other mods (can be multiple) - same pattern as above
+                 if missing_other_mod_paths:
+                     historic_other_paths = get_historic_mod("other")
+                     if historic_other_paths:
+                         # Convert to list if needed
+                         if isinstance(historic_other_paths, str):
+                             historic_other_paths = [historic_other_paths]
+                         elif not isinstance(historic_other_paths, list):
+                             historic_other_paths = []
+                         
+                         normalized_missing = [normalize_path(p) for p in missing_other_mod_paths]
+                         
+                         # Remove missing mod paths from historic
+                         cleaned_paths = [
+                             path for path in historic_other_paths
+                             if normalize_path(path) not in normalized_missing
+                         ]
+                         
+                         # Update historic if paths were removed
+                         if len(cleaned_paths) != len(historic_other_paths):
+                             if cleaned_paths:
+                                 write_historic_mod("other", cleaned_paths)
+                                 removed_count = len(historic_other_paths) - len(cleaned_paths)
+                                 log.info(f"[MOD_HISTORIC] Cleaned {removed_count} missing other mod(s) from historic")
+                             else:
+                                 clear_historic_mod("other")
+                                 log.info(f"[MOD_HISTORIC] Cleared historic other mods (all were missing)")
+             except Exception as e:
+                 log.debug(f"[MOD_HISTORIC] Failed to clean up missing mods from historic: {e}")
+                 import traceback
+                 log.debug(f"[MOD_HISTORIC] Traceback: {traceback.format_exc()}")
+             
+             # Stop monitor after injection completes
+             if self.injection_manager:
+                 self.injection_manager._stop_monitor()
+             
+             if result == 0:
+                 log.info("=" * LOG_SEPARATOR_WIDTH)
+                 injection_label = " + ".join([m.upper() for m in mod_names_list])
+                 log.info(f"CUSTOM MOD INJECTION COMPLETED >>> {injection_label} <<<")
+                 log.info(f"   Verify in-game - timing determines if mod appears")
+                 log.info("=" * LOG_SEPARATOR_WIDTH)
+                 
+                 # Store mod selections in historic before clearing
+                 try:
+                     from utils.core.mod_historic import write_historic_mod
+                     from utils.core.historic import write_historic_entry
+                     
+                     # Store custom skin mod in historic if selected
+                     selected_custom_mod = getattr(self.state, 'selected_custom_mod', None)
+                     if selected_custom_mod and selected_custom_mod.get("relative_path"):
+                         champion_id = selected_custom_mod.get("champion_id") or self.state.locked_champ_id or self.state.hovered_champ_id
+                         if champion_id:
+                             # Store custom mod path with "path:" prefix
+                             custom_mod_path = f"path:{selected_custom_mod['relative_path']}"
+                             write_historic_entry(int(champion_id), custom_mod_path)
+                             log.debug(f"[HISTORIC] Stored custom mod path for champion {champion_id}: {selected_custom_mod['relative_path']}")
+                     elif base_skin_name:
+                         # Store base skin ID in historic if injecting base skin with mods (no custom mod)
+                         try:
+                             # Extract skin ID from base_skin_name (e.g., "skin_84002" -> 84002)
+                             injected_id = None
+                             if isinstance(base_skin_name, str) and '_' in base_skin_name:
+                                 parts = base_skin_name.split('_', 1)
+                                 if len(parts) == 2 and parts[1].isdigit():
+                                     injected_id = int(parts[1])
+                             
+                             champion_id = self.state.locked_champ_id or self.state.hovered_champ_id
+                             if champion_id is not None and injected_id is not None:
+                                 write_historic_entry(int(champion_id), int(injected_id))
+                                 log.info(f"[HISTORIC] Stored last injected ID {injected_id} for champion {champion_id}")
+                         except Exception as e:
+                             log.debug(f"[HISTORIC] Failed to store base skin entry: {e}")
+                     
+                     # Store map mod if selected
+                     selected_map_mod = getattr(self.state, 'selected_map_mod', None)
+                     if selected_map_mod and selected_map_mod.get("relative_path"):
+                         write_historic_mod("map", selected_map_mod["relative_path"])
+                         log.debug(f"[MOD_HISTORIC] Stored map mod: {selected_map_mod['relative_path']}")
+                     
+                     # Store font mod if selected
+                     selected_font_mod = getattr(self.state, 'selected_font_mod', None)
+                     if selected_font_mod and selected_font_mod.get("relative_path"):
+                         write_historic_mod("font", selected_font_mod["relative_path"])
+                         log.debug(f"[MOD_HISTORIC] Stored font mod: {selected_font_mod['relative_path']}")
+                     
+                     # Store announcer mod if selected
+                     selected_announcer_mod = getattr(self.state, 'selected_announcer_mod', None)
+                     if selected_announcer_mod and selected_announcer_mod.get("relative_path"):
+                         write_historic_mod("announcer", selected_announcer_mod["relative_path"])
+                         log.debug(f"[MOD_HISTORIC] Stored announcer mod: {selected_announcer_mod['relative_path']}")
+                     
+                     # Store other mods if selected (store all for historic)
+                     selected_other_mods = getattr(self.state, 'selected_other_mods', None)
+                     if not selected_other_mods:
+                         # Fallback to legacy single mod
+                         selected_other_mod = getattr(self.state, 'selected_other_mod', None)
+                         if selected_other_mod:
+                             selected_other_mods = [selected_other_mod]
+                     if selected_other_mods and len(selected_other_mods) > 0:
+                         # Store all mods for historic (list format)
+                         other_mod_paths = [mod.get("relative_path") for mod in selected_other_mods if mod.get("relative_path")]
+                         if other_mod_paths:
+                             write_historic_mod("other", other_mod_paths)
+                             log.debug(f"[MOD_HISTORIC] Stored {len(other_mod_paths)} other mod(s): {', '.join(other_mod_paths)}")
+                 except Exception as e:
+                     log.debug(f"[MOD_HISTORIC] Failed to store mod selections: {e}")
+                 
+                 # Keep mod selections in state so they persist across games.
+                 # Users can deselect manually; historic files handle cross-session persistence.
+             else:
+                 log.error("=" * LOG_SEPARATOR_WIDTH)
+                 injection_label = " + ".join([m.upper() for m in mod_names_list])
+                 log.error(f"CUSTOM MOD INJECTION FAILED >>> {injection_label} <<<")
+                 log.error("=" * LOG_SEPARATOR_WIDTH)
+                 log.error(f"[INJECT] Mods will likely NOT appear in-game")
+         
+         except Exception as e:
+             log.error(f"[INJECT] Error injecting custom mod: {e}")
+             import traceback
+             log.error(f"[INJECT] Traceback: {traceback.format_exc()}")

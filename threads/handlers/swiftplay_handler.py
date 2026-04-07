@@ -433,122 +433,136 @@ class SwiftplayHandler:
             return None
 
     def trigger_swiftplay_injection(self):
-        """Trigger injection system for Swiftplay mode with all tracked skins"""
-        with self.state.swiftplay_lock:
-            try:
-                log.info("[phase] Swiftplay matchmaking detected - triggering injection for all tracked skins")
-                log.info(f"[phase] Skin tracking dictionary: {self.state.swiftplay_skin_tracking}")
-
-                # Restore previously injected skins for champions that still have
-                # a base skin in tracking (e.g. after force_base_skins reset the UI
-                # and the skin processor picked up the base skin).
-                # Skip champions the user explicitly browsed since last injection.
-                if self._last_injected_tracking:
-                    for cid, prev_skin in self._last_injected_tracking.items():
-                        if cid in self._user_changed_since_inject:
-                            continue
-                        current = self.state.swiftplay_skin_tracking.get(cid)
-                        if current is not None and current == int(cid) * 1000 and prev_skin != current:
-                            log.info(f"[phase] Restoring previous skin for champion {cid}: {current} → {prev_skin}")
-                            self.state.swiftplay_skin_tracking[cid] = prev_skin
-
-                if not self.state.swiftplay_skin_tracking:
-                    log.warning("[phase] No tracked skins - cannot trigger injection")
-                    return
-
-                # Filter tracking dict to only include champions currently in lobby slots
-                # Reuse cached IDs from _sync_tracking_with_lobby if available
-                active_champion_ids = (
-                    set(self._last_sync_active_ids) if self._last_sync_active_ids
-                    else self._get_active_lobby_champion_ids()
-                )
-                if active_champion_ids:
-                    stale = set(self.state.swiftplay_skin_tracking) - active_champion_ids
-                    if stale:
-                        # Remove stale entries in-place to avoid replacing the dict reference
-                        for stale_cid in stale:
-                            self.state.swiftplay_skin_tracking.pop(stale_cid, None)
-                        log.info(f"[phase] Pruned {len(stale)} stale champion(s) from tracking: {stale}")
-                    filtered_tracking = dict(self.state.swiftplay_skin_tracking)
-                else:
-                    log.debug("[phase] Could not determine active lobby champions - injecting all tracked skins")
-                    filtered_tracking = dict(self.state.swiftplay_skin_tracking)
-
-                if not filtered_tracking:
-                    log.warning("[phase] No tracked skins for active champions - cannot trigger injection")
-                    return
-
-                total_skins = len(filtered_tracking)
-                log.info(f"[phase] Will inject {total_skins} skin(s) from tracking dictionary")
-
-                from utils.core.utilities import is_base_skin
-                from pathlib import Path
-                import zipfile
-                import shutil
-
-                chroma_id_map = self.skin_scraper.cache.chroma_id_map if self.skin_scraper and self.skin_scraper.cache else None
-
-                if not self.injection_manager:
-                    log.error("[phase] Injection manager not available")
-                    return
-
-                self.injection_manager._ensure_initialized()
-
-                if not self.injection_manager.injector:
-                    log.error("[phase] Injector not initialized")
-                    return
-
-                # Clean mods directory
-                self.injection_manager.injector._clean_mods_dir()
-                self.injection_manager.injector._clean_overlay_dir()
-
-                # Extract all skin ZIPs to mods directory
-                extracted_mods = []
-                for champion_id, skin_id in filtered_tracking.items():
-                    try:
-                        is_base = is_base_skin(skin_id, chroma_id_map)
-                        if is_base:
-                            injection_name = f"skin_{skin_id}"
-                            chroma_id_param = None
+            """Trigger injection system for Swiftplay mode with all tracked skins and custom mods"""
+            with self.state.swiftplay_lock:
+                try:
+                    log.info("[phase] Swiftplay matchmaking detected - triggering injection for all tracked skins")
+                    
+                    if self._last_injected_tracking:
+                        for cid, prev_skin in self._last_injected_tracking.items():
+                            if cid in self._user_changed_since_inject:
+                                continue
+                            current = self.state.swiftplay_skin_tracking.get(cid)
+                            if current is not None and current == int(cid) * 1000 and prev_skin != current:
+                                log.info(f"[phase] Restoring previous skin for champion {cid}: {current} → {prev_skin}")
+                                self.state.swiftplay_skin_tracking[cid] = prev_skin
+    
+                    if not self.state.swiftplay_skin_tracking:
+                        log.warning("[phase] No tracked skins - cannot trigger injection")
+                        return
+    
+                    active_champion_ids = (
+                        set(self._last_sync_active_ids) if self._last_sync_active_ids
+                        else self._get_active_lobby_champion_ids()
+                    )
+                    
+                    if active_champion_ids:
+                        stale = set(self.state.swiftplay_skin_tracking) - active_champion_ids
+                        if stale:
+                            for stale_cid in stale:
+                                self.state.swiftplay_skin_tracking.pop(stale_cid, None)
+                        filtered_tracking = dict(self.state.swiftplay_skin_tracking)
+                    else:
+                        filtered_tracking = dict(self.state.swiftplay_skin_tracking)
+    
+                    if not filtered_tracking:
+                        return
+    
+                    from utils.core.utilities import is_base_skin
+                    chroma_id_map = self.skin_scraper.cache.chroma_id_map if self.skin_scraper and self.skin_scraper.cache else None
+    
+                    if not self.injection_manager:
+                        return
+    
+                    self.injection_manager._ensure_initialized()
+                    if not self.injection_manager.injector:
+                        return
+    
+                    # --- ИСПРАВЛЕНИЕ ТУТ: Используем корректный метод очистки ---
+                    self.injection_manager.injector._clean_mods_dir()
+                    self.injection_manager.injector._clean_overlay_dir()
+    
+                    extracted_mods = []
+                    
+                    # РАЗДЕЛЯЕМ OTHER-МОДЫ НА FORCER И ОБЫЧНЫЕ
+                    other_mods = getattr(self.state, 'selected_other_mods', [])
+                    if not other_mods:
+                        old_other = getattr(self.state, 'selected_other_mod', None)
+                        if old_other: other_mods = [old_other]
+                    
+                    regular_other_mods = []
+                    forcer_mods = []
+                    for o_mod in other_mods:
+                        is_forcer = o_mod.get("is_map_forcer", False) or 'forcer' in o_mod.get("mod_name", "").lower()
+                        if is_forcer:
+                            forcer_mods.append(o_mod)
                         else:
-                            injection_name = f"chroma_{skin_id}"
-                            chroma_id_param = skin_id
-
-                        zip_path = self.injection_manager.injector._resolve_zip(
-                            injection_name,
-                            chroma_id=chroma_id_param,
-                            skin_name=injection_name,
-                            champion_name=None,
-                            champion_id=champion_id
-                        )
-
-                        if not zip_path or not zip_path.exists():
-                            log.warning(f"[phase] Skin ZIP not found: {injection_name}")
-                            continue
-
-                        mod_folder = self.injection_manager.injector._extract_zip_to_mod(zip_path)
-                        if mod_folder:
-                            extracted_mods.append(mod_folder.name)
-                            log.info(f"[phase] Extracted {injection_name} to mods directory")
-                    except Exception as e:
-                        log.error(f"[phase] Error extracting skin {skin_id}: {e}")
-                        import traceback
-                        log.debug(f"[phase] Traceback: {traceback.format_exc()}")
-
-                if not extracted_mods:
-                    log.warning("[phase] No mods extracted - cannot inject")
-                    return
-
-                # Store extracted mods for later injection
-                self.state.swiftplay_extracted_mods = extracted_mods
-                self._last_injected_tracking = dict(filtered_tracking)
-                self._user_changed_since_inject.clear()
-                log.info(f"[phase] Extracted {len(extracted_mods)} skin(s) - will inject on GameStart: {', '.join(extracted_mods)}")
-
-            except Exception as e:
-                log.warning(f"[phase] Error extracting Swiftplay skins: {e}")
-                import traceback
-                log.debug(f"[phase] Traceback: {traceback.format_exc()}")
+                            regular_other_mods.append(o_mod)
+                    
+                    # 1. Извлекаем скины чемпионов
+                    for champion_id, skin_id in filtered_tracking.items():
+                        try:
+                            custom_skin_mod = getattr(self.state, 'selected_custom_mod', None)
+                            if custom_skin_mod and custom_skin_mod.get("champion_id") == champion_id:
+                                mod_folder = self.injection_manager.prepare_custom_mod(custom_skin_mod, f"Custom Skin ({champion_id})")
+                                if mod_folder: extracted_mods.append(mod_folder)
+                            
+                            is_base = is_base_skin(skin_id, chroma_id_map)
+                            if is_base:
+                                injection_name = f"skin_{skin_id}"
+                                chroma_id_param = None
+                            else:
+                                injection_name = f"chroma_{skin_id}"
+                                chroma_id_param = skin_id
+    
+                            zip_path = self.injection_manager.injector._resolve_zip(
+                                injection_name, chroma_id=chroma_id_param, skin_name=injection_name,
+                                champion_name=None, champion_id=champion_id
+                            )
+    
+                            if zip_path and zip_path.exists():
+                                base_mod_folder = self.injection_manager.injector._extract_zip_to_mod(zip_path)
+                                if base_mod_folder:
+                                    extracted_mods.append(base_mod_folder.name)
+                        except Exception as e:
+                            log.error(f"[phase] Error extracting skin {skin_id}: {e}")
+    
+                    # 2. Извлекаем глобальные моды
+                    map_mod = getattr(self.state, 'selected_map_mod', None)
+                    if map_mod:
+                        fld = self.injection_manager.prepare_custom_mod(map_mod, "Map")
+                        if fld: extracted_mods.append(fld)
+    
+                    font_mod = getattr(self.state, 'selected_font_mod', None)
+                    if font_mod:
+                        fld = self.injection_manager.prepare_custom_mod(font_mod, "Font")
+                        if fld: extracted_mods.append(fld)
+    
+                    announcer_mod = getattr(self.state, 'selected_announcer_mod', None)
+                    if announcer_mod:
+                        fld = self.injection_manager.prepare_custom_mod(announcer_mod, "Announcer")
+                        if fld: extracted_mods.append(fld)
+    
+                    for o_mod in regular_other_mods:
+                        fld = self.injection_manager.prepare_custom_mod(o_mod, "Other")
+                        if fld: extracted_mods.append(fld)
+    
+                    for f_mod in forcer_mods:
+                        fld = self.injection_manager.prepare_custom_mod(f_mod, "System Forcer")
+                        if fld: extracted_mods.append(fld)
+    
+                    extracted_mods = list(dict.fromkeys(extracted_mods))
+    
+                    if not extracted_mods:
+                        log.warning("[phase] No mods extracted - cannot inject")
+                        return
+                    self.state.swiftplay_extracted_mods = extracted_mods
+                    self._last_injected_tracking = dict(filtered_tracking)
+                    self._user_changed_since_inject.clear()
+                    log.info(f"[phase] Extracted {len(extracted_mods)} mod(s) - will inject: {', '.join(extracted_mods)}")
+    
+                except Exception as e:
+                    log.warning(f"[phase] Error extracting Swiftplay skins/mods: {e}")
     
     def run_swiftplay_overlay(self):
         """Run overlay injection for Swiftplay mode with previously extracted mods"""

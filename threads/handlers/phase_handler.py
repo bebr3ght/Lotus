@@ -46,6 +46,7 @@ class PhaseHandler:
     def handle_phase_change(self, phase: str, previous_phase: str):
         """Handle phase change"""
         log.info(f"[phase] Phase transition: {previous_phase} → {phase} (swiftplay={self.state.is_swiftplay_mode}, extracted={len(self.state.swiftplay_extracted_mods)}, queue={self.state.current_queue_id})")
+        
         if phase == "Matchmaking":
             if self.state.is_swiftplay_mode:
                 log.info("[phase] Matchmaking phase detected in Swiftplay mode - triggering injection")
@@ -73,15 +74,16 @@ class PhaseHandler:
                 # Guard: skip if extraction already happened (_injection_triggered)
                 # or if the overlay is already running (WS handler got there first).
                 if not self.state.swiftplay_extracted_mods and self.swiftplay_handler:
-                    already_handled = (
-                        self.swiftplay_handler._injection_triggered
-                        or self.swiftplay_handler._overlay_lock.locked()
-                    )
-                    if already_handled:
-                        log.debug("[phase] ChampSelect in Swiftplay mode - extraction/overlay already handled, skipping")
+                    is_overlay_running = self.swiftplay_handler._overlay_lock.locked()
+                    if is_overlay_running:
+                        log.debug("[phase] ChampSelect in Swiftplay mode - overlay already running, skipping extraction")
                     elif self.state.swiftplay_skin_tracking:
-                        log.info("[phase] ChampSelect in Swiftplay mode - Matchmaking phase missed, triggering late injection")
+                        log.info("=" * 80)
+                        log.info("[phase] LATE INJECTION TRIGGERED! Matchmaking phase was skipped or failed.")
+                        log.info("[phase] Forcing extraction of tracked skins now!")
+                        log.info("=" * 80)
                         self.swiftplay_handler.trigger_swiftplay_injection()
+                        self.swiftplay_handler._injection_triggered = True
                     else:
                         log.warning("[phase] ChampSelect in Swiftplay mode - no tracked skins available for injection")
 
@@ -92,12 +94,17 @@ class PhaseHandler:
                         from ui.core.user_interface import get_user_interface
                         user_interface = get_user_interface(self.state, self.skin_scraper)
                         if not user_interface.is_ui_initialized() and not user_interface._pending_ui_initialization:
-                            log.info("[phase] ChampSelect in Swiftplay mode - requesting UI initialization for overlay detection")
                             user_interface.request_ui_initialization()
                     except Exception as e:
-                        log.warning(f"[phase] Failed to request UI initialization in Swiftplay ChampSelect: {e}")
+                        log.warning(f"[phase] Failed to request UI init: {e}")
+                    
                     if self.swiftplay_handler:
-                        self.swiftplay_handler.run_swiftplay_overlay()
+                        import threading
+                        threading.Thread(
+                            target=self.swiftplay_handler.run_swiftplay_overlay,
+                            daemon=True,
+                            name="SwiftplayOverlay-PhaseCS"
+                        ).start()
                 else:
                     if self.swiftplay_handler and self.swiftplay_handler._overlay_lock.locked():
                         log.debug("[phase] ChampSelect in Swiftplay mode - overlay already running from WS handler")
@@ -115,16 +122,20 @@ class PhaseHandler:
                     from ui.core.user_interface import get_user_interface
                     user_interface = get_user_interface(self.state, self.skin_scraper)
                     if not user_interface.is_ui_initialized() and not user_interface._pending_ui_initialization:
-                        log.info("[phase] ChampSelect detected - requesting UI initialization (backup)")
                         user_interface.request_ui_initialization()
                 except Exception as e:
                     log.warning(f"[phase] Failed to request UI initialization in ChampSelect: {e}")
         
         elif phase == "GameStart":
             if self.state.is_swiftplay_mode and self.state.swiftplay_extracted_mods:
-                log.info("[phase] GameStart fallback - overlay not yet injected, triggering now")
                 if self.swiftplay_handler:
-                    self.swiftplay_handler.run_swiftplay_overlay()
+                    log.info("[phase] GameStart in Swiftplay mode - running overlay injection")
+                    import threading
+                    threading.Thread(
+                        target=self.swiftplay_handler.run_swiftplay_overlay,
+                        daemon=True,
+                        name="SwiftplayOverlay-GameStart"
+                    ).start()
             log_action(log, "GameStart detected - UI will be destroyed after injection", "🚀")
         
         elif phase == "InProgress":
@@ -142,23 +153,14 @@ class PhaseHandler:
             if not self.state.is_swiftplay_mode and phase is not None:
                 self._request_ui_destruction()
                 self._reset_state()
-        
-        # Handle lobby exit
-        # Don't cleanup Swiftplay if we're transitioning to Matchmaking/ChampSelect (need extracted mods)
-        if previous_phase == "Lobby" and phase != "Lobby":
-            if self.state.is_swiftplay_mode and self.swiftplay_handler:
-                # Only cleanup if we're not going to Matchmaking/ChampSelect (where we need extracted mods)
-                if phase not in ["Matchmaking", "ReadyCheck", "ChampSelect", "FINALIZATION", "GameStart", "InProgress"]:
-                    self.swiftplay_handler.cleanup_swiftplay_exit()
 
-        # Handle returning to Lobby from a Swiftplay game flow (dodge, decline, etc.)
-        # Only cleanup if we're NOT returning to a Swiftplay lobby (queue ID 480).
-        # If queue ID is still 480, user wants to requeue with same skins — preserve tracking.
-        if phase == "Lobby" and previous_phase in _SWIFTPLAY_ACTIVE_PHASES:
+        if phase == "Lobby" and previous_phase != "Lobby":
             if self.state.is_swiftplay_mode and self.swiftplay_handler:
-                # Check if we're still in a Swiftplay lobby (queue ID 480)
                 if self.state.current_queue_id == SWIFTPLAY_QUEUE_ID:
-                    log.info(f"[phase] Returned to Lobby from {previous_phase} - still in Swiftplay queue (480), preserving skin tracking")
+                    log.info(f"[phase] Returned to Lobby from {previous_phase} - preserving skin tracking, resetting injection flags")
+                    self.swiftplay_handler._injection_triggered = False
+                    self.swiftplay_handler._overlay_done = False
+                    self.swiftplay_handler._last_matchmaking_state = None
                 else:
                     log.info(f"[phase] Returned to Lobby from {previous_phase} - queue changed, cleaning up Swiftplay state")
                     self.swiftplay_handler.cleanup_swiftplay_exit()
@@ -171,19 +173,10 @@ class PhaseHandler:
             overlay_lock = self.swiftplay_handler._overlay_lock
             if overlay_lock.locked():
                 log.info("[phase] InProgress - waiting for Swiftplay overlay to finish before UI destruction")
-            # Acquire and immediately release — just waits for any in-flight overlay
-            if overlay_lock.acquire(timeout=30):
+            if overlay_lock.acquire(timeout=10):
                 overlay_lock.release()
-            else:
-                log.warning("[phase] InProgress - timed out waiting for overlay lock after 30s, proceeding anyway")
 
-        try:
-            from ui.core.user_interface import get_user_interface
-            user_interface = get_user_interface(self.state, self.skin_scraper)
-            user_interface.request_ui_destruction()
-            log_action(log, "UI destruction requested for InProgress", "")
-        except Exception as e:
-            log.warning(f"[phase] Failed to request UI destruction for InProgress: {e}")
+        self._request_ui_destruction()
 
         # Destroy chroma panel
         chroma_selector = get_chroma_selector()
@@ -195,14 +188,7 @@ class PhaseHandler:
                 log.debug(f"[phase] Error destroying chroma panel: {e}")
     
     def _handle_end_of_game(self):
-        """Handle EndOfGame phase"""
-        try:
-            from ui.core.user_interface import get_user_interface
-            user_interface = get_user_interface(self.state, self.skin_scraper)
-            user_interface.request_ui_destruction()
-            log_action(log, "UI destruction requested for EndOfGame", "")
-        except Exception as e:
-            log.warning(f"[phase] Failed to request UI destruction for EndOfGame: {e}")
+        self._request_ui_destruction()
 
         if self.injection_manager:
             try:
@@ -211,10 +197,8 @@ class PhaseHandler:
             except Exception as e:
                 log.warning(f"[phase] Failed to stop overlay process: {e}")
 
-        # Clean up Swiftplay state after game ends to prevent stale data
-        if self.state.is_swiftplay_mode and self.swiftplay_handler:
-            log.info("[phase] EndOfGame - cleaning up Swiftplay state")
-            self.swiftplay_handler.cleanup_swiftplay_exit()
+        if self.state.is_swiftplay_mode:
+            log.info("[phase] EndOfGame in Swiftplay - preserving state for next match")
     
     def _request_ui_destruction(self):
         """Request UI destruction"""

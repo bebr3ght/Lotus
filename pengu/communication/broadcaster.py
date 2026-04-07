@@ -365,3 +365,84 @@ class Broadcaster:
         
         return False
 
+    def broadcast_swiftplay_state(self) -> None:
+        """Broadcast swiftplay tracking state to JavaScript with active slots filtering and OWNED check"""
+        import json
+        if not self.websocket_server.loop or not self.websocket_server.connections:
+            return
+            
+        tracking = getattr(self.shared_state, 'swiftplay_skin_tracking', {})
+        owned_skins = getattr(self.shared_state, 'owned_skin_ids', set())
+        skins_data =[]
+        
+        lcu = None
+        if self.skin_scraper and hasattr(self.skin_scraper, 'lcu'):
+            lcu = self.skin_scraper.lcu
+            
+        # --- ФИКС ИНВЕНТАРЯ: Загружаем купленные скины, если инвентарь пуст (например, только зашли в игру) ---
+        if not owned_skins and lcu:
+            try:
+                fetched_skins = lcu.owned_skins()
+                if fetched_skins:
+                    owned_skins = set(fetched_skins)
+                    self.shared_state.owned_skin_ids = owned_skins
+            except Exception as e:
+                log.debug(f"[SwiftplayState] Failed to fetch owned skins: {e}")
+        # -----------------------------------------------------------------------------------------------------
+            
+        # 1. Получаем активные слоты лобби
+        active_champ_ids = set()
+        if lcu:
+            try:
+                dual_selection = lcu.get_swiftplay_dual_champion_selection()
+                if dual_selection and "champions" in dual_selection:
+                    for champ in dual_selection["champions"]:
+                        cid = champ.get("championId")
+                        if cid: active_champ_ids.add(int(cid))
+            except Exception as e:
+                log.debug(f"[SwiftplayState] Failed to get active slots: {e}")
+
+        # --- ФИКС БАЗОВЫХ СКИНОВ: Подключаем специальную функцию Rose ---
+        from utils.core.utilities import is_owned
+
+        # 2. Формируем данные
+        for champ_id, skin_id in tracking.items():
+            if active_champ_ids and int(champ_id) not in active_champ_ids:
+                continue
+                
+            champ_name = "Champion"
+            if lcu:
+                champ_name = lcu.get_champion_name_by_id(int(champ_id)) or "Champion"
+            
+            skin_name = None
+            selected_custom = getattr(self.shared_state, 'selected_custom_mod', None)
+            
+            if selected_custom and selected_custom.get("champion_id") == int(champ_id):
+                skin_name = selected_custom.get("mod_name")
+            else:
+                chroma_id_map = getattr(self.skin_scraper.cache, "chroma_id_map", {}) if self.skin_scraper and self.skin_scraper.cache else {}
+                if int(skin_id) in chroma_id_map:
+                    chroma_data = chroma_id_map[int(skin_id)]
+                    c_name = chroma_data.get('name', f"Chroma {skin_id}")
+                    skin_name = c_name
+                else:
+                    skin_name = self.skin_mapping.find_skin_name_by_skin_id(int(skin_id)) or f"Skin {skin_id}"
+            
+            # Используем правильную функцию проверки (она учитывает дефолтные скины)
+            skin_is_owned = is_owned(int(skin_id), owned_skins)
+            
+            skins_data.append({
+                "championId": int(champ_id),
+                "championName": champ_name,
+                "skinId": int(skin_id),
+                "skinName": skin_name,
+                "isOwned": skin_is_owned
+            })
+            
+        payload = {
+            "type": "swiftplay-state",
+            "active": getattr(self.shared_state, 'is_swiftplay_mode', False),
+            "skins": skins_data
+        }
+        
+        self._send_message(json.dumps(payload))

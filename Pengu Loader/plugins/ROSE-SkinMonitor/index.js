@@ -591,6 +591,189 @@ function installFindMatchObserver() {
   }
 }
 
+// ====== SWIFTPLAY SMART PANEL (FULL TEXT & STABLE HIDE) ======
+function updateSwiftplaySmartPanel(data) {
+    let panel = document.getElementById('rose-swiftplay-smart-panel');
+    
+    // ПРОВЕРКА: Видны ли баннеры игроков? (Это признак того, что мы ВНУТРИ лобби, а не в меню выбора)
+    const lobbyBanners = document.querySelector('.v2-banner-component.local-player');
+    const isVisibleInDOM = lobbyBanners && lobbyBanners.offsetParent !== null;
+    
+    // Если мы не в лобби или данных нет - прячем мгновенно
+    if (!data.active || !isVisibleInDOM || !data.skins || data.skins.length === 0) {
+        if (panel) panel.style.display = 'none';
+        return;
+    }
+
+    if (!panel) {
+        panel = document.createElement('div');
+        panel.id = 'rose-swiftplay-smart-panel';
+        panel.innerHTML = `
+            <div class="rsp-header">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#c8aa6e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+                <span>Swiftplay Locks</span>
+            </div>
+            <div class="rsp-body" id="rsp-skins-container"></div>
+        `;
+        document.body.appendChild(panel);
+        
+        const style = document.createElement('style');
+        style.textContent = `
+            #rose-swiftplay-smart-panel {
+                position: fixed;
+                bottom: 100px;
+                left: 30px;
+                background: rgba(1, 10, 19, 0.98);
+                border: 1px solid #463714;
+                border-top: 2px solid #c8aa6e;
+                padding: 12px;
+                z-index: ;
+                display: flex;
+                flex-direction: column;
+                gap: 10px;
+                box-shadow: 0 8px 16px rgba(0,0,0,0.8);
+                min-width: 260px;
+                max-width: 450px; /* Чтобы не на весь экран, но достаточно широко */
+                pointer-events: none;
+            }
+            .rsp-header {
+                color: #c8aa6e;
+                font-size: 11px;
+                font-weight: bold;
+                text-transform: uppercase;
+                letter-spacing: 1px;
+                display: flex;
+                align-items: center; gap: 8px;
+                margin-bottom: 4px;
+                border-bottom: 1px solid rgba(200, 170, 110, 0.2);
+                padding-bottom: 6px;
+            }
+            .rsp-item { display: flex; align-items: flex-start; gap: 12px; margin: 4px 0; }
+            .rsp-icon { width: 34px; height: 34px; border-radius: 50%; border: 1px solid #785a28; flex-shrink: 0; }
+            .rsp-text { display: flex; flex-direction: column; min-width: 0; }
+            .rsp-champ { color: #a09b8c; font-size: 9px; text-transform: uppercase; font-weight: bold; }
+            
+            /* СТИЛЬ ДЛЯ ПОЛНОГО НАЗВАНИЯ */
+            .rsp-skin { 
+                color: #f0e6d2; 
+                font-size: 13px; 
+                font-weight: bold; 
+                line-height: 1.2;
+                white-space: normal; /* Разрешаем перенос */
+                word-wrap: break-word; /* Переносим длинные слова */
+                overflow: visible; 
+                text-overflow: clip; 
+            }
+        `;
+        document.head.appendChild(style);
+    }
+
+    const container = document.getElementById('rsp-skins-container');
+        container.innerHTML = data.skins.map(skin => {
+            // Если скин куплен официально, делаем красивый бейдж
+            const ownedBadge = skin.isOwned 
+                ? `<span style="color: #0acbe6; font-size: 10px; margin-left: 6px; text-shadow: 0 0 4px rgba(10, 203, 230, 0.5); vertical-align: baseline;">✔ OWNED</span>` 
+                : '';
+                
+            // Если куплен — меняем цвет рамки иконки
+            const borderColor = skin.isOwned ? '#0acbe6' : '#785a28';
+            const opacity = skin.isOwned ? '0.85' : '1';
+            
+            return `
+                <div class="rsp-item" style="opacity: ${opacity};">
+                    <img class="rsp-icon" src="/lol-game-data/assets/v1/champion-icons/${skin.championId}.png" style="border-color: ${borderColor};">
+                    <div class="rsp-text">
+                        <span class="rsp-champ">${skin.championName}</span>
+                        <span class="rsp-skin">${skin.skinName}${ownedBadge}</span>
+                    </div>
+                </div>
+            `;
+        }).join('');
+        
+        // Включаем панель ТОЛЬКО если в этот момент руны не открыты
+        if (!isOverlayOpen()) {
+            panel.style.display = 'flex';
+        }
+}
+
+// ====== УЛУЧШЕННЫЙ КОНТРОЛЛЕР ВИДИМОСТИ (БЕЗ ЗАДЕРЖЕК) ======
+
+function isActuallyInLobby() {
+    const lobbyBanners = document.querySelector('.v2-banner-component.local-player');
+    return !!(lobbyBanners && lobbyBanners.offsetParent !== null);
+}
+
+let isPanelRequested = false; // Флаг от спама запросов
+
+function isOverlayOpen() {
+    const overlays =[
+        'lol-perks-v2-editor',           
+        'lol-perks-v2-main-view',        
+        '.perks-editor-modal',           
+        'lol-uikit-full-page-modal',     
+        '.champion-customization-flyout',
+        'lol-uikit-dialog-frame',        
+        '.modal-root'                    
+    ];
+
+    for (const selector of overlays) {
+        const el = document.querySelector(selector);
+        if (el && (el.offsetWidth > 0 || el.offsetHeight > 0)) return true;
+    }
+    
+    const backdrop = document.querySelector('.lol-uikit-layer-manager-wrapper');
+    if (backdrop && backdrop.children.length > 1) return true;
+
+    return false;
+}
+
+// Глобальная функция решения: показывать панель или нет
+function shouldShowSmartPanel() {
+    return isActuallyInLobby() && !isOverlayOpen();
+}
+
+setInterval(() => {
+    const panel = document.getElementById('rose-swiftplay-smart-panel');
+    if (!panel) return;
+
+    const inLobby = isActuallyInLobby();
+    const overlayActive = isOverlayOpen();
+
+    const shouldShow = inLobby && !overlayActive;
+
+    if (shouldShow) {
+        // КРИТИЧЕСКИЙ ФИКС: Мы НЕ делаем panel.style.display = 'flex' здесь!
+        // Мы только просим бэкенд дать нам актуальные данные, если еще не просили.
+        if (panel.style.display === 'none' && !isPanelRequested) {
+            isPanelRequested = true; // Запоминаем, что послали запрос
+            if (window.__roseBridge && window.__roseBridge.ready) {
+                window.__roseBridge.send({type: "request-swiftplay-state"});
+            }
+        }
+    } else {
+        // Если открыты руны или вышли из лобби — жестко прячем
+        if (panel.style.display !== 'none') {
+            panel.style.display = 'none';
+        }
+        isPanelRequested = false; // Сбрасываем флаг, чтобы при возврате снова запросить
+    }
+}, 150);
+
+// Реактивное скрытие через события фаз (доп. страховка)
+function setupPhaseSubscription() {
+    if (window.__roseBridge && window.__roseBridge.subscribe) {
+        window.__roseBridge.subscribe("phase-change", (data) => {
+            const panel = document.getElementById('rose-swiftplay-smart-panel');
+            if (panel && data.phase !== "Lobby") {
+                panel.style.display = 'none';
+            }
+        });
+    } else {
+        setTimeout(setupPhaseSubscription, 500);
+    }
+}
+setupPhaseSubscription();
+
 async function start() {
   if (!document.body) {
     console.log(`${LOG_PREFIX} Waiting for document.body...`);
@@ -614,6 +797,19 @@ async function start() {
       onReady,
       get port() { return BRIDGE_PORT; },
       get ready() { return bridgeReady; },
+    });
+    
+    subscribe("swiftplay-state", updateSwiftplaySmartPanel);
+    subscribe("phase-change", (data) => { 
+      // Запрашиваем состояние свифтплея, чтобы обновить (или убить) панель
+      if (bridgeSocket && bridgeReady) {
+          sendBridgePayload({type: "request-swiftplay-state"});
+      }
+      // Жестко прячем панель, если мы вышли из лобби
+      if (data.phase !== "Lobby") {
+          const panel = document.getElementById('rose-swiftplay-smart-panel');
+          if (panel) panel.style.display = 'none';
+      }
     });
   }
 

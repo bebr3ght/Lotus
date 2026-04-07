@@ -141,6 +141,7 @@ class SkinProcessor:
         if broadcaster:
             # Broadcast the matched name, not the input name
             broadcaster.broadcast_skin_state(matched_name, skin_id)
+            broadcaster.broadcast_swiftplay_state()
     
     def _find_skin_id(self, skin_name: str) -> Optional[tuple[int, str]]:
         """Find skin ID and matched name using skin scraper

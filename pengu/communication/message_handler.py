@@ -159,6 +159,12 @@ class MessageHandler:
             self._handle_party_remove_peer(payload)
         elif payload_type == "party-get-state":
             self._handle_party_get_state(payload)
+        # --- НОВЫЙ КОД ДЛЯ ЛЕЙБЛА ---
+        elif payload_type == "request-historic-label":
+            self._handle_request_historic_label(payload)
+        elif payload_type == "request-swiftplay-state":
+            self.broadcaster.broadcast_swiftplay_state()
+        # ----------------------------
         elif payload.get("skin"):
             # Handle skin detection message
             self._handle_skin_detection(payload)
@@ -241,6 +247,16 @@ class MessageHandler:
         if chroma_id is not None:
             from ui.chroma.selector import get_chroma_selector
             chroma_selector = get_chroma_selector()
+            # --- НОВЫЙ БЛОК ДЛЯ SWIFTPLAY ---
+            if getattr(self.shared_state, "is_swiftplay_mode", False):
+                from utils.core.utilities import get_champion_id_from_skin_id
+                champ_id = get_champion_id_from_skin_id(int(chroma_id))
+                if champ_id:
+                    with self.shared_state.swiftplay_lock:
+                        self.shared_state.swiftplay_skin_tracking[champ_id] = int(chroma_id)
+                    # Мгновенно обновляем панель в клиенте
+                    self.broadcaster.broadcast_swiftplay_state()
+            # ---------------------------------
             
             if chroma_selector:
                 chroma_selector._on_chroma_selected(chroma_id, chroma_name)
@@ -2313,3 +2329,76 @@ class MessageHandler:
 
         except Exception as e:
             log.error(f"[PARTY] Error getting party state: {e}")
+
+    def _handle_request_historic_label(self, payload: dict) -> None:
+        """Handle request for historic skin label info (for transparent UI display)"""
+        champion_id = payload.get("championId")
+        view_type = payload.get("viewType")
+        
+        if not champion_id:
+            return
+            
+        try:
+            from utils.core.historic import get_historic_skin_for_champion, is_custom_mod_path, get_custom_mod_path
+            from pathlib import Path
+            
+            historic_val = get_historic_skin_for_champion(champion_id)
+            skin_name = "Default"
+            has_historic = historic_val is not None
+            
+            # --- НОВАЯ ЛОГИКА: НЕ ВРЕМ ИГРОКУ ---
+            # В классическом режиме показываем надпись ТОЛЬКО если авто-лок реально собирается сработать
+            if view_type == "classic-view":
+                is_active = getattr(self.shared_state, 'historic_mode_active', False)
+                if not is_active:
+                    has_historic = False
+            
+            # В режиме Swiftplay авто-лок из файла истории пока не применяется к слотам лобби
+            # Так что скрываем надпись, чтобы не вводить в заблуждение
+            if view_type == "swiftplay-view":
+                has_historic = False
+            # ------------------------------------
+            
+            if has_historic:
+                if is_custom_mod_path(historic_val):
+                    path = get_custom_mod_path(historic_val)
+                    # Делаем красивое имя из названия zip файла мода
+                    skin_name = Path(path).stem.replace("-", " ").replace("_", " ").title()
+                else:
+                    historic_id = int(historic_val)
+                    
+                    if self.skin_scraper and not self.skin_scraper.cache.is_loaded_for_champion(champion_id):
+                        try:
+                            self.skin_scraper.scrape_champion_skins(champion_id)
+                        except Exception as e:
+                            log.debug(f"[SkinMonitor] Failed to scrape champion for historic label: {e}")
+                    
+                    chroma_id_map = getattr(self.skin_scraper.cache, "chroma_id_map", {}) if self.skin_scraper and self.skin_scraper.cache else {}
+                    
+                    if historic_id in chroma_id_map:
+                        skin_name = chroma_id_map[historic_id].get('name', f"Chroma {historic_id}")
+                    else:
+                        mapped_name = self.skin_mapping.find_skin_name_by_skin_id(historic_id)
+                        if mapped_name:
+                            skin_name = mapped_name
+                        else:
+                            if self.skin_scraper and self.skin_scraper.cache.is_loaded_for_champion(champion_id):
+                                skin_data = self.skin_scraper.cache.get_skin_by_id(historic_id)
+                                if skin_data:
+                                    skin_name = skin_data.get('skinName', f"Skin {historic_id}")
+                                else:
+                                    skin_name = f"Skin {historic_id}"
+                            else:
+                                skin_name = f"Skin {historic_id}"
+            
+            response = {
+                "type": "historic-label-response",
+                "championId": champion_id,
+                "hasHistoric": has_historic,
+                "skinName": skin_name,
+                "viewType": view_type
+            }
+            self._send_response(json.dumps(response))
+            
+        except Exception as e:
+            log.error(f"[SkinMonitor] Failed to handle historic label request: {e}")
