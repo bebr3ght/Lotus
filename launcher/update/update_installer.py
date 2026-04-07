@@ -150,7 +150,7 @@ class UpdateInstaller:
                 batch.write('echo [%date% %time%] Update start > "%LOG%"\n')
                 batch.write("ping 127.0.0.1 -n 4 >nul\n")
                 batch.write('echo [%date% %time%] Mirroring files >> "%LOG%"\n')
-                batch.write('robocopy "%SOURCE%" "%DEST%" /MIR /NFL /NDL /NJH /NJS /XD __pycache__ "Pengu Loader\\plugins" /XF config.ini cslol-dll.dll >> "%LOG%" 2>&1\n')
+                batch.write('robocopy "%SOURCE%" "%DEST%" /MIR /NFL /NDL /NJH /NJS /XD __pycache__ "Pengu Loader\\plugins" /XF config.ini cslol-dll.dll hashes.game.txt >> "%LOG%" 2>&1\n')
                 batch.write("if %ERRORLEVEL% GEQ 8 goto :robofail\n")
                 batch.write('echo [%date% %time%] Updating ROSE plugins (preserving user-installed) >> "%LOG%"\n')
                 batch.write('if exist "%SOURCE%\\Pengu Loader\\plugins" (\n')
