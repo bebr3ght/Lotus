@@ -14,7 +14,7 @@ from config import PHASE_POLL_INTERVAL_DEFAULT, WS_PING_TIMEOUT_DEFAULT
 log = get_logger()
 
 
-def initialize_threads(lcu, state, args, injection_manager, skin_scraper, app_status, on_lcu_disconnected):
+def initialize_threads(lcu, state, args, injection_manager, skin_scraper, app_status, on_lcu_disconnected, on_lcu_reconnected=None):
     """
     Initialize and start all application threads
     
@@ -51,9 +51,10 @@ def initialize_threads(lcu, state, args, injection_manager, skin_scraper, app_st
         else:
             log.warning("[Main] Language detection returned None")
     
-    t_lcu_monitor = LCUMonitorThread(lcu, state, on_language_detected, t_ws, 
+    t_lcu_monitor = LCUMonitorThread(lcu, state, on_language_detected, t_ws,
                                       db=None, skin_scraper=skin_scraper, injection_manager=injection_manager,
-                                      disconnect_callback=on_lcu_disconnected)
+                                      disconnect_callback=on_lcu_disconnected,
+                                      reconnect_callback=on_lcu_reconnected)
     thread_manager.register("LCU Monitor", t_lcu_monitor)
     
     # Initialize analytics thread

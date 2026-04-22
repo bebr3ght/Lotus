@@ -17,6 +17,7 @@ from utils.core.issue_reporter import report_issue
 from utils.core.logging import get_logger, log_action
 from utils.core.junction import is_junction, safe_remove_entry, link_or_extract
 from utils.core.paths import get_injection_dir
+from injection.config.base_skin_tracker import start_tracking as _start_skin_tracking
 
 log = get_logger()
 
@@ -842,9 +843,9 @@ class InjectionTrigger:
                 else:
                     log.warning(f"[INJECT] Failed to force base skin")
 
-            # Emit timing info (INFO so it shows up in normal customer logs).
-            # Also, if forcing base skin was slow compared to injection threshold, write an issue entry.
-            # This helps diagnose cases where LCU is laggy and skin injection timing gets tight.
+            # Log timing and start tracking for WebSocket confirmation.
+            # The real benchmark is how long until the server confirms the skin
+            # change via a session event — not just the API call duration.
             dt_force_s = None
             threshold_s = None
             if base_skin_set_successfully:
@@ -858,14 +859,8 @@ class InjectionTrigger:
                     dt_force_s = float(time.perf_counter() - t_force0)
                     log.info(f"[INJECT] Base skin force time: {dt_force_s:.3f}s (threshold: {threshold_s:.3f}s)")
 
-                    if dt_force_s > threshold_s:
-                        report_issue(
-                            "BASE_SKIN_FORCE_SLOW",
-                            "error",
-                            "Base skin forcing took longer than your injection threshold.",
-                            hint=f"Base skin force time: {dt_force_s:.3f}s, injection threshold: {threshold_s:.3f}s. Consider increasing Injection Threshold.",
-                            dedupe_window_s=60.0,
-                        )
+                    # Start tracking for WebSocket confirmation
+                    _start_skin_tracking(base_skin_id)
                 except Exception:
                     pass
             
@@ -881,10 +876,18 @@ class InjectionTrigger:
                             if current_skin != base_skin_id:
                                 log.warning(f"[INJECT] Base skin verification failed: {current_skin} != {base_skin_id}")
                                 try:
-                                    # Reuse the same "recommended threshold" logic (based on observed base-skin force time)
-                                    # by emitting a hint line that includes both values in the same format as BASE_SKIN_FORCE_SLOW.
+                                    from injection.config.base_skin_tracker import get_stats as _get_skin_stats
+                                    stats = _get_skin_stats()
+                                    rec_ms = stats.get("recommended_threshold_ms")
                                     hint = "Retry your skin selection. If the warning persists, increase Injection Threshold."
-                                    if isinstance(dt_force_s, (int, float)) and isinstance(threshold_s, (int, float)):
+                                    if rec_ms is not None:
+                                        hint = (
+                                            f"Based on your history, base skin confirmation takes up to "
+                                            f"{stats.get('p90_ms', '?')}ms (p90). "
+                                            f"Recommended threshold: {rec_ms}ms ({rec_ms / 1000:.2f}s). "
+                                            f"Increase Injection Threshold in Settings."
+                                        )
+                                    elif isinstance(dt_force_s, (int, float)) and isinstance(threshold_s, (int, float)):
                                         hint = (
                                             f"Base skin force time: {float(dt_force_s):.3f}s, "
                                             f"injection threshold: {float(threshold_s):.3f}s. "

@@ -978,7 +978,7 @@
   }
 
   let diagnosticsDialog = null;
-  let diagnosticsState = { errors: [], path: "", settingsSnapshot: null };
+  let diagnosticsState = { errors: [], path: "", settingsSnapshot: null, baseSkinStats: null };
   let errorBadgeState = { hasErrors: false, count: 0 };
   let _badgeObserverStarted = false;
   let _pendingSave = null;
@@ -1095,9 +1095,11 @@
       errors: Array.isArray(payload.errors) ? payload.errors : [],
       path: payload.path || "",
       settingsSnapshot: snapshot,
+      baseSkinStats: payload.baseSkinStats || null,
     };
     updateErrorBadges(diagnosticsState.errors.length > 0, diagnosticsState.errors.length);
     renderDiagnosticsDialog();
+    renderThresholdBenchmark();
   }
 
   function getResolvedCategoriesForSavedValues(values) {
@@ -1656,6 +1658,16 @@
     thresholdSliderWrapper.appendChild(thresholdSliderUI);
     thresholdSliderContainer.appendChild(thresholdSliderWrapper);
     thresholdSection.appendChild(thresholdSliderContainer);
+
+    // Benchmark info placeholder (populated when diagnostics data arrives)
+    const benchmarkInfo = document.createElement("div");
+    benchmarkInfo.id = "rose-threshold-benchmark";
+    benchmarkInfo.style.marginTop = "6px";
+    benchmarkInfo.style.fontSize = "11px";
+    benchmarkInfo.style.fontFamily = "'Beaufort for LOL', serif";
+    benchmarkInfo.style.color = "#7e6f4e";
+    thresholdSection.appendChild(benchmarkInfo);
+
     form.appendChild(thresholdSection);
 
     // Monitor auto-resume timeout section
@@ -2209,8 +2221,9 @@
       liveFlyout.style.transform = "translateX(-50%)"; // Center the panel on the icon
     }, 0);
 
-    // Request current settings
+    // Request current settings and benchmark data
     requestSettings();
+    requestDiagnostics();
   }
 
   function setupSliderInteractions(sliderId, slider, button, fill, valueDisplay, min, max, valueConverter, displayFormatter) {
@@ -3254,6 +3267,20 @@
         if (isInjectionThreshold) {
           const thresholdAtMax =
             typeof curThreshold === "number" && Number.isFinite(curThreshold) && curThreshold >= (2.0 - 1e-6);
+          const stats = diagnosticsState.baseSkinStats;
+          const hasTrackerData = stats && typeof stats.p90_ms === "number" && stats.confirmed_count > 0;
+          const recMs = hasTrackerData ? stats.recommended_threshold_ms : (e.recommendedThresholdMs || null);
+          const recS = typeof recMs === "number" ? (recMs / 1000).toFixed(2) : null;
+
+          let fixText;
+          if (thresholdAtMax) {
+            fixText = `Fix: you're already at the maximum Injection Threshold. This usually means the injection is extremely slow. Try lighter mods, close heavy apps, move League/mods to an SSD, and consider adding antivirus exclusions for the League and Rose folders. Then retry.`;
+          } else if (hasTrackerData) {
+            fixText = `Fix: based on ${stats.confirmed_count} game(s), base skin confirmation takes up to ${stats.p90_ms}ms (p90). Recommended threshold: ${recS}s. Use the "Apply recommended" button below, or increase "Injection Threshold" manually.`;
+          } else {
+            fixText = `Fix: increase "Injection Threshold (seconds)" and click Save. If the warning is still there, increase it again and Save again. Once the warning is gone, retry your skin selection.`;
+          }
+
           return {
             title:
               code === "BASE_SKIN_VERIFY_FAILED"
@@ -3261,11 +3288,9 @@
                 : "Base skin forcing took too long (skin may not appear)",
             details: [
               code === "BASE_SKIN_VERIFY_FAILED"
-                ? `What it means: the client didn't apply/reflect the base skin change in time.`
+                ? `What it means: the client didn't confirm the base skin change in time.`
                 : `What it means: forcing the base skin took too long, so the selected skin may not show.`,
-              thresholdAtMax
-                ? `Fix: you're already at the maximum Injection Threshold. This usually means the injection is extremely slow. Try lighter mods, close heavy apps, move League/mods to an SSD, and consider adding antivirus exclusions for the League and Rose folders. Then retry.`
-                : `Fix: increase "Injection Threshold (seconds)" and click Save. If the warning is still there, increase it again and Save again. Once the warning is gone, retry your skin selection.`,
+              fixText,
             ],
           };
         }
@@ -3329,6 +3354,58 @@
         .join("");
 
       body.innerHTML = `${headerHtml}${itemsHtml}`;
+    }
+
+    foot.innerHTML = "";
+  }
+
+  function renderThresholdBenchmark() {
+    const el = document.getElementById("rose-threshold-benchmark");
+    if (!el) return;
+
+    const stats = diagnosticsState.baseSkinStats;
+    const hasStats = stats && typeof stats.confirmed_count === "number" && stats.confirmed_count > 0;
+
+    if (!hasStats) {
+      el.innerHTML = "";
+      return;
+    }
+
+    const recMs = stats.recommended_threshold_ms;
+    const recS = typeof recMs === "number" ? (recMs / 1000).toFixed(2) : null;
+    const curThresholdVal = typeof currentSettings?.threshold === "number" ? currentSettings.threshold : null;
+    const needsIncrease = recS !== null && curThresholdVal !== null && curThresholdVal < parseFloat(recS) - 0.001;
+    const games = stats.confirmed_count;
+    const label = `${games} game${games > 1 ? "s" : ""}`;
+
+    let html;
+    if (needsIncrease) {
+      html = `<span style="color:#c8aa6e;">Based on ${label}, we recommend <span style="color:#c89b3c; font-weight:700;">${recS}s</span></span>`;
+      html += ` <button id="rose-apply-recommended-btn" style="
+        margin-left:4px; padding:1px 8px; border:1px solid #463714; background:#1e2328;
+        color:#cdbe91; cursor:pointer; font-family:'Beaufort for LOL',serif; font-size:11px;
+        vertical-align:middle;
+      ">Apply</button>`;
+    } else {
+      html = `<span style="color:#5b9a32;">Your threshold looks good (based on ${label})</span>`;
+    }
+
+    el.innerHTML = html;
+
+    const applyBtn = document.getElementById("rose-apply-recommended-btn");
+    if (applyBtn) {
+      applyBtn.addEventListener("click", () => {
+        if (bridge) {
+          bridge.send({ type: "diagnostics-apply-recommended" });
+          applyBtn.textContent = "Applied!";
+          applyBtn.disabled = true;
+          applyBtn.style.opacity = "0.6";
+          setTimeout(() => {
+            if (bridge) bridge.send({ type: "settings-request" });
+            requestDiagnostics();
+          }, 500);
+        }
+      });
     }
   }
 
@@ -3525,6 +3602,8 @@
       bridge.subscribe("settings-saved", handleSettingsSaved);
       bridge.subscribe("diagnostics-data", handleDiagnosticsData);
       bridge.subscribe("diagnostics-cleared-category", () => requestDiagnostics());
+      bridge.subscribe("diagnostics-tracker-cleared", () => requestDiagnostics());
+      bridge.subscribe("diagnostics-applied-recommended", () => requestDiagnostics());
       bridge.subscribe("path-validation-result", handlePathValidationResult);
       bridge.subscribe("champions-list-response", handleChampionsListResponse);
       bridge.subscribe("champion-skins-response", handleChampionSkinsResponse);

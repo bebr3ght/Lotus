@@ -294,65 +294,61 @@ import time
 log = get_logger()
 
 
-def _setup_pengu_and_injection(lcu, injection_manager) -> None:
+def _setup_pengu_and_injection(lcu, injection_manager, activate_pengu: bool = True) -> None:
     """
-    Detect and save leaguepath/clientpath, then setup both Pengu Loader and injection system.
-    
-    This function:
-    1. Detects leaguepath/clientpath from lockfile
-    2. Saves paths to config.ini
-    3. Verifies paths are written
-    4. Sets league path in Pengu Loader and activates it
-    5. Initializes injection system with detected paths
-    
-    Note: LCU is already connected when this is called (WebSocket is active)
+    Detect and save leaguepath/clientpath, then setup Pengu Loader and injection system.
+
+    Args:
+        activate_pengu: If True, activate Pengu Loader (first startup).
+                        If False, skip Pengu activation (reconnection after account swap).
     """
     log.info("Detecting League paths...")
-    
+
     # Detect paths using GameDetector (only once)
     config_manager = ConfigManager()
     game_detector = GameDetector(config_manager)
     league_path, client_path = game_detector.detect_paths()
-    
+
     if not league_path or not client_path:
         log.warning("Could not detect League paths, skipping setup")
         return
-    
+
     # Save paths to config.ini
     log.info("Saving League paths to config.ini: league=%s, client=%s", league_path, client_path)
     config_manager.save_paths(str(league_path), str(client_path))
-    
+
     # Verify paths are written to config.ini (with retries)
     max_verify_attempts = 5
     verify_interval = 0.2
     paths_verified = False
-    
+
     for attempt in range(max_verify_attempts):
         saved_league_path = config_manager.load_league_path()
         saved_client_path = config_manager.load_client_path()
-        
+
         if saved_league_path and saved_client_path:
             # Normalize paths for comparison
             saved_league_normalized = str(Path(saved_league_path).resolve())
             saved_client_normalized = str(Path(saved_client_path).resolve())
             league_normalized = str(league_path.resolve())
             client_normalized = str(client_path.resolve())
-            
+
             if saved_league_normalized == league_normalized and saved_client_normalized == client_normalized:
                 paths_verified = True
                 log.info("Paths verified in config.ini")
                 break
-        
+
         if attempt < max_verify_attempts - 1:
             time.sleep(verify_interval)
-    
+
     if not paths_verified:
         log.warning("Could not verify paths in config.ini, continuing anyway")
-    
-    # Set client path in Pengu Loader and activate
-    log.info("Setting client path in Pengu Loader and activating...")
-    pengu_loader.activate_on_start(str(client_path))
-    
+
+    # Set client path in Pengu Loader and activate (skip on reconnection)
+    if activate_pengu:
+        log.info("Setting client path in Pengu Loader and activating...")
+        pengu_loader.activate_on_start(str(client_path))
+
     # Initialize injection system now (with detected paths already in config.ini)
     log.info("Initializing injection system...")
     injection_manager.initialize_when_ready()
@@ -419,7 +415,15 @@ def run_league_unlock(args: Optional[argparse.Namespace] = None,
     
     # Create LCU disconnection handler
     on_lcu_disconnected = create_lcu_disconnection_handler(state, skin_scraper, app_status)
-    
+
+    # Create LCU reconnection handler (re-setup paths/injection after account swap, Pengu already active)
+    def on_lcu_reconnected():
+        log.info("[Main] LCU reconnected after account swap - re-initializing paths and injection...")
+        try:
+            _setup_pengu_and_injection(lcu, injection_manager, activate_pengu=False)
+        except Exception as e:
+            log.warning(f"[Main] Failed to re-initialize after reconnection: {e}")
+
     # Update tray manager quit callback now that state is available
     if tray_manager:
         def updated_tray_quit_callback():
@@ -459,7 +463,7 @@ def run_league_unlock(args: Optional[argparse.Namespace] = None,
     
     # Initialize threads (this starts the WebSocket server)
     thread_manager, t_phase, t_ui, t_ws, t_lcu_monitor = initialize_threads(
-        lcu, state, args, injection_manager, skin_scraper, app_status, on_lcu_disconnected
+        lcu, state, args, injection_manager, skin_scraper, app_status, on_lcu_disconnected, on_lcu_reconnected
     )
     
     # Wait for WebSocket status to be active before activating Pengu Loader

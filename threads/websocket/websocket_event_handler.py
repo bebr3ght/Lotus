@@ -13,6 +13,10 @@ from config import INTERESTING_PHASES
 from lcu import LCU, compute_locked
 from state import SharedState
 from utils.core.logging import get_logger, log_status, log_event
+from injection.config.base_skin_tracker import (
+    on_skin_confirmed as _on_skin_confirmed,
+    on_champ_select_exit as _on_champ_select_exit,
+)
 
 log = get_logger()
 
@@ -83,7 +87,15 @@ class WebSocketEventHandler:
         if isinstance(ph, str) and ph != self.state.phase and ph is not None:
             if ph in INTERESTING_PHASES:
                 log_status(log, "Phase", ph, "")
+            prev_phase = self.state.phase
             self.state.phase = ph
+
+            # If leaving ChampSelect, record a timeout for any pending base skin confirmation
+            if prev_phase == "ChampSelect" and ph != "ChampSelect":
+                try:
+                    _on_champ_select_exit()
+                except Exception:
+                    pass
             
             if ph == "ChampSelect":
                 # Detect game mode FIRST to get accurate is_swiftplay_mode flag
@@ -249,7 +261,13 @@ class WebSocketEventHandler:
                 if player.get("cellId") == self.state.local_cell_id:
                     selected_skin = player.get("selectedSkinId")
                     if selected_skin is not None:
-                        self.state.selected_skin_id = int(selected_skin)
+                        skin_int = int(selected_skin)
+                        self.state.selected_skin_id = skin_int
+                        # Check if this confirms a pending base skin force
+                        try:
+                            _on_skin_confirmed(skin_int)
+                        except Exception:
+                            pass
                     break
         
         # Visible players (distinct cellIds)

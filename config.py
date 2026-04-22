@@ -20,7 +20,7 @@ log = logging.getLogger(__name__)
 # APPLICATION METADATA
 # =============================================================================
 
-APP_VERSION = "1.2.4"                          # Application version
+APP_VERSION = "1.2.5"                          # Application version
 APP_USER_AGENT = f"Rose/{APP_VERSION}"  # User-Agent header for HTTP requests
 
 _CONFIG = configparser.ConfigParser()
@@ -116,13 +116,15 @@ SKIN_NAME_MIN_SIMILARITY = 0.7  # Minimum similarity for fuzzy skin name matchin
 
 # Phase monitoring
 PHASE_POLL_INTERVAL_DEFAULT = 0.5  # Seconds between phase checks
+PHASE_POLL_INTERVAL_INGAME = 2.0   # Seconds between phase checks during InProgress (reduces in-game CPU)
 PHASE_HZ_DEFAULT = 2.0             # Phase check frequency (Hz)
 
 # Champion monitoring
 CHAMP_POLL_INTERVAL = 0.25  # Seconds between champion state checks
 
 # LCU connection monitoring
-LCU_MONITOR_INTERVAL = 1.0  # Seconds between LCU connection checks
+LCU_MONITOR_INTERVAL = 1.0         # Seconds between LCU connection checks
+LCU_MONITOR_INTERVAL_INGAME = 3.0  # Seconds between LCU connection checks during InProgress
 
 # Main loop sleep intervals
 MAIN_LOOP_SLEEP = 0.016     # Main loop iteration sleep time (16ms for 60 FPS responsive chroma UI)

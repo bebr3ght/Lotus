@@ -132,6 +132,10 @@ class MessageHandler:
             self._handle_diagnostics_clear(payload)
         elif payload_type == "diagnostics-clear-category":
             self._handle_diagnostics_clear_category(payload)
+        elif payload_type == "diagnostics-clear-tracker":
+            self._handle_diagnostics_clear_tracker(payload)
+        elif payload_type == "diagnostics-apply-recommended":
+            self._handle_diagnostics_apply_recommended(payload)
         elif payload_type == "open-pengu-loader-ui":
             self._handle_open_pengu_loader_ui(payload)
         elif payload_type == "settings-save":
@@ -418,6 +422,55 @@ class MessageHandler:
             except Exception:
                 pass
 
+    def _handle_diagnostics_clear_tracker(self, payload: dict) -> None:
+        """Clear base skin confirmation tracker samples."""
+        try:
+            from injection.config.base_skin_tracker import clear_samples
+            clear_samples()
+            self._send_response(json.dumps({"type": "diagnostics-tracker-cleared", "success": True}))
+        except Exception as e:
+            log.error(f"[SkinMonitor] Failed to clear tracker samples: {e}")
+            try:
+                self._send_response(json.dumps({"type": "diagnostics-tracker-cleared", "success": False}))
+            except Exception:
+                pass
+
+    def _handle_diagnostics_apply_recommended(self, payload: dict) -> None:
+        """Apply the tracker-recommended injection threshold value."""
+        try:
+            from injection.config.base_skin_tracker import get_stats as _get_skin_stats
+            stats = _get_skin_stats()
+            rec_ms = stats.get("recommended_threshold_ms")
+            if rec_ms is None:
+                self._send_response(json.dumps({"type": "diagnostics-applied-recommended", "success": False, "reason": "no data"}))
+                return
+
+            rec_s = round(float(rec_ms) / 1000.0, 2)
+
+            from config import set_config_option
+            set_config_option("General", "injection_threshold", str(rec_s))
+
+            # Refresh the live threshold if injection manager is available
+            try:
+                if hasattr(self, '_injection_manager') and self._injection_manager:
+                    self._injection_manager.refresh_injection_threshold()
+            except Exception:
+                pass
+
+            self._send_response(json.dumps({
+                "type": "diagnostics-applied-recommended",
+                "success": True,
+                "appliedThresholdS": rec_s,
+                "appliedThresholdMs": rec_ms,
+            }))
+            log.info(f"[SkinMonitor] Applied recommended threshold: {rec_s}s ({rec_ms}ms)")
+        except Exception as e:
+            log.error(f"[SkinMonitor] Failed to apply recommended threshold: {e}")
+            try:
+                self._send_response(json.dumps({"type": "diagnostics-applied-recommended", "success": False}))
+            except Exception:
+                pass
+
     def _clear_issues_categories(self, categories: set[str]) -> bool:
         """Remove matching diagnostics entries from rose_diagnostics.txt (best-effort)."""
         try:
@@ -451,7 +504,7 @@ class MessageHandler:
                 # Match the same categories we summarize
                 if "auto-resume safety" in ml or "monitor auto-resume timeout" in fl:
                     return "monitor_timeout"
-                if "base skin forcing took longer" in ml or "injection threshold" in ml or "injection threshold" in fl or "base skin force time" in fl:
+                if "base skin forcing took longer" in ml or "injection threshold" in ml or "injection threshold" in fl or "base skin force time" in fl or "base skin confirmation" in fl or "verification failed" in ml:
                     return "injection_threshold"
                 return "other"
 
@@ -473,15 +526,25 @@ class MessageHandler:
     def _handle_diagnostics_request(self, payload: dict) -> None:
         """
         Return a compact, user-friendly list of recent errors, derived from rose_diagnostics.txt.
+        Also includes base skin confirmation stats from the tracker.
         The goal is "what to change" rather than raw logs.
         """
         try:
             out = self._compute_diagnostics_errors()
 
+            # Include base skin confirmation stats from the tracker
+            tracker_stats = {}
+            try:
+                from injection.config.base_skin_tracker import get_stats as _get_skin_stats
+                tracker_stats = _get_skin_stats()
+            except Exception:
+                pass
+
             response_payload = {
                 "type": "diagnostics-data",
                 "errors": out,
                 "path": str(get_user_data_dir() / "rose_diagnostics.txt"),
+                "baseSkinStats": tracker_stats,
             }
             self._send_response(json.dumps(response_payload))
         except Exception as e:
@@ -569,42 +632,49 @@ class MessageHandler:
                         "recommendedMonitorTimeoutS": recommended,
                     }
 
-                # Category: Injection Threshold (BASE_SKIN_FORCE_SLOW)
-                if "injection threshold" in ml or "injection threshold" in fl or "base skin force time" in fl:
+                # Category: Injection Threshold (BASE_SKIN_FORCE_SLOW / BASE_SKIN_VERIFY_FAILED)
+                if "injection threshold" in ml or "injection threshold" in fl or "base skin force time" in fl or "base skin confirmation" in fl:
+                    # Use tracker-based recommendation when available (p90 + buffer from real data),
+                    # fall back to parsing the hint text for legacy diagnostics entries.
+                    recommended_ms = None
+                    tracker_p90 = None
+                    tracker_samples = None
+                    try:
+                        from injection.config.base_skin_tracker import get_stats as _get_skin_stats
+                        stats = _get_skin_stats()
+                        if stats.get("recommended_threshold_ms") is not None:
+                            recommended_ms = stats["recommended_threshold_ms"]
+                            tracker_p90 = stats.get("p90_ms")
+                            tracker_samples = stats.get("confirmed_count")
+                    except Exception:
+                        pass
+
                     force_ms = None
                     thresh_ms = None
-                    try:
-                        # Example hints:
-                        # - "Fix: Base skin force time: 0.800s, injection threshold: 0.500s. ..."
-                        # - "Fix: Base skin force time: 800ms, injection threshold: 500ms. ..."
-                        # We accept either unit and normalize to ms.
-                        m = re.search(
-                            r"base skin force time:\s*([0-9.]+)\s*(ms|s)\s*[,)]?\s*.*?"
-                            r"injection threshold:\s*([0-9.]+)\s*(ms|s)",
-                            fix or "",
-                            flags=re.IGNORECASE,
-                        )
-                        if m:
-                            force_v = float(m.group(1))
-                            force_u = (m.group(2) or "").lower()
-                            thresh_v = float(m.group(3))
-                            thresh_u = (m.group(4) or "").lower()
+                    if recommended_ms is None:
+                        # Legacy fallback: parse single-sample hint text
+                        try:
+                            m = re.search(
+                                r"base skin force time:\s*([0-9.]+)\s*(ms|s)\s*[,)]?\s*.*?"
+                                r"injection threshold:\s*([0-9.]+)\s*(ms|s)",
+                                fix or "",
+                                flags=re.IGNORECASE,
+                            )
+                            if m:
+                                force_v = float(m.group(1))
+                                force_u = (m.group(2) or "").lower()
+                                thresh_v = float(m.group(3))
+                                thresh_u = (m.group(4) or "").lower()
+                                force_ms = int(round(force_v * (1000.0 if force_u == "s" else 1.0)))
+                                thresh_ms = int(round(thresh_v * (1000.0 if thresh_u == "s" else 1.0)))
+                            if isinstance(force_ms, (int, float)) and force_ms is not None:
+                                recommended_ms = int(_clamp(max(float(force_ms) + 250.0, 500.0), 1.0, 2000.0))
+                        except Exception:
+                            pass
 
-                            force_ms = int(round(force_v * (1000.0 if force_u == "s" else 1.0)))
-                            thresh_ms = int(round(thresh_v * (1000.0 if thresh_u == "s" else 1.0)))
-                    except Exception:
-                        force_ms = None
-                        thresh_ms = None
-
-                    # Recommend in ms:
-                    #   recommended = clamp(max(observed + 250ms, 500ms), 1ms, 2000ms)
-                    # UI expects seconds, so also provide recommendedThresholdS.
-                    recommended_ms = None
-                    if isinstance(force_ms, (int, float)) and force_ms is not None:
-                        recommended_ms = int(_clamp(max(float(force_ms) + 250.0, 500.0), 1.0, 2000.0))
                     recommended_s = (float(recommended_ms) / 1000.0) if isinstance(recommended_ms, int) else None
                     code_out = "BASE_SKIN_VERIFY_FAILED" if ("verification failed" in ml) else "BASE_SKIN_FORCE_SLOW"
-                    return {
+                    result = {
                         "code": code_out,
                         "text": "Injection Threshold → increase",
                         "baseSkinForceTimeMs": force_ms,
@@ -612,6 +682,11 @@ class MessageHandler:
                         "recommendedThresholdMs": recommended_ms,
                         "recommendedThresholdS": recommended_s,
                     }
+                    if tracker_p90 is not None:
+                        result["trackerP90Ms"] = tracker_p90
+                    if tracker_samples is not None:
+                        result["trackerSamples"] = tracker_samples
+                    return result
 
                 # Fallback: keep it short
                 short = msg.strip()

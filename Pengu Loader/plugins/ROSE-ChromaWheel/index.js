@@ -29,7 +29,8 @@
   // Track selected chroma for button color update (controlled by Python)
   let selectedChromaData = null; // { id, primaryColor, colors, name }
   let pythonChromaState = null; // { selectedChromaId, chromaColor, chromaColors, currentSkinId }
-  let championLocked = false; // Track if a champion is locked
+  let championLocked = false; // Track if a champion is locked 
+  let currentPhase = null; // Track the last observed phase so startup replays do not look like a new session
 
   /**
    * Escape HTML special characters to prevent XSS (CWE-79)
@@ -154,6 +155,9 @@
       overflow: hidden;
       width: 100%;
       padding: 2px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
     }
 
     .${BUTTON_CLASS} .content {
@@ -166,9 +170,11 @@
       background-size: contain;
       border: 2px solid #010a13;
       border-radius: 50%;
-      height: 16px;
-      margin: 1px;
-      width: 16px;
+      box-sizing: border-box;
+      height: 20px;
+      width: 20px;
+      margin: 0;
+      flex-shrink: 0;
     }
 
     .${BUTTON_CLASS} .inner-mask {
@@ -212,10 +218,7 @@
       display: block;
     }
 
-    /* Adjust content positioning in Swiftplay buttons */
-    .thumbnail-wrapper .${BUTTON_CLASS} .content {
-      transform: translate(1px, 1px);
-    }
+    /* Swiftplay buttons inherit flexbox centering from .frame-color */
 
     .chroma.icon {
       display: none !important;
@@ -787,18 +790,43 @@
     updateChromaButtonColor();
   }
 
+  function resetFrontendSessionState(reason) {
+    // Clear transient frontend state only when a Champ Select session really starts/ends.
+    skinMonitorState = null;
+    pythonChromaState = null;
+    selectedChromaData = null;
+    championLocked = false;
+
+    // Remove stale UI that may still be attached from the previous session.
+    const existingPanel = document.getElementById(PANEL_ID);
+    if (existingPanel) {
+      existingPanel.remove();
+    }
+
+    document.querySelectorAll(BUTTON_SELECTOR).forEach((button) => {
+      button.remove();
+    });
+
+    emitBridgeLog("session_state_reset", { reason });
+  }
+
   function handlePhaseChangeFromPython(data) {
     // Use Python-detected game mode to drive ARAM detection for the JS panel
     try {
       const phase = data.phase;
       const gameMode = data.gameMode;
       const mapId = data.mapId;
+      // Late startup can replay "ChampSelect" after skin-state is already current.
+      // Keep the last seen phase so we only reset on real phase transitions.
+      const previousPhase = currentPhase;
+      currentPhase = phase;
 
       if (phase === "ChampSelect") {
-        // Reset stale skin state from previous game so the chroma button
-        // doesn't briefly show the old champion's data at lock-in
-        skinMonitorState = null;
-        pythonChromaState = null;
+        // Only reset on a real transition into a new Champ Select session.
+        // Startup replays can arrive after a valid skin-state payload.
+        if (previousPhase && previousPhase !== "ChampSelect") {
+          resetFrontendSessionState("phase-entry");
+        }
 
         const isAram =
           mapId === 12 ||
@@ -813,7 +841,22 @@
         isAramFromPython = Boolean(isAram);
       } else {
         // Leaving champ select / finalization – clear flag
+        if (
+          previousPhase === "ChampSelect" ||
+          previousPhase === "FINALIZATION"
+        ) {
+          resetFrontendSessionState("phase-exit");
+        }
         isAramFromPython = false;
+      }
+
+      // Observer lifecycle: stop only during actively-playing InProgress so
+      // Swiftplay skin selection (which happens in Lobby phase) isn't broken.
+      // See GitHub issue #22.
+      if (phase === "InProgress") {
+        stopObserver();
+      } else {
+        startObserver();
       }
     } catch (e) {
       // Fail silently – fallback to Ember-based detection
@@ -1777,6 +1820,33 @@
     return button.closest(".skin-selection-item, .thumbnail-wrapper");
   }
 
+  function hasConfirmedLockedSkinState(state = skinMonitorState) {
+    return Boolean(
+      state &&
+      Number.isFinite(state.skinId) &&
+      state.skinId > 0 &&
+      Number.isFinite(state.championId) &&
+      state.championId > 0
+    );
+  }
+
+  function maybeInferChampionLockedFromSkinState(state = skinMonitorState) {
+    if (championLocked || !hasConfirmedLockedSkinState(state)) {
+      return;
+    }
+
+    championLocked = true;
+    log.info(
+      `[ChromaWheel] Inferred champion lock from skin state (champion=${state.championId}, skin=${state.skinId})`
+    );
+
+    setTimeout(() => {
+      if (typeof scanSkinSelection === "function") {
+        scanSkinSelection();
+      }
+    }, 0);
+  }
+
   function handleChampionLocked(data) {
     const wasLocked = championLocked;
     championLocked = data.locked === true;
@@ -1812,7 +1882,8 @@
     const isSwiftplay =
       skinItem.classList.contains("thumbnail-wrapper") &&
       skinItem.classList.contains("active-skin");
-    if (!championLocked && !isSwiftplay) {
+    const lockConfirmed = championLocked || hasConfirmedLockedSkinState();
+    if (!lockConfirmed && !isSwiftplay) {
       // Remove existing button if champion is not locked (and not Swiftplay)
       const existingButton = skinItem.querySelector(BUTTON_SELECTOR);
       if (existingButton) {
@@ -3673,6 +3744,26 @@
     };
   }
 
+  // Observer lifecycle - only run during ChampSelect/FINALIZATION.
+  // See GitHub issue #22: the 500ms poll + MutationObserver steal CPU
+  // from the League game process during matches.
+  let observerCleanup = null;
+
+  function startObserver() {
+    if (observerCleanup) return;
+    observerCleanup = setupObserver();
+  }
+
+  function stopObserver() {
+    if (!observerCleanup) return;
+    try {
+      observerCleanup();
+    } catch (e) {
+      log.debug("Observer cleanup failed", e);
+    }
+    observerCleanup = null;
+  }
+
   function subscribeToSkinMonitor() {
     if (typeof window === "undefined") {
       return;
@@ -3680,6 +3771,7 @@
 
     if (window.__roseSkinState) {
       skinMonitorState = window.__roseSkinState;
+      maybeInferChampionLockedFromSkinState(skinMonitorState);
 
       // Warm champion data up front so button visibility can recover even if
       // the first skin-state payload reports hasChromas=false before caches settle.
@@ -3729,6 +3821,7 @@
       emitBridgeLog("skin_state_update", detail || {});
       const prevState = skinMonitorState;
       skinMonitorState = detail || null;
+      maybeInferChampionLockedFromSkinState(skinMonitorState);
 
       // Reset selected chroma data when skin changes (not just chroma selection)
       if (prevState && prevState.skinId !== detail?.skinId) {
@@ -3858,7 +3951,9 @@
       subscribeToSkinMonitor();
       injectCSS();
       scanSkinSelection();
-      setupObserver();
+      // Default-on: first phase-change from Python will shut the observer
+      // off again if we're already in-game.  See issue #22.
+      startObserver();
       log.info("fake chroma button creation active");
       _initialized = true;
       _retryCount = 0; // Reset retry counter on success

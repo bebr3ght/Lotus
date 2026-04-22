@@ -121,11 +121,14 @@ class PhaseThread(threading.Thread):
                         log.info("[phase] Periodic check: Matchmaking phase active - triggering injection")
                         self.swiftplay_handler.trigger_swiftplay_injection()
                         self.swiftplay_handler._injection_triggered = True
-
+                
+                if ph == "InProgress":
+                    time.sleep(max(self.interval, PHASE_POLL_INTERVAL_INGAME))
+                else:
+                    time.sleep(self.interval)
+                
             except Exception as e:
                 log.error(f"[phase] CRITICAL ERROR IN PHASE THREAD: {e}")
                 import traceback
                 log.error(traceback.format_exc())
             # --------------------------------------------------
-            
-            time.sleep(self.interval)

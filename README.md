@@ -4,7 +4,7 @@
 
   <img src="./assets/icon.png" alt="Rose Icon" width="128" height="128">
 
-[![Installer](https://img.shields.io/badge/Installer-Windows-32A832)](https://github.com/Alban1911/Rose/releases/latest) [![Ko-Fi](https://img.shields.io/badge/KoFi-Donate-C03030?logo=ko-fi&logoColor=white)](https://ko-fi.com/roseapp) [![Discord](https://img.shields.io/discord/1465467335946272780?color=32A832&logo=discord&logoColor=white&label=Discord)](https://discord.gg/PKuGmKHEWt) [![License](https://img.shields.io/badge/License-Open%20Source-C03030)](LICENSE) [![Downloads](https://img.shields.io/github/downloads/Alban1911/Rose/total?color=32A832&label=Downloads)](https://github.com/Alban1911/Rose/releases/latest)
+[![Installer](https://img.shields.io/badge/Installer-Windows-32A832)](https://github.com/Alban1911/Rose/releases/latest) [![Ko-Fi](https://img.shields.io/badge/KoFi-Donate-C03030?logo=ko-fi&logoColor=white)](https://ko-fi.com/roseapp) [![Discord](https://img.shields.io/discord/1490473857075642621?color=32A832&logo=discord&logoColor=white&label=Discord)](https://discord.com/invite/roseskins) [![License](https://img.shields.io/badge/License-MIT-C03030)](LICENSE) [![Downloads](https://img.shields.io/github/downloads/Alban1911/Rose/total?color=32A832&label=Downloads)](https://github.com/Alban1911/Rose/releases/latest)
 
 
 </div>
@@ -15,7 +15,7 @@
 
 Rose is an open-source automatic skin changer for League of Legends that enables seamless access to all skins in the game. The application runs silently in the system tray and automatically detects skin selections during champion select, injecting the chosen skin when the game loads.
 
-**Rose is built on Pengu Loader**, a plugin system that injects JavaScript plugins into the League Client, enabling enhanced UI interactions and quick skin detection.
+Built on the [Pengu Loader](https://github.com/Tariolle/ROSE-Pengu) framework, Rose integrates JavaScript extensions into the League Client to enable modular UI interactions. It strictly modifies local rendering variables to display custom models and textures. It is designed purely as an exploration of client-side asset management, providing no manipulation of network data, memory states, or gameplay mechanics, thereby **offering zero competitive advantage**.
 
 ## Architecture
 
@@ -54,7 +54,7 @@ Rose includes a suite of JavaScript plugins that extend the League Client UI:
 
 ## How It Works
 
-1. **League Client Integration**: Rose activates **Pengu Loader** on startup, which injects the JavaScript plugins into the League Client
+1. **League Client Integration**: Rose activates **[Pengu Loader](https://github.com/Tariolle/ROSE-Pengu)** on startup, which injects the JavaScript plugins into the League Client
 2. **Skin Detection**: When you hover over a skin in champion select, `ROSE-SkinMonitor` detects the selection and sends it to the Python backend
 3. **Game Opening Delay**: To make sure the injection has time to occur we suspend League of Legend's game process as long as the overlay is not ran
 4. **Game Injection**: Rose decrypts and injects the selected skin when the game starts
