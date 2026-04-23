@@ -416,11 +416,19 @@ def run_league_unlock(args: Optional[argparse.Namespace] = None,
     # Create LCU disconnection handler
     on_lcu_disconnected = create_lcu_disconnection_handler(state, skin_scraper, app_status)
 
-    # Create LCU reconnection handler (re-setup paths/injection after account swap, Pengu already active)
+    # Create LCU reconnection handler. Riot's account-swap flow repairs the
+    # client and wipes Pengu's d3d9.dll proxy, so the restarted UX never loads
+    # plugins. Always re-activate Pengu to re-drop the proxy and trigger a
+    # client restart.
     def on_lcu_reconnected():
-        log.info("[Main] LCU reconnected after account swap - re-initializing paths and injection...")
+        log.info("[Main] LCU reconnected after account swap - re-activating Pengu Loader...")
         try:
             _setup_pengu_and_injection(lcu, injection_manager, activate_pengu=False)
+            client_path = ConfigManager().load_client_path()
+            if client_path:
+                pengu_loader.activate_on_start(str(client_path))
+            else:
+                log.warning("[Main] Cannot re-activate Pengu — client path unknown")
         except Exception as e:
             log.warning(f"[Main] Failed to re-initialize after reconnection: {e}")
 
