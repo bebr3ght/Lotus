@@ -7,7 +7,7 @@ Phase monitoring thread
 import threading
 import time
 
-from config import INTERESTING_PHASES, PHASE_POLL_INTERVAL_DEFAULT
+from config import INTERESTING_PHASES, PHASE_POLL_INTERVAL_DEFAULT, PHASE_POLL_INTERVAL_INGAME
 from lcu import LCU
 from state import SharedState
 from utils.core.logging import get_logger, log_status
