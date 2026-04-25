@@ -14,8 +14,9 @@ import subprocess
 import sys
 import time
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Optional
+from urllib.parse import quote
 
 from config import get_config_float, get_config_option, set_config_option
 from injection.mods.storage import ModStorageService
@@ -30,6 +31,28 @@ from utils.system.admin_utils import (
 )
 
 log = logging.getLogger(__name__)
+
+
+def _is_unc_path(path_value: str) -> bool:
+    """Return True for UNC/device paths that can trigger network auth/probing."""
+    stripped = path_value.strip()
+    return stripped.startswith(("\\\\", "//"))
+
+
+def _is_safe_relative_path(path_value: str) -> bool:
+    """Validate a client-supplied path is relative and cannot traverse upward."""
+    if not isinstance(path_value, str):
+        return False
+
+    cleaned = path_value.strip().replace("/", "\\")
+    if not cleaned:
+        return False
+
+    candidate = PureWindowsPath(cleaned)
+    if candidate.is_absolute() or candidate.drive or _is_unc_path(cleaned):
+        return False
+
+    return all(part not in {"", ".", ".."} for part in candidate.parts)
 
 
 class MessageHandler:
@@ -69,6 +92,28 @@ class MessageHandler:
         self.port = port
         self.mod_storage = mod_storage or ModStorageService()
         self.injection_manager = injection_manager
+
+    def _is_valid_local_league_path(self, game_path: str) -> bool:
+        """Validate a League install path without touching UNC/network paths."""
+        if not isinstance(game_path, str):
+            return False
+
+        cleaned = game_path.strip()
+        if not cleaned or _is_unc_path(cleaned):
+            return False
+
+        game_dir = Path(cleaned)
+        if not game_dir.is_absolute():
+            return False
+
+        try:
+            if game_dir.exists() and game_dir.is_dir():
+                league_exe = game_dir / "League of Legends.exe"
+                return league_exe.exists() and league_exe.is_file()
+        except Exception:
+            return False
+
+        return False
     
     def handle_message(self, message: str) -> None:
         """Handle incoming WebSocket message
@@ -221,7 +266,8 @@ class MessageHandler:
                 asset_file = get_asset_path(asset_path)
                 
                 if asset_file and asset_file.exists():
-                    http_url = f"http://localhost:{self.port}/asset/{asset_path.replace(chr(92), '/')}"
+                    encoded_asset_path = quote(asset_path.replace(chr(92), "/"), safe="/")
+                    http_url = f"http://localhost:{self.port}/asset/{encoded_asset_path}"
                     log.debug(f"[SkinMonitor] Local asset found: {asset_file} -> {http_url}")
                     
                     response_payload = {
@@ -323,13 +369,7 @@ class MessageHandler:
             
             path_valid = False
             if game_path:
-                try:
-                    game_dir = Path(game_path.strip())
-                    if game_dir.exists() and game_dir.is_dir():
-                        league_exe = game_dir / "League of Legends.exe"
-                        path_valid = league_exe.exists() and league_exe.is_file()
-                except Exception:
-                    path_valid = False
+                path_valid = self._is_valid_local_league_path(game_path)
             
             from config import APP_VERSION
             response_payload = {
@@ -707,13 +747,7 @@ class MessageHandler:
             path_valid = False
             
             if game_path and game_path.strip():
-                try:
-                    game_dir = Path(game_path.strip())
-                    if game_dir.exists() and game_dir.is_dir():
-                        league_exe = game_dir / "League of Legends.exe"
-                        path_valid = league_exe.exists() and league_exe.is_file()
-                except Exception:
-                    path_valid = False
+                path_valid = self._is_valid_local_league_path(game_path)
             
             validation_payload = {
                 "type": "path-validation-result",
@@ -1539,6 +1573,9 @@ class MessageHandler:
             if not rel_path:
                 log.warning("[SkinMonitor] Other mod selection missing path/id")
                 return
+            if not _is_safe_relative_path(str(rel_path)):
+                log.warning("[SkinMonitor] Blocked unsafe other mod path: %s", rel_path)
+                return
 
             mod_path = self.mod_storage.mods_root / str(rel_path).replace("/", "\\")
             selected_mod = type("ModEntry", (), {
@@ -1724,6 +1761,9 @@ class MessageHandler:
             log.info(f"[SkinMonitor] Monitor auto-resume timeout updated to {monitor_auto_resume_timeout}s")
             
             if game_path and game_path.strip():
+                if not self._is_valid_local_league_path(game_path):
+                    self._send_settings_save_error("League path must be a valid local League of Legends folder.")
+                    return
                 set_config_option("General", "leaguePath", game_path.strip())
                 # Try to infer and save client path
                 from injection.config.config_manager import ConfigManager
@@ -2135,6 +2175,14 @@ class MessageHandler:
                         "type": "folder-opened-response",
                         "success": False,
                         "error": "Champion ID and Skin ID are required",
+                    }
+                    self._send_response(json.dumps(response_payload))
+                    return
+                if not str(champion_id).isdigit() or not str(skin_id).isdigit():
+                    response_payload = {
+                        "type": "folder-opened-response",
+                        "success": False,
+                        "error": "Champion ID and Skin ID must be numeric",
                     }
                     self._send_response(json.dumps(response_payload))
                     return
