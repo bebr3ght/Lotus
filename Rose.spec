@@ -114,11 +114,41 @@ except Exception as e:
     print(f"[WARNING] Could not collect Pillow data files: {e}")
 
 # Include Pengu Loader directory (for Pengu activation/deactivation CLI)
+# Runtime-generated files (logs, per-user state) must be excluded so they don't
+# leak local test data into the shipped installer.
 pengu_loader_dir = Path('Pengu Loader')
+PENGU_LOADER_EXCLUDED_NAMES = {
+    'rose.log',
+    'crash.log',
+    'config',
+    'datastore',
+}
+PENGU_LOADER_EXCLUDED_SUFFIXES = {'.log'}
+
+def _pengu_path_excluded(rel_path: Path) -> bool:
+    parts_lower = [p.lower() for p in rel_path.parts]
+    if any(p in PENGU_LOADER_EXCLUDED_NAMES for p in parts_lower):
+        return True
+    if rel_path.suffix.lower() in PENGU_LOADER_EXCLUDED_SUFFIXES:
+        return True
+    return False
+
 if pengu_loader_dir.exists() and pengu_loader_dir.is_dir():
-    datas += [(str(pengu_loader_dir), 'Pengu Loader')]
-    contained = ", ".join(os.listdir(pengu_loader_dir)) or "<empty>"
-    print(f"[OK] Pengu Loader directory bundled ({contained})")
+    bundled_count = 0
+    skipped = []
+    for src in pengu_loader_dir.rglob('*'):
+        if not src.is_file():
+            continue
+        rel = src.relative_to(pengu_loader_dir)
+        if _pengu_path_excluded(rel):
+            skipped.append(str(rel))
+            continue
+        dest_dir = (Path('Pengu Loader') / rel).parent
+        datas += [(str(src), str(dest_dir))]
+        bundled_count += 1
+    print(f"[OK] Pengu Loader directory bundled ({bundled_count} files)")
+    if skipped:
+        print(f"[INFO] Skipped runtime/local files: {', '.join(skipped)}")
 else:
     print("[WARNING] Pengu Loader directory not found – Pengu features will be disabled")
 
