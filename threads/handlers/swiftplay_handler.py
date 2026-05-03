@@ -296,11 +296,6 @@ class SwiftplayHandler:
             return
 
         try:
-            # Skip the API call if tracking keys match the last known lobby state
-            tracking_keys = frozenset(self.state.swiftplay_skin_tracking)
-            if self._last_sync_active_ids is not None and tracking_keys.issubset(self._last_sync_active_ids):
-                return
-
             active_ids = self._get_active_lobby_champion_ids()
             if not active_ids:
                 return
@@ -451,12 +446,11 @@ class SwiftplayHandler:
                         log.warning("[phase] No tracked skins - cannot trigger injection")
                         return
     
-                    active_champion_ids = (
-                        set(self._last_sync_active_ids) if self._last_sync_active_ids
-                        else self._get_active_lobby_champion_ids()
-                    )
+                    # Always fetch fresh lobby state to avoid injecting removed champions
+                    active_champion_ids = self._get_active_lobby_champion_ids()
                     
                     if active_champion_ids:
+                        self._last_sync_active_ids = frozenset(active_champion_ids)
                         stale = set(self.state.swiftplay_skin_tracking) - active_champion_ids
                         if stale:
                             for stale_cid in stale:
