@@ -11,6 +11,7 @@ from pathlib import Path
 from urllib.parse import urlparse, unquote
 
 from utils.core.paths import get_skins_dir, get_asset_path, get_state_dir
+from utils.core.security import cors_headers_for_origin, is_loopback_origin
 
 log = logging.getLogger(__name__)
 
@@ -19,9 +20,8 @@ class HTTPHandler:
     """Handles HTTP requests for file serving
 
     Security Note:
-        - CORS is set to wildcard (*) but server binds ONLY to localhost (127.0.0.1)
-        - This is safe because external hosts cannot reach localhost
-        - All file paths are validated with _is_safe_path() to prevent path traversal
+        - Browser requests with an Origin header are only allowed from loopback origins.
+        - File-serving routes resolve paths under explicit Rose-owned directories.
     """
 
     def __init__(self, port: int):
@@ -45,11 +45,22 @@ class HTTPHandler:
             True if path is safe, False if it escapes base_dir
         """
         try:
-            base_resolved = base_dir.resolve()
             target_resolved = requested_path.resolve()
-            return str(target_resolved).startswith(str(base_resolved))
+            target_resolved.relative_to(base_dir.resolve())
+            return True
         except (OSError, ValueError):
             return False
+
+    def _get_origin(self, request_headers: dict) -> Optional[str]:
+        """Read Origin from a dict-like headers object."""
+        try:
+            return request_headers.get("Origin") or request_headers.get("origin")
+        except AttributeError:
+            return None
+
+    def _forbidden(self) -> tuple:
+        """Return a generic forbidden response."""
+        return (403, {"Content-Type": "text/plain"}, b"Forbidden")
     
     def handle_request(self, path: str, request_headers: dict) -> Optional[tuple]:
         """Process HTTP requests
@@ -65,6 +76,12 @@ class HTTPHandler:
         try:
             parsed_path = urlparse(path)
             path_clean = unquote(parsed_path.path)
+            origin = self._get_origin(request_headers)
+            if origin and not is_loopback_origin(origin):
+                log.warning("[SkinMonitor] Blocked HTTP request from origin: %s", origin)
+                return self._forbidden()
+
+            cors_headers = cors_headers_for_origin(origin)
             
             log.debug(f"[SkinMonitor] HTTP request: {path_clean}")
             
@@ -72,7 +89,7 @@ class HTTPHandler:
             if path_clean == "/port":
                 return (
                     200,
-                    {"Content-Type": "text/plain", "Access-Control-Allow-Origin": "*"},
+                    {"Content-Type": "text/plain", **cors_headers},
                     str(self.port).encode('utf-8')
                 )
             
@@ -84,7 +101,7 @@ class HTTPHandler:
                         port = port_file.read_text(encoding='utf-8').strip()
                         return (
                             200,
-                            {"Content-Type": "text/plain", "Access-Control-Allow-Origin": "*"},
+                            {"Content-Type": "text/plain", **cors_headers},
                             port.encode('utf-8')
                         )
                     except Exception as e:
@@ -92,21 +109,21 @@ class HTTPHandler:
                 # Fallback to current port if file doesn't exist
                 return (
                     200,
-                    {"Content-Type": "text/plain", "Access-Control-Allow-Origin": "*"},
+                    {"Content-Type": "text/plain", **cors_headers},
                     str(self.port).encode('utf-8')
                 )
             
             # Handle preview requests
             if path_clean.startswith("/preview/"):
-                return self._handle_preview_request(path_clean)
+                return self._handle_preview_request(path_clean, cors_headers)
             
             # Handle asset requests
             elif path_clean.startswith("/asset/"):
-                return self._handle_asset_request(path_clean)
+                return self._handle_asset_request(path_clean, cors_headers)
             
             # Handle plugin file requests
             elif path_clean.startswith("/plugin/"):
-                return self._handle_plugin_request(path_clean)
+                return self._handle_plugin_request(path_clean, cors_headers)
             
             # Return None to let WebSocket handshake proceed
             return None
@@ -114,11 +131,11 @@ class HTTPHandler:
             log.warning(f"[SkinMonitor] HTTP request error: {e}", exc_info=True)
             return (
                 500,
-                {"Access-Control-Allow-Origin": "*"},
+                {"Content-Type": "text/plain"},
                 b"Internal Server Error"
             )
     
-    def _handle_preview_request(self, path_clean: str) -> Optional[tuple]:
+    def _handle_preview_request(self, path_clean: str, cors_headers: dict[str, str]) -> Optional[tuple]:
         """Handle preview image requests"""
         parts = path_clean.replace("/preview/", "").split("/")
         if len(parts) >= 4:
@@ -138,7 +155,7 @@ class HTTPHandler:
             # Security: Validate path doesn't escape skins directory
             if not self._is_safe_path(skins_dir, file_path):
                 log.warning(f"[SkinMonitor] Blocked path traversal attempt: {path_clean}")
-                return (403, {"Access-Control-Allow-Origin": "*"}, b"Forbidden")
+                return self._forbidden()
 
             if file_path.exists():
                 log.debug(f"[SkinMonitor] Serving preview: {file_path}")
@@ -148,14 +165,14 @@ class HTTPHandler:
                     200,
                     {
                         "Content-Type": "image/png",
-                        "Access-Control-Allow-Origin": "*",
+                        **cors_headers,
                         "Cache-Control": "public, max-age=3600"
                     },
                     file_data
                 )
         return None
     
-    def _handle_asset_request(self, path_clean: str) -> Optional[tuple]:
+    def _handle_asset_request(self, path_clean: str, cors_headers: dict[str, str]) -> Optional[tuple]:
         """Handle asset file requests"""
         asset_path = path_clean.replace("/asset/", "")
         asset_file = get_asset_path(asset_path)
@@ -170,14 +187,14 @@ class HTTPHandler:
                 200,
                 {
                     "Content-Type": content_type,
-                    "Access-Control-Allow-Origin": "*",
+                    **cors_headers,
                     "Cache-Control": "public, max-age=3600"
                 },
                 file_data
             )
         return None
     
-    def _handle_plugin_request(self, path_clean: str) -> Optional[tuple]:
+    def _handle_plugin_request(self, path_clean: str, cors_headers: dict[str, str]) -> Optional[tuple]:
         """Handle plugin file requests"""
         plugin_path = path_clean.replace("/plugin/", "")
         parts = plugin_path.split("/", 1)
@@ -196,7 +213,7 @@ class HTTPHandler:
                     # Security: Validate path doesn't escape plugins directory
                     if not self._is_safe_path(plugins_dir, file_path):
                         log.warning(f"[SkinMonitor] Blocked path traversal attempt: {path_clean}")
-                        return (403, {"Access-Control-Allow-Origin": "*"}, b"Forbidden")
+                        return self._forbidden()
 
                     if file_path.exists():
                         log.debug(f"[SkinMonitor] Serving plugin file: {file_path}")
@@ -208,7 +225,7 @@ class HTTPHandler:
                             200,
                             {
                                 "Content-Type": content_type,
-                                "Access-Control-Allow-Origin": "*",
+                                **cors_headers,
                                 "Cache-Control": "public, max-age=3600"
                             },
                             file_data

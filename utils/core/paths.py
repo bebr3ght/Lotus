@@ -251,16 +251,9 @@ def get_app_dir() -> Path:
         return Path(__file__).parent.parent.parent
 
 
-def get_asset_path(asset_name: str) -> Path:
+def get_assets_dir() -> Path:
     """
-    Get the path to an asset file (icons, images, etc.)
-    Works in both development and frozen (PyInstaller) environments.
-
-    Args:
-        asset_name: Name of the asset file (e.g., "champ-select-flyout-background-sr.jpg")
-
-    Returns:
-        Path to the asset file
+    Get the base assets directory.
     """
     if getattr(sys, 'frozen', False):
         # Running as compiled executable
@@ -271,11 +264,49 @@ def get_asset_path(asset_name: str) -> Path:
         else:
             # One-dir mode: use _internal folder
             base_path = Path(sys.executable).parent / "_internal"
-        return base_path / "assets" / asset_name
+        return base_path / "assets"
     else:
         # Running as script
         app_dir = get_app_dir()
-        return app_dir / "assets" / asset_name
+        return app_dir / "assets"
+
+
+def get_asset_path(asset_name: str) -> Path:
+    """
+    Get the path to an asset file (icons, images, etc.)
+    Works in both development and frozen (PyInstaller) environments.
+
+    Args:
+        asset_name: Name of the asset file (e.g., "champ-select-flyout-background-sr.jpg")
+
+    Returns:
+        Path to the asset file, or to a guaranteed-missing asset for invalid input.
+    """
+    assets_dir = get_assets_dir()
+    invalid_asset = assets_dir / "__invalid_asset_path__"
+
+    if not isinstance(asset_name, str):
+        return invalid_asset
+
+    cleaned_name = asset_name.replace("\\", "/").lstrip("/")
+    candidate = Path(cleaned_name)
+
+    if (
+        not cleaned_name
+        or candidate.is_absolute()
+        or candidate.drive
+        or any(part in {"", ".", ".."} for part in candidate.parts)
+        or ":" in cleaned_name
+    ):
+        return invalid_asset
+
+    asset_path = assets_dir / candidate
+    try:
+        asset_path.resolve(strict=False).relative_to(assets_dir.resolve(strict=False))
+    except (OSError, ValueError):
+        return invalid_asset
+
+    return asset_path
 
 
 def ensure_write_permissions(path: Path) -> bool:

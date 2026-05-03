@@ -19,8 +19,7 @@ updater_log = get_named_logger("updater", prefix="log_updater")
 GITHUB_API_BASE = "https://api.github.com/repos/CommunityDragon/Data"
 GITHUB_RAW_BASE = "https://raw.githubusercontent.com/CommunityDragon/Data/master"
 HASHES_DIR = "hashes/lol"
-HASH_FILE_0 = "hashes.game.txt.0"
-HASH_FILE_1 = "hashes.game.txt.1"
+HASH_FILES = [f"hashes.game.txt.{i}" for i in range(9)]
 TARGET_FILE = "hashes.game.txt"
 
 
@@ -112,48 +111,42 @@ def check_for_updates() -> bool:
     })
     
     local_state = load_state()
+    local_file_shas = local_state.get('files', {})
     
-    # Check commits for both files
-    file_0_path = f"{HASHES_DIR}/{HASH_FILE_0}"
-    file_1_path = f"{HASHES_DIR}/{HASH_FILE_1}"
+    any_updated = False
+    any_checked = False
+    rate_limited = False
     
-    file_0_commits = check_file_commits(file_0_path, session)
-    file_1_commits = check_file_commits(file_1_path, session)
+    for hash_file in HASH_FILES:
+        file_path = f"{HASHES_DIR}/{hash_file}"
+        commits = check_file_commits(file_path, session)
+        
+        if commits is None:
+            continue
+        
+        if commits.get('rate_limited'):
+            rate_limited = True
+            continue
+        
+        any_checked = True
+        local_sha = local_file_shas.get(hash_file, {}).get('sha')
+        if not local_sha:
+            log.info(f"No local state for {hash_file}, hash files will be downloaded")
+            return True
+        
+        if commits['sha'] != local_sha:
+            log.info(f"{hash_file} updated: {local_sha[:8]} -> {commits['sha'][:8]}")
+            any_updated = True
     
-    if file_0_commits is None and file_1_commits is None:
-        log.warning("Failed to check commits for both hash files")
+    if rate_limited:
+        log.warning("Rate limited on some files, cannot fully check for updates")
         return False
     
-    if file_0_commits and file_0_commits.get('rate_limited'):
-        log.warning("Rate limited, cannot check for updates")
+    if not any_checked:
+        log.warning("Failed to check commits for any hash files")
         return False
     
-    if file_1_commits and file_1_commits.get('rate_limited'):
-        log.warning("Rate limited, cannot check for updates")
-        return False
-    
-    # Get the latest commit SHA for each file
-    file_0_sha = file_0_commits['sha'] if file_0_commits else None
-    file_1_sha = file_1_commits['sha'] if file_1_commits else None
-    
-    # Check if we have local state
-    local_file_0_sha = local_state.get('file_0_sha')
-    local_file_1_sha = local_state.get('file_1_sha')
-    
-    # If no local state, we should update
-    if not local_file_0_sha and not local_file_1_sha:
-        log.info("No local state found, hash files will be downloaded")
-        return True
-    
-    # Check if either file has been updated
-    file_0_updated = file_0_sha and file_0_sha != local_file_0_sha
-    file_1_updated = file_1_sha and file_1_sha != local_file_1_sha
-    
-    if file_0_updated or file_1_updated:
-        if file_0_updated:
-            log.info(f"File 0 updated: {local_file_0_sha[:8] if local_file_0_sha else 'None'} -> {file_0_sha[:8]}")
-        if file_1_updated:
-            log.info(f"File 1 updated: {local_file_1_sha[:8] if local_file_1_sha else 'None'} -> {file_1_sha[:8]}")
+    if any_updated:
         return True
     
     log.debug("Hash files are up to date")
@@ -211,26 +204,19 @@ def download_file(url: str, session: requests.Session, status_callback: Optional
         return None
 
 
-def combine_hash_files(file_0_content: bytes, file_1_content: bytes) -> bytes:
-    """Combine two hash files into one
+def combine_hash_files(contents: list[bytes]) -> bytes:
+    """Combine multiple hash files into one
     
     Args:
-        file_0_content: Content of hashes.game.txt.0
-        file_1_content: Content of hashes.game.txt.1
+        contents: List of hash file contents
     
     Returns:
         Combined file content
     """
-    # Decode to strings
-    file_0_text = file_0_content.decode('utf-8')
-    file_1_text = file_1_content.decode('utf-8')
-    
-    # Combine: file 0 first, then file 1
-    combined = file_0_text
-    if not combined.endswith('\n'):
+    texts = [c.decode('utf-8') for c in contents]
+    combined = '\n'.join(t.rstrip('\n') for t in texts)
+    if combined and not combined.endswith('\n'):
         combined += '\n'
-    combined += file_1_text
-    
     return combined.encode('utf-8')
 
 
@@ -299,40 +285,29 @@ def update_hash_files(status_callback: Optional[Callable[[str], None]] = None, d
         'Accept': 'application/vnd.github.v3+json'
     })
     
-    # Download both files
-    file_0_url = f"{GITHUB_RAW_BASE}/{HASHES_DIR}/{HASH_FILE_0}"
-    file_1_url = f"{GITHUB_RAW_BASE}/{HASHES_DIR}/{HASH_FILE_1}"
-    
-    log.info(f"Downloading {HASH_FILE_0}...")
-    updater_log.info(f"Downloading {HASH_FILE_0}...")
-    if status_callback:
-        status_callback(f"Downloading {HASH_FILE_0}...")
-    file_0_content = download_file(file_0_url, session, status_callback)
-    if file_0_content is None:
-        log.error(f"Failed to download {HASH_FILE_0}")
-        updater_log.error(f"Failed to download {HASH_FILE_0}")
+    # Download all hash files
+    contents = []
+    for hash_file in HASH_FILES:
+        url = f"{GITHUB_RAW_BASE}/{HASHES_DIR}/{hash_file}"
+        log.info(f"Downloading {hash_file}...")
+        updater_log.info(f"Downloading {hash_file}...")
         if status_callback:
-            status_callback(f"Failed to download {HASH_FILE_0}")
-        return False
-    
-    log.info(f"Downloading {HASH_FILE_1}...")
-    updater_log.info(f"Downloading {HASH_FILE_1}...")
-    if status_callback:
-        status_callback(f"Downloading {HASH_FILE_1}...")
-    file_1_content = download_file(file_1_url, session, status_callback)
-    if file_1_content is None:
-        log.error(f"Failed to download {HASH_FILE_1}")
-        updater_log.error(f"Failed to download {HASH_FILE_1}")
-        if status_callback:
-            status_callback(f"Failed to download {HASH_FILE_1}")
-        return False
+            status_callback(f"Downloading {hash_file}...")
+        content = download_file(url, session, status_callback)
+        if content is None:
+            log.error(f"Failed to download {hash_file}")
+            updater_log.error(f"Failed to download {hash_file}")
+            if status_callback:
+                status_callback(f"Failed to download {hash_file}")
+            return False
+        contents.append(content)
     
     # Combine files
     log.info("Merging hashes files...")
     updater_log.info("Merging hashes files...")
     if status_callback:
         status_callback("Merging hashes files...")
-    combined_content = combine_hash_files(file_0_content, file_1_content)
+    combined_content = combine_hash_files(contents)
     
     # Get target path (same logic as injection manager)
     if getattr(sys, 'frozen', False):
@@ -388,21 +363,17 @@ def update_hash_files(status_callback: Optional[Callable[[str], None]] = None, d
         'Accept': 'application/vnd.github.v3+json'
     })
     
-    file_0_path = f"{HASHES_DIR}/{HASH_FILE_0}"
-    file_1_path = f"{HASHES_DIR}/{HASH_FILE_1}"
+    new_state = {'files': {}}
+    for hash_file in HASH_FILES:
+        file_path = f"{HASHES_DIR}/{hash_file}"
+        commits = check_file_commits(file_path, session_state)
+        if commits and not commits.get('rate_limited'):
+            new_state['files'][hash_file] = {
+                'sha': commits['sha'],
+                'date': commits['date']
+            }
     
-    file_0_commits = check_file_commits(file_0_path, session_state)
-    file_1_commits = check_file_commits(file_1_path, session_state)
-    
-    new_state = {}
-    if file_0_commits and not file_0_commits.get('rate_limited'):
-        new_state['file_0_sha'] = file_0_commits['sha']
-        new_state['file_0_date'] = file_0_commits['date']
-    if file_1_commits and not file_1_commits.get('rate_limited'):
-        new_state['file_1_sha'] = file_1_commits['sha']
-        new_state['file_1_date'] = file_1_commits['date']
-    
-    if new_state:
+    if new_state['files']:
         save_state(new_state)
     
     updater_log.info("Game hashes updated successfully")

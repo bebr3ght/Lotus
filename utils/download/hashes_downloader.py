@@ -142,15 +142,18 @@ class HashesDownloader:
             log.error(f"Failed to download {filename}: {e}")
             return None
     
-    def merge_hashes_files(self, content_0: bytes, content_1: bytes) -> bytes:
-        """Merge hashes.game.txt.0 and hashes.game.txt.1 into hashes.game.txt"""
+    def merge_hashes_files(self, contents: list[bytes]) -> bytes:
+        """Merge multiple hashes.game.txt.N files into hashes.game.txt"""
         try:
-            # Decode both files as text
-            text_0 = content_0.decode('utf-8', errors='replace')
-            text_1 = content_1.decode('utf-8', errors='replace')
+            texts = []
+            for content in contents:
+                text = content.decode('utf-8', errors='replace')
+                texts.append(text)
             
-            # Combine them with a newline separator
-            merged = text_0 + '\n' + text_1
+            # Combine them with newline separators, avoiding double newlines
+            merged = '\n'.join(t.rstrip('\n') for t in texts)
+            if merged and not merged.endswith('\n'):
+                merged += '\n'
             
             return merged.encode('utf-8')
         except Exception as e:
@@ -160,20 +163,19 @@ class HashesDownloader:
     def download_and_merge_hashes(self) -> bool:
         """Download and merge hashes files into hashes.game.txt"""
         try:
-            # Download both files
-            content_0 = self.download_hashes_file("hashes.game.txt.0")
-            if content_0 is None:
-                log.error("Failed to download hashes.game.txt.0")
-                return False
-            
-            content_1 = self.download_hashes_file("hashes.game.txt.1")
-            if content_1 is None:
-                log.error("Failed to download hashes.game.txt.1")
-                return False
+            # Download all 9 hashes files
+            contents = []
+            for i in range(9):
+                filename = f"hashes.game.txt.{i}"
+                content = self.download_hashes_file(filename)
+                if content is None:
+                    log.error(f"Failed to download {filename}")
+                    return False
+                contents.append(content)
             
             # Merge the files
             log.info("Merging hashes files...")
-            merged_content = self.merge_hashes_files(content_0, content_1)
+            merged_content = self.merge_hashes_files(contents)
             
             # Ensure tools directory exists
             self.tools_dir.mkdir(parents=True, exist_ok=True)
