@@ -592,9 +592,13 @@ class SwiftplayHandler:
                     self.injection_manager._start_monitor()
 
                 try:
+                    # Get user's configured timeout instead of hardcoded 60s
+                    from config import get_config_float
+                    user_timeout = int(get_config_float("General", "monitor_auto_resume_timeout", 120.0))
+                    
                     result = self.injection_manager.injector._mk_run_overlay(
                         extracted_mods,
-                        timeout=60,
+                        timeout=user_timeout,
                         stop_callback=None,
                         injection_manager=self.injection_manager
                     )
@@ -613,4 +617,3 @@ class SwiftplayHandler:
                 log.warning(f"[phase] Error running Swiftplay overlay: {e}")
                 import traceback
                 log.debug(f"[phase] Traceback: {traceback.format_exc()}")
-

@@ -1189,11 +1189,17 @@ class InjectionTrigger:
                  if phase in ("Reconnect", "GameStart"):
                      return False
                  return has_been_in_progress and phase not in ("InProgress", "Reconnect", "GameStart")
-             
+
+             try:
+                 from config import get_config_float
+                 user_timeout = int(get_config_float("General", "monitor_auto_resume_timeout", 120.0))
+             except Exception:
+                 user_timeout = 120
+
              # All mods are already extracted, create and run overlay with all mods
              result = injector.overlay_manager.mk_run_overlay(
                  mod_folder_names,
-                 timeout=120,
+                 timeout=user_timeout,
                  stop_callback=game_ended_callback,
                  injection_manager=self.injection_manager
              )
