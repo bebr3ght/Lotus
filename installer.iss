@@ -1,10 +1,10 @@
 ; Rose Installer Script for Inno Setup
 ; This creates a proper Windows installer that registers the app
 
-#define MyAppName "Rose"
+#define MyAppName "Lotus"
 #define MyAppVersion "1.2.7"
 #define MyAppVersionInfo "1.2.7.0"
-#define MyAppPublisher "Rose Team"
+#define MyAppPublisher "Rose Team + Lotus Edited"
 #define MyAppURL "https://github.com/Alban1911/Rose"
 #define MyAppExeName "Rose.exe"
 #define MyAppDescription "Effortless skin changer for League of Legends"
@@ -26,7 +26,7 @@ DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 AllowNoIcons=yes
 OutputDir=installer
-OutputBaseFilename=Rose_Setup
+OutputBaseFilename=Lotus_Setup
 SetupIconFile=assets\icon.ico
 Compression=lzma
 SolidCompression=yes

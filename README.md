@@ -1,4 +1,4 @@
-# 🌹 Rose - Effortless Skin Changer for LoL
+# 🌹 Rose - Effortless Skin Changer for LoL (🌸 Lotus edited 🌸)
 
 <div align="center">
 
