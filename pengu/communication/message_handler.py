@@ -664,7 +664,7 @@ class MessageHandler:
                     observed = _extract_first_seconds(msg or "")  # from "after 60s"
                     recommended = None
                     if isinstance(observed, (int, float)):
-                        recommended = int(_clamp(max(float(observed) + 30.0, 60.0), 1.0, 180.0))
+                        recommended = int(_clamp(max(float(observed) + 30.0, 60.0), 1.0, 600.0))
                     return {
                         "code": "AUTO_RESUME_TRIGGERED",
                         "text": "Monitor Auto-Resume Timeout → increase",
@@ -1766,7 +1766,7 @@ class MessageHandler:
         """Handle settings save"""
         try:
             threshold = max(0.0, min(2.0, float(payload.get("threshold", 0.5))))
-            monitor_auto_resume_timeout = max(1, min(180, int(payload.get("monitorAutoResumeTimeout", 60))))
+            monitor_auto_resume_timeout = max(1, min(600, int(payload.get("monitorAutoResumeTimeout", 60))))
             autostart = payload.get("autostart", False)
             game_path = payload.get("gamePath", "")
             
@@ -2475,6 +2475,9 @@ class MessageHandler:
                 is_active = getattr(self.shared_state, 'historic_mode_active', False)
                 if not is_active:
                     has_historic = False
+            locked_champ_id = getattr(self.shared_state, 'locked_champ_id', None)
+            if locked_champ_id is not None and str(champion_id) != str(locked_champ_id):
+                has_historic = False
             
             # В режиме Swiftplay авто-лок из файла истории пока не применяется к слотам лобби
             # Так что скрываем надпись, чтобы не вводить в заблуждение

@@ -158,6 +158,10 @@ class OverlayManager:
             
             if proc.returncode != 0:
                 log.error(f"[INJECT] mkoverlay failed with return code: {proc.returncode}")
+                if error_lines:
+                    log.error(f"[INJECT] mkoverlay stderr: {' | '.join(error_lines)}")
+                if output_lines:
+                    log.error(f"[INJECT] mkoverlay stdout: {' | '.join(output_lines)}")
                 return proc.returncode
             else:
                 log_success(log, f"mkoverlay completed in {mkoverlay_duration:.2f}s", "⚡")

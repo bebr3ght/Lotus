@@ -56,7 +56,7 @@ class InjectionManager:
         try:
             from config import get_config_float
             timeout = get_config_float("General", "monitor_auto_resume_timeout", 60.0)
-            return max(1.0, min(180.0, float(timeout)))  # Clamp between 1 and 180
+            return max(1.0, min(600.0, float(timeout)))  # Clamp between 1 and 180
         except Exception as exc:  # noqa: BLE001
             log.debug(f"[INJECT] Failed to get monitor auto-resume timeout: {exc}")
             return 60.0  # Default fallback
@@ -178,8 +178,10 @@ class InjectionManager:
                 log.info("[INJECT] Starting game monitor for injection")
                 self._start_monitor()
 
+            timeout_val = int(self._get_monitor_auto_resume_timeout())
             success = self.injector.inject_skin(
                 skin_name,
+                timeout=timeout_val,
                 stop_callback=None,
                 injection_manager=self
             )
@@ -319,9 +321,12 @@ class InjectionManager:
                     except Exception as e:
                         log.debug(f"[INJECT] Party injection hook not used: {e}")
 
+            timeout_val = int(self._get_monitor_auto_resume_timeout())
+            
             # Pass the manager instance so injector can call resume_game()
             success = self.injector.inject_skin(
                 skin_name,
+                timeout=timeout_val,
                 stop_callback=stop_callback,
                 injection_manager=self,
                 chroma_id=chroma_id,

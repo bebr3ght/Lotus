@@ -1027,8 +1027,8 @@
       const recs = (errors || [])
         .map((e) => e?.recommendedMonitorTimeoutS ?? e?.recommendedTimeoutS ?? e?.recommendedAutoResumeTimeoutS)
         .filter((v) => typeof v === "number" && Number.isFinite(v));
-      if (recs.length) return _clamp(Math.max(...recs), 20, 180);
-      if (typeof snapTimeout === "number") return _clamp(Math.max(snapTimeout + 30, 90), 20, 180);
+      if (recs.length) return _clamp(Math.max(...recs), 20, 600);
+      if (typeof snapTimeout === "number") return _clamp(Math.max(snapTimeout + 30, 90), 20, 600);
       return null;
     }
 
@@ -1712,7 +1712,7 @@
     timeoutSlider.id = "timeout-slider";
     // Minimum Auto-Resume Timeout: 20s
     timeoutSlider.min = "20";
-    timeoutSlider.max = "180";
+    timeoutSlider.max = "600";
     timeoutSlider.value = "60";
     timeoutSlider.style.width = "100%";
     timeoutSlider.style.height = "100%";
@@ -2194,7 +2194,7 @@
         timeoutFill,
         timeoutValue,
         parseInt(timeoutSlider.min || "20", 10),
-        parseInt(timeoutSlider.max || "180", 10),
+        parseInt(timeoutSlider.max || "600", 10),
         (value) => {
           return parseInt(value);
       }, (value) => {
@@ -2405,7 +2405,7 @@
       timeoutSlider.value = currentSettings.monitorAutoResumeTimeout;
       timeoutValue.textContent = `${currentSettings.monitorAutoResumeTimeout} s`;
       const min = parseInt(timeoutSlider.min || "20", 10);
-      const max = parseInt(timeoutSlider.max || "180", 10);
+      const max = parseInt(timeoutSlider.max || "600", 10);
       const percentage = ((currentSettings.monitorAutoResumeTimeout - min) / (max - min)) * 100;
       const maxPosition = 400 - 30; // 370px max
       const buttonPosition = (percentage / 100) * maxPosition;
@@ -2504,7 +2504,7 @@
     // Clamp threshold between 0.30 and 2.0
     const clampedThreshold = Math.max(0.3, Math.min(2.0, threshold));
     // Clamp timeout between 20 and 180
-    const clampedTimeout = Math.max(20, Math.min(180, monitorAutoResumeTimeout));
+    const clampedTimeout = Math.max(20, Math.min(600, monitorAutoResumeTimeout));
 
     // Track what we're trying to save; we only clear warnings after the save succeeds.
     _pendingSave = { threshold: clampedThreshold, monitorAutoResumeTimeout: clampedTimeout };
@@ -3299,7 +3299,7 @@
           const timeoutAtMax =
             typeof curMonitorTimeout === "number" &&
             Number.isFinite(curMonitorTimeout) &&
-            curMonitorTimeout >= (180 - 1e-6);
+            curMonitorTimeout >= (600 - 1e-6);
           return {
             title: "Injection exceeded the timeout (process was stopped)",
             details: [

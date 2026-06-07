@@ -11,6 +11,25 @@
   const SHOW_SKIN_NAME_ID = "historic-popup-layer";
   let bridge = null;
 
+  function isOverlayOpen() {
+    const overlays =[
+      'lol-perks-v2-editor',           
+      'lol-perks-v2-main-view',        
+      '.perks-editor-modal',           
+      'lol-uikit-full-page-modal',     
+      '.champion-customization-flyout',
+      'lol-uikit-dialog-frame',        
+      '.modal-root'                    
+    ];
+    for (const selector of overlays) {
+      const el = document.querySelector(selector);
+      if (el && (el.offsetWidth > 0 || el.offsetHeight > 0)) return true;
+    }
+    const backdrop = document.querySelector('.lol-uikit-layer-manager-wrapper');
+    if (backdrop && backdrop.children.length > 1) return true;
+    return false;
+  }
+  
   function waitForBridge() {
     return new Promise((resolve, reject) => {
       const timeout = 10000;
@@ -352,38 +371,40 @@
     let targetChampId = null;
     let targetViewType = null;
 
-    // 1. Check Collection Menu
-    const collectionDetail = document.querySelector('.collection-champion-detail');
-    if (collectionDetail && collectionDetail.offsetParent !== null) {
-      const bg = document.querySelector('lol-uikit-parallax-background');
-      if (bg && bg.style.backgroundImage) {
-        const match = bg.style.backgroundImage.match(/champion-splashes\/(\d+)\//);
-        if (match) {
-          targetChampId = parseInt(match[1]);
-          targetViewType = 'collection-view';
+    if (!isOverlayOpen()) {
+      // 1. Check Collection Menu
+      const collectionDetail = document.querySelector('.collection-champion-detail');
+      if (collectionDetail && collectionDetail.offsetParent !== null) {
+        const bg = document.querySelector('lol-uikit-parallax-background');
+        if (bg && bg.style.backgroundImage) {
+          const match = bg.style.backgroundImage.match(/champion-splashes\/(\d+)\//);
+          if (match) {
+            targetChampId = parseInt(match[1]);
+            targetViewType = 'collection-view';
+          }
         }
       }
-    }
-    // 2. Check Classic Champ Select (ONLY IF LOCKED)
-    else {
-      const champSelect = document.querySelector('.champion-select');
-      if (champSelect && champSelect.offsetParent !== null) {
-        const state = window.__roseSkinState;
-        if (state && state.championId && championLocked) {
-          targetChampId = state.championId;
-          targetViewType = 'classic-view';
+      // 2. Check Classic Champ Select (ONLY IF LOCKED)
+      else {
+        const champSelect = document.querySelector('.champion-select');
+        if (champSelect && champSelect.offsetParent !== null) {
+          const state = window.__roseSkinState;
+          if (state && state.championId && championLocked) {
+            targetChampId = state.championId;
+            targetViewType = 'classic-view';
+          }
         }
       }
-    }
-
-    // 3. Check Swiftplay Lobby
-    if (!targetChampId) {
-      const swiftplayActive = document.querySelector('.thumbnail-wrapper.active-skin');
-      if (swiftplayActive && swiftplayActive.offsetParent !== null) {
-        const state = window.__roseSkinState;
-        if (state && state.championId) {
-          targetChampId = state.championId;
-          targetViewType = 'swiftplay-view';
+  
+      // 3. Check Swiftplay Lobby
+      if (!targetChampId) {
+        const swiftplayActive = document.querySelector('.thumbnail-wrapper.active-skin');
+        if (swiftplayActive && swiftplayActive.offsetParent !== null) {
+          const state = window.__roseSkinState;
+          if (state && state.championId) {
+            targetChampId = state.championId;
+            targetViewType = 'swiftplay-view';
+          }
         }
       }
     }
