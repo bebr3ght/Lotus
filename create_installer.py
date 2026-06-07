@@ -52,6 +52,7 @@ def create_installer():
         r"C:\Program Files\Inno Setup 6\ISCC.exe",
         r"C:\Program Files (x86)\Inno Setup 5\ISCC.exe",
         r"C:\Program Files\Inno Setup 5\ISCC.exe",
+        r"E:\Apps\Inno Setup 6\ISCC.exe",
     ]
     
     iscc_path = None
@@ -135,7 +136,7 @@ def create_installer():
     print("\n[3/3] Installer created successfully!")
     
     # Check if installer was created
-    installer_files = list(installer_dir.glob("Rose_Setup*.exe"))
+    installer_files = list(installer_dir.glob("Lotus_Setup*.exe"))
     if installer_files:
         installer_file = installer_files[0]
         size_mb = installer_file.stat().st_size / (1024 * 1024)
