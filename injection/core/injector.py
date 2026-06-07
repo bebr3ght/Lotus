@@ -180,7 +180,8 @@ class SkinInjector:
             )
             avail_zip = list(self.zips_dir.rglob('*.zip'))
             avail_fantome = list(self.zips_dir.rglob('*.fantome'))
-            avail = avail_zip + avail_fantome
+            avail_rse = list(self.zips_dir.rglob('*.rse'))
+            avail = avail_zip + avail_fantome + avail_rse
             if avail:
                 log.info("[INJECT] Available skins (first 10):")
                 for a in avail[:10]:
