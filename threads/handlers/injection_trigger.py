@@ -1176,6 +1176,8 @@ class InjectionTrigger:
                  # Injecting base skin ZIP for unowned skin - force base skin
                  base_skin_id = champion_id * 1000
                  self._force_base_skin(base_skin_id)
+
+             champ_id_for_history = self.state.locked_champ_id or self.state.hovered_champ_id
              
              # Create callback to check if game ended
              has_been_in_progress = False
@@ -1284,7 +1286,7 @@ class InjectionTrigger:
                      # Store custom skin mod in historic if selected
                      selected_custom_mod = getattr(self.state, 'selected_custom_mod', None)
                      if selected_custom_mod and selected_custom_mod.get("relative_path"):
-                         champion_id = selected_custom_mod.get("champion_id") or self.state.locked_champ_id or self.state.hovered_champ_id
+                         champion_id = selected_custom_mod.get("champion_id") or champ_id_for_history
                          if champion_id:
                              # Store custom mod path with "path:" prefix
                              custom_mod_path = f"path:{selected_custom_mod['relative_path']}"
@@ -1300,10 +1302,9 @@ class InjectionTrigger:
                                  if len(parts) == 2 and parts[1].isdigit():
                                      injected_id = int(parts[1])
                              
-                             champion_id = self.state.locked_champ_id or self.state.hovered_champ_id
-                             if champion_id is not None and injected_id is not None:
-                                 write_historic_entry(int(champion_id), int(injected_id))
-                                 log.info(f"[HISTORIC] Stored last injected ID {injected_id} for champion {champion_id}")
+                             if champ_id_for_history is not None and injected_id is not None:
+                                 write_historic_entry(int(champ_id_for_history), int(injected_id))
+                                 log.info(f"[HISTORIC] Stored last injected ID {injected_id} for champion {champ_id_for_history}")
                          except Exception as e:
                              log.debug(f"[HISTORIC] Failed to store base skin entry: {e}")
                      

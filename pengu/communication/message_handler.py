@@ -2504,7 +2504,7 @@ class MessageHandler:
                     if historic_id in chroma_id_map:
                         skin_name = chroma_id_map[historic_id].get('name', f"Chroma {historic_id}")
                     else:
-                        mapped_name = self.skin_mapping.find_skin_name_by_skin_id(historic_id)
+                        mapped_name = self.skin_processor.skin_mapping.find_skin_name_by_skin_id(historic_id)
                         if mapped_name:
                             skin_name = mapped_name
                         else:

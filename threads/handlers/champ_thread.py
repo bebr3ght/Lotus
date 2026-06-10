@@ -57,8 +57,10 @@ class ChampThread(threading.Thread):
             self.state.historic_mode_active = False
             self.state.historic_skin_id = None
             self.state.historic_first_detection_done = False
-        except Exception:
-            pass
+            if self.state and hasattr(self.state, 'ui_skin_thread') and self.state.ui_skin_thread:
+                self.state.ui_skin_thread._broadcast_historic_state()
+        except Exception as e:
+            log.debug(f"[exchange] Failed to broadcast historic state reset: {e}")
 
         # Clear cache to detect new champion's skin
         if self.state.ui_skin_thread:
