@@ -1,19 +1,12 @@
 ; Rose Installer Script for Inno Setup
 ; This creates a proper Windows installer that registers the app
 
-<<<<<<< HEAD
 #define MyAppName "Lotus"
-#define MyAppVersion "1.2.8"
-#define MyAppVersionInfo "1.2.8.0"
-#define MyAppPublisher "Rose Team + Lotus Edited"
-=======
-#define MyAppName "Rose"
 #define MyAppVersion "1.2.9"
 #define MyAppVersionInfo "1.2.9.0"
-#define MyAppPublisher "Rose Team"
->>>>>>> main
-#define MyAppURL "https://github.com/Alban1911/Rose"
-#define MyAppExeName "Rose.exe"
+#define MyAppPublisher "Rose Team + Lotus Edited"
+#define MyAppURL "https://github.com/Alban1911/Rose + https://github.com/bebr3ght/Lotus/tree/main"
+#define MyAppExeName "Lotus.exe"
 #define MyAppDescription "Effortless skin changer for League of Legends"
 ; Must match config.SINGLE_INSTANCE_MUTEX_NAME (used by the app to enforce single-instance)
 #define MyAppMutex "Local\RoseSingleInstance"
