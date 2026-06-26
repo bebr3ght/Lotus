@@ -2,10 +2,10 @@
 ; This creates a proper Windows installer that registers the app
 
 #define MyAppName "Lotus"
-#define MyAppVersion "1.2.9"
-#define MyAppVersionInfo "1.2.9.0"
+#define MyAppVersion "1.2.10"
+#define MyAppVersionInfo "1.2.10.0"
 #define MyAppPublisher "Rose Team + Lotus Edited"
-#define MyAppURL "https://github.com/Alban1911/Rose + https://github.com/bebr3ght/Lotus/tree/main"
+#define MyAppURL "https://github.com/Alban1911/Rose + https://github.com/bebr3ght/Lotus/
 #define MyAppExeName "Lotus.exe"
 #define MyAppDescription "Effortless skin changer for League of Legends"
 ; Must match config.SINGLE_INSTANCE_MUTEX_NAME (used by the app to enforce single-instance)
