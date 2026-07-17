@@ -240,14 +240,11 @@ class LCUSwiftplay:
             # Check localMember for primary and secondary champions
             local_member = data.get("localMember")
             if local_member and isinstance(local_member, dict):
-                log.debug("Checking localMember for champion selections...")
+                # УБРАН СПАМ: log.debug("Checking localMember for champion selections...")
                 
                 # Check for primaryChampionId and secondaryChampionId
                 primary_champion_id = local_member.get("primaryChampionId")
                 secondary_champion_id = local_member.get("secondaryChampionId")
-                
-                log.debug(f"Primary champion ID: {primary_champion_id}")
-                log.debug(f"Secondary champion ID: {secondary_champion_id}")
                 
                 # Add primary champion if exists
                 if primary_champion_id and primary_champion_id > 0:
@@ -273,7 +270,6 @@ class LCUSwiftplay:
                         "spell2": primary_spell2
                     }
                     champions.append(champion_data)
-                    log.info(f"Found PRIMARY champion: ID {primary_champion_id}, Skin {primary_skin_id}, Position {primary_position}")
                 
                 # Add secondary champion if exists
                 if secondary_champion_id and secondary_champion_id > 0:
@@ -299,13 +295,11 @@ class LCUSwiftplay:
                         "spell2": secondary_spell2
                     }
                     champions.append(champion_data)
-                    log.info(f"Found SECONDARY champion: ID {secondary_champion_id}, Skin {secondary_skin_id}, Position {secondary_position}")
                 
                 # Fallback: Check playerSlots if primary/secondary not found
                 if not champions:
                     player_slots = local_member.get("playerSlots", [])
                     if isinstance(player_slots, list):
-                        log.debug(f"Fallback: Checking {len(player_slots)} player slots in localMember")
                         for i, slot in enumerate(player_slots):
                             if isinstance(slot, dict):
                                 champion_id = slot.get("championId")
@@ -313,8 +307,6 @@ class LCUSwiftplay:
                                 position = slot.get("positionPreference", "")
                                 spell1 = slot.get("spell1", 0)
                                 spell2 = slot.get("spell2", 0)
-                                
-                                log.debug(f"Player slot {i}: championId={champion_id}, skinId={skin_id}, position={position}")
                                 
                                 if champion_id and champion_id > 0:
                                     champion_data = {
@@ -325,25 +317,21 @@ class LCUSwiftplay:
                                         "spell2": spell2
                                     }
                                     champions.append(champion_data)
-                                    log.info(f"Found champion in slot {i}: ID {champion_id}, Skin {skin_id}, Position {position}")
-            else:
-                log.debug("No localMember found in lobby data")
             
             if champions:
-                log.info(f"Extracted {len(champions)} local champions from Swiftplay lobby data")
-                for i, champ in enumerate(champions):
-                    log.info(f"  Champion {i+1}: ID {champ['championId']}, Skin {champ['skinId']}, Position {champ['position']}")
-                
+                # Оставляем логирование только на уровне TRACE, чтобы оно не мозолило глаза в DEBUG/VERBOSE
+                # Либо можно вообще убрать, так как swiftplay_handler.py уже логирует реальные изменения
                 return {
                     "champions": champions,
                     "champion_1": champions[0] if len(champions) > 0 else None,
                     "champion_2": champions[1] if len(champions) > 1 else None
                 }
             
-            log.warning("No local champions found in lobby data")
+            # УБРАН СПАМ: log.warning("No local champions found in lobby data")
             return None
 
         except Exception as e:
+            # Оставляем только реальные ошибки
             log.debug(f"Error extracting dual champion selection from data: {e}")
             return None
 
