@@ -752,6 +752,7 @@ function isActuallyInLobby() {
 }
 
 let isPanelRequested = false; // Флаг от спама запросов
+let panelRequestTimer = null; // Таймер сброса флага
 
 function isOverlayOpen() {
     const overlays =[
@@ -761,7 +762,11 @@ function isOverlayOpen() {
         'lol-uikit-full-page-modal',     
         '.champion-customization-flyout',
         'lol-uikit-dialog-frame',        
-        '.modal-root'                    
+        '.modal-root',
+        '#rose-custom-wheel-panel-container',
+        '#lu-chroma-panel-container',
+        '#forms-wheel-panel-container',
+        '#rose-settings-panel'
     ];
 
     for (const selector of overlays) {
@@ -782,28 +787,30 @@ function shouldShowSmartPanel() {
 
 setInterval(() => {
     const panel = document.getElementById('rose-swiftplay-smart-panel');
-    if (!panel) return;
-
     const inLobby = isActuallyInLobby();
     const overlayActive = isOverlayOpen();
 
     const shouldShow = inLobby && !overlayActive;
 
     if (shouldShow) {
-        // КРИТИЧЕСКИЙ ФИКС: Мы НЕ делаем panel.style.display = 'flex' здесь!
-        // Мы только просим бэкенд дать нам актуальные данные, если еще не просили.
-        if (panel.style.display === 'none' && !isPanelRequested) {
+        if ((!panel || panel.style.display === 'none') && !isPanelRequested) {
             isPanelRequested = true; // Запоминаем, что послали запрос
             if (window.__roseBridge && window.__roseBridge.ready) {
                 window.__roseBridge.send({type: "request-swiftplay-state"});
             }
+            // Разрешаем повторный запрос через 1 секунду, если панель так и не отрисовалась
+            panelRequestTimer = setTimeout(() => { isPanelRequested = false; }, 1000);
         }
     } else {
         // Если открыты руны или вышли из лобби — жестко прячем
-        if (panel.style.display !== 'none') {
+        if (panel && panel.style.display !== 'none') {
             panel.style.display = 'none';
         }
-        isPanelRequested = false; // Сбрасываем флаг, чтобы при возврате снова запросить
+       isPanelRequested = false;
+       if (panelRequestTimer) {
+           clearTimeout(panelRequestTimer);
+           panelRequestTimer = null;
+       }
     }
 }, 150);
 
