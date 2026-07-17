@@ -458,162 +458,6 @@
       margin-top: 8px;
     }
     
-    /* Style for the "Add custom mods" dropdown button - match League UI button styling */
-    #add-custom-mods-dropdown {
-      background: #1E2328 !important;
-      background-color: #1E2328 !important;
-      color: #c8aa6e !important;
-      font-family: "Beaufort for LOL", serif !important;
-      pointer-events: all !important;
-      position: relative !important;
-      display: flex !important;
-      align-items: center !important;
-      justify-content: center !important;
-      box-sizing: border-box !important;
-      min-width: 90px !important;
-      height: 100% !important;
-      min-height: 32px !important;
-      cursor: pointer !important;
-      -webkit-user-select: none !important;
-      text-align: center !important;
-      margin-top: 8px !important;
-      transition: background 0.2s !important;
-      z-index: 10003 !important;
-    }
-    
-    /* Ensure dropdown menu appears above other elements */
-    #add-custom-mods-dropdown[class*="active"],
-    #add-custom-mods-dropdown.active {
-      z-index: 10003 !important;
-    }
-    
-    /* Dropdown menu options container */
-    #add-custom-mods-dropdown ~ *,
-    #add-custom-mods-dropdown .lol-uikit-dropdown-menu,
-    #add-custom-mods-dropdown [role="listbox"] {
-      z-index: 10003 !important;
-    }
-    
-    /* Remove any blue colors or unwanted backgrounds from child elements, but keep dropdown background */
-    #add-custom-mods-dropdown > * {
-      background: transparent !important;
-      background-color: transparent !important;
-    }
-    
-    /* Ensure dropdown itself and pseudo-elements maintain background */
-    #add-custom-mods-dropdown,
-    #add-custom-mods-dropdown::before,
-    #add-custom-mods-dropdown::after {
-      background: #1E2328 !important;
-      background-color: #1E2328 !important;
-      background-image: none !important;
-      opacity: 1 !important;
-    }
-    
-    /* Hover effect - no transparency */
-    #add-custom-mods-dropdown:hover,
-    #add-custom-mods-dropdown:hover::before,
-    #add-custom-mods-dropdown:hover::after {
-      background: #1E2328 !important;
-      background-color: #1E2328 !important;
-      opacity: 1 !important;
-    }
-    
-    /* Remove focus/active blue colors and shining effects */
-    #add-custom-mods-dropdown:focus,
-    #add-custom-mods-dropdown:active,
-    #add-custom-mods-dropdown:focus-visible,
-    #add-custom-mods-dropdown:focus-within {
-      background: #1E2328 !important;
-      background-color: #1E2328 !important;
-      outline: none !important;
-      box-shadow: none !important;
-      border: none !important;
-    }
-    
-    /* Remove any glow or shine effects */
-    #add-custom-mods-dropdown:focus::before,
-    #add-custom-mods-dropdown:focus::after,
-    #add-custom-mods-dropdown:active::before,
-    #add-custom-mods-dropdown:active::after {
-      display: none !important;
-      box-shadow: none !important;
-    }
-    
-    /* Remove all glow effects including filters, transforms, and shadows */
-    #add-custom-mods-dropdown:focus,
-    #add-custom-mods-dropdown:active,
-    #add-custom-mods-dropdown:focus-visible,
-    #add-custom-mods-dropdown:focus-within,
-    #add-custom-mods-dropdown:focus *,
-    #add-custom-mods-dropdown:active * {
-      filter: none !important;
-      -webkit-filter: none !important;
-      transform: none !important;
-      -webkit-transform: none !important;
-      box-shadow: none !important;
-      text-shadow: none !important;
-      outline: none !important;
-      border-color: transparent !important;
-    }
-    
-    /* Blur focus after click */
-    #add-custom-mods-dropdown {
-      outline: none !important;
-    }
-    
-    /* Don't center dropdown menu options */
-    #add-custom-mods-dropdown .framed-dropdown-type {
-      text-align: left !important;
-    }
-    
-    /* Hide placeholder option from dropdown menu (but keep it for header display) */
-    #add-custom-mods-dropdown[class*="active"] .placeholder-option,
-    #add-custom-mods-dropdown.active .placeholder-option {
-      display: none !important;
-    }
-    
-    /* Force placeholder to always be selected for display */
-    #add-custom-mods-dropdown .placeholder-option {
-      display: block !important;
-    }
-    
-    /* Ensure placeholder text is always shown in header */
-    #add-custom-mods-dropdown:not([class*="active"]) .placeholder-option {
-      display: block !important;
-    }
-    
-    /* Hide checkmark icons in dropdown */
-    #add-custom-mods-dropdown lol-uikit-dropdown-option::after,
-    #add-custom-mods-dropdown lol-uikit-dropdown-option::before,
-    #add-custom-mods-dropdown .framed-dropdown-type::after,
-    #add-custom-mods-dropdown .framed-dropdown-type::before,
-    #add-custom-mods-dropdown lol-uikit-dropdown-option [class*="check"],
-    #add-custom-mods-dropdown lol-uikit-dropdown-option [class*="icon"],
-    #add-custom-mods-dropdown lol-uikit-dropdown-option [class*="selected"] {
-      display: none !important;
-      visibility: hidden !important;
-      opacity: 0 !important;
-    }
-    
-    /* Override :host .ui-dropdown color to match button contrast */
-    #add-custom-mods-dropdown .ui-dropdown {
-      color: #CDBE91 !important;
-      font-size: 12px !important;
-      font-weight: normal !important;
-      line-height: 16px !important;
-      letter-spacing: 0.025em !important;
-      -webkit-font-smoothing: subpixel-antialiased !important;
-    }
-    
-    /* Target shadow DOM content via part or direct selector */
-    #add-custom-mods-dropdown::part(content),
-    #add-custom-mods-dropdown .ui-dropdown-current-content,
-    #add-custom-mods-dropdown .ui-dropdown-current-content.shadow {
-      color: #CDBE91 !important;
-    }
-    
-    
     /* Add Custom Mods Dialog Styles */
     #add-custom-mods-dialog,
     #champion-selection-dialog,
@@ -1525,12 +1369,20 @@
 
     // Title + version badge inline
     const titleRow = document.createElement("div");
-    titleRow.style.cssText = "display:flex;align-items:baseline;justify-content:center;gap:8px;margin-bottom:4px";
+    titleRow.style.cssText = "display:flex;align-items:center;justify-content:center;gap:8px;margin-bottom:4px";
+
+    const logoImg = document.createElement("img");
+    logoImg.src = `http://127.0.0.1:${window.__roseBridge ? window.__roseBridge.port : 50000}/asset/icon.png`;
+    logoImg.style.width = "20px";
+    logoImg.style.height = "20px";
+    logoImg.style.objectFit = "contain";
+    titleRow.appendChild(logoImg);
 
     const title = document.createElement("div");
     title.className = "settings-title";
     title.textContent = "Settings";
     title.style.marginBottom = "0";
+    title.style.width = "auto";
     titleRow.appendChild(title);
 
     const versionBadge = document.createElement("span");
@@ -1829,278 +1681,19 @@
     pathSection.appendChild(pathInputWrapper);
     form.appendChild(pathSection);
 
-    // Add custom mods dropdown
-    const modsDropdownContainer = document.createElement("div");
-    modsDropdownContainer.style.marginTop = "8px";
-    modsDropdownContainer.style.width = "100%";
-
-    const modsDropdown = document.createElement("lol-uikit-framed-dropdown");
-    modsDropdown.id = "add-custom-mods-dropdown";
-    modsDropdown.className = "lol-publishing-locale-preference-dropdown";
-    modsDropdown.setAttribute("tabindex", "0");
-    modsDropdown.style.width = "100%";
-
-    // Add placeholder option for header display (hidden in dropdown menu)
-    const placeholderOption = document.createElement("lol-uikit-dropdown-option");
-    placeholderOption.setAttribute("slot", "lol-uikit-dropdown-option");
-    placeholderOption.setAttribute("value", "");
-    placeholderOption.className = "framed-dropdown-type placeholder-option";
-    placeholderOption.textContent = "Add custom mods";
-    placeholderOption.style.color = "#7d7d7d";
-    placeholderOption.style.opacity = "0.7";
-    placeholderOption.style.pointerEvents = "none";
-    placeholderOption.style.cursor = "default";
-    placeholderOption.setAttribute("selected", ""); // Show in header
-    // Prevent any click events on the placeholder
-    placeholderOption.addEventListener("click", (e) => {
+    // Custom Mods Button
+    const customModsButton = document.createElement("lol-uikit-flat-button-secondary");
+    customModsButton.id = "custom-mods-button";
+    customModsButton.textContent = "Custom Mods";
+    customModsButton.style.marginTop = "8px";
+    customModsButton.style.width = "100%";
+    customModsButton.addEventListener("click", (e) => {
       e.preventDefault();
       e.stopPropagation();
-      e.stopImmediatePropagation();
-      return false;
-    }, true); // Use capture phase to catch early
-    modsDropdown.appendChild(placeholderOption);
-
-    const categories = [
-      { id: "skins", name: "Skins" },
-      { id: "maps", name: "Maps" },
-      { id: "fonts", name: "Fonts" },
-      { id: "announcers", name: "Announcers" },
-      { id: "ui", name: "UI" },
-      { id: "voiceover", name: "Voiceover" },
-      { id: "loading_screen", name: "Loading Screen" },
-      { id: "vfx", name: "VFX" },
-      { id: "sfx", name: "SFX" },
-      { id: "others", name: "Others" },
-    ];
-
-    categories.forEach((category) => {
-      const option = document.createElement("lol-uikit-dropdown-option");
-      option.setAttribute("slot", "lol-uikit-dropdown-option");
-      option.setAttribute("value", category.id);
-      option.className = "framed-dropdown-type";
-      option.textContent = category.name;
-      modsDropdown.appendChild(option);
+      closeSettingsPanel();
+      window.dispatchEvent(new CustomEvent("rose-open-custom-wheel"));
     });
-
-    // Function to aggressively remove focus and glow effects
-    const removeFocusAndGlow = () => {
-      // Blur the dropdown element
-      if (document.activeElement === modsDropdown || modsDropdown.contains(document.activeElement)) {
-        modsDropdown.blur();
-      }
-
-      // Blur any focused elements within the dropdown
-      const focusedElement = modsDropdown.querySelector(':focus');
-      if (focusedElement) {
-        focusedElement.blur();
-      }
-
-      // Remove focus-related attributes and classes
-      modsDropdown.removeAttribute('tabindex');
-      modsDropdown.setAttribute('tabindex', '0');
-
-      // Blur elements in shadow DOM if accessible
-      const shadowRoot = modsDropdown.shadowRoot;
-      if (shadowRoot) {
-        const shadowFocused = shadowRoot.activeElement;
-        if (shadowFocused) {
-          shadowFocused.blur();
-        }
-        // Remove focus from all focusable elements in shadow DOM
-        shadowRoot.querySelectorAll('*').forEach(el => {
-          if (el === shadowRoot.activeElement || el.matches(':focus')) {
-            el.blur();
-          }
-        });
-      }
-
-      // Force focus to body or another element to ensure dropdown loses focus
-      if (document.body) {
-        document.body.focus();
-      }
-      // Remove focus completely
-      if (document.activeElement && document.activeElement !== document.body) {
-        document.activeElement.blur();
-      }
-    };
-
-    // Function to reset dropdown to placeholder and close it
-    const resetDropdown = () => {
-      // Remove active class to close dropdown
-      modsDropdown.classList.remove("active");
-      // Remove selected from all category options
-      modsDropdown.querySelectorAll('lol-uikit-dropdown-option[value!=""]').forEach(opt => {
-        opt.removeAttribute("selected");
-      });
-      // Reset to placeholder option for header display
-      const placeholder = modsDropdown.querySelector('.placeholder-option');
-      if (placeholder) {
-        placeholder.setAttribute("selected", "");
-        // Force the dropdown to use placeholder value
-        if (modsDropdown.setAttribute) {
-          modsDropdown.setAttribute("value", "");
-        }
-      }
-
-      // Aggressively remove focus and glow effects
-      removeFocusAndGlow();
-
-      // Force reset again after a short delay to catch any framework updates
-      setTimeout(() => {
-        const placeholder = modsDropdown.querySelector('.placeholder-option');
-        if (placeholder && !placeholder.hasAttribute('selected')) {
-          placeholder.setAttribute("selected", "");
-        }
-        modsDropdown.querySelectorAll('lol-uikit-dropdown-option[value!=""]').forEach(opt => {
-          opt.removeAttribute("selected");
-        });
-        // Remove focus again after framework updates
-        removeFocusAndGlow();
-      }, 10);
-    };
-
-    // Handle dropdown selection change - prevent showing selected value
-    modsDropdown.addEventListener("change", (e) => {
-      const selectedValue = e.target.value || e.detail?.value;
-      if (selectedValue) {
-        handleCategorySelection(selectedValue);
-        // Immediately reset to placeholder before UI updates
-        resetDropdown();
-      }
-    });
-
-    // Handle click on options - prevent showing selected value
-    modsDropdown.querySelectorAll('lol-uikit-dropdown-option').forEach((option) => {
-      option.addEventListener("click", (e) => {
-        e.stopPropagation();
-        const categoryId = option.getAttribute("value");
-        // Ignore placeholder option (empty value)
-        if (categoryId) {
-          // Prevent the option from being selected
-          option.removeAttribute("selected");
-          handleCategorySelection(categoryId);
-          // Immediately reset to placeholder
-          resetDropdown();
-          // Remove focus immediately and after delays
-          setTimeout(() => removeFocusAndGlow(), 0);
-          setTimeout(() => removeFocusAndGlow(), 50);
-          setTimeout(() => removeFocusAndGlow(), 100);
-          setTimeout(() => removeFocusAndGlow(), 200);
-        }
-      }, true); // Use capture phase to intercept early
-    });
-
-    // Watch for any selected attribute changes and reset to placeholder
-    const observer = new MutationObserver((mutations) => {
-      mutations.forEach((mutation) => {
-        if (mutation.type === 'attributes' && mutation.attributeName === 'selected') {
-          const target = mutation.target;
-          // If a category option (not placeholder) gets selected, reset it
-          if (target.getAttribute('value') && target.getAttribute('value') !== '') {
-            const placeholder = modsDropdown.querySelector('.placeholder-option');
-            if (placeholder && !placeholder.hasAttribute('selected')) {
-              // Remove selected from category option
-              target.removeAttribute('selected');
-              // Set placeholder as selected
-              placeholder.setAttribute('selected', '');
-            }
-          }
-        }
-      });
-    });
-
-    // Observe all dropdown options for selected attribute changes
-    modsDropdown.querySelectorAll('lol-uikit-dropdown-option').forEach((option) => {
-      observer.observe(option, { attributes: true, attributeFilter: ['selected'] });
-    });
-
-    modsDropdownContainer.appendChild(modsDropdown);
-    form.appendChild(modsDropdownContainer);
-
-    // Inject shadow DOM styles to override :host .ui-dropdown color
-    let retryCount = 0;
-    const MAX_RETRIES = 20;
-    const injectShadowStyles = () => {
-      const root = modsDropdown.shadowRoot;
-      if (!root) {
-        // Shadow root might not be ready yet, try again (up to MAX_RETRIES times)
-        if (retryCount < MAX_RETRIES) {
-          retryCount++;
-          setTimeout(injectShadowStyles, 50);
-        }
-        return;
-      }
-
-      // Check if style already injected
-      if (root.querySelector('style[data-rose-dropdown-color]')) {
-        return;
-      }
-
-      const rootStyle = document.createElement("style");
-      rootStyle.setAttribute("data-rose-dropdown-color", "true");
-      rootStyle.textContent = `
-        :host .ui-dropdown {
-          color: #CDBE91 !important;
-          font-size: 12px !important;
-          font-weight: normal !important;
-          line-height: 16px !important;
-          letter-spacing: 0.025em !important;
-          -webkit-font-smoothing: subpixel-antialiased !important;
-        }
-        
-        /* Remove all glow effects when not focused */
-        :host:not(:focus):not(:focus-within) .ui-dropdown,
-        :host:not(:focus):not(:focus-within) * {
-          filter: none !important;
-          -webkit-filter: none !important;
-          box-shadow: none !important;
-          text-shadow: none !important;
-          outline: none !important;
-        }
-      `;
-      root.appendChild(rootStyle);
-    };
-
-    // Try to inject styles immediately and retry if shadow root isn't ready
-    injectShadowStyles();
-
-    // Remove focus/shine effect after clicking - use the comprehensive function
-    modsDropdown.addEventListener("click", (e) => {
-      // Only remove focus if clicking outside of options (on the button itself)
-      if (!e.target.closest('lol-uikit-dropdown-option')) {
-        setTimeout(() => removeFocusAndGlow(), 100);
-      }
-    });
-
-    // Remove focus when mouse leaves the dropdown area
-    modsDropdown.addEventListener("mouseleave", () => {
-      // Only remove focus if dropdown is not active/open
-      if (!modsDropdown.classList.contains('active')) {
-        removeFocusAndGlow();
-      }
-    });
-
-    // Also blur when dropdown closes
-    modsDropdown.addEventListener("change", () => {
-      setTimeout(() => removeFocusAndGlow(), 50);
-      setTimeout(() => removeFocusAndGlow(), 150);
-    });
-
-    // Watch for when dropdown closes (active class removed) and remove focus
-    const activeObserver = new MutationObserver((mutations) => {
-      mutations.forEach((mutation) => {
-        if (mutation.type === 'attributes' && mutation.attributeName === 'class') {
-          // If active class was removed, ensure focus is removed
-          if (!modsDropdown.classList.contains('active')) {
-            removeFocusAndGlow();
-            // Also remove focus after a delay to catch any late updates
-            setTimeout(() => removeFocusAndGlow(), 50);
-            setTimeout(() => removeFocusAndGlow(), 150);
-          }
-        }
-      });
-    });
-    activeObserver.observe(modsDropdown, { attributes: true, attributeFilter: ['class'] });
+    form.appendChild(customModsButton);
 
     // Open logs folder button
     const logsButton = document.createElement("lol-uikit-flat-button-secondary");
