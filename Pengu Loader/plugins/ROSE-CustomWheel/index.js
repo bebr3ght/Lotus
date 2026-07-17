@@ -29,6 +29,7 @@
   let selectedMapId = null;
   let selectedFontId = null;
   let selectedAnnouncerId = null;
+  let isGlobalMode = false;
 
   let selectedCategoryIds = Object.create(null);
   let lastChampionSelectSession = null; 
@@ -671,13 +672,40 @@
     rightTitle.textContent = "Custom Mods";
 
     const headerButtons = document.createElement("div");
-    headerButtons.style.display = "flex"; headerButtons.style.gap = "8px";
+    headerButtons.style.display = "flex"; 
+    headerButtons.style.gap = "12px"; 
+    headerButtons.style.alignItems = "center";
 
     const backBtn = document.createElement("button");
-    backBtn.className = "mod-select-button"; backBtn.textContent = "Back"; backBtn.style.display = "none";
+    backBtn.className = "mod-select-button"; 
+    backBtn.textContent = "Back"; 
+    backBtn.style.display = "none";
+
+    const closeBtn = document.createElement("button");
+    closeBtn.innerHTML = "&times;";
+    closeBtn.style.background = "transparent";
+    closeBtn.style.border = "none";
+    closeBtn.style.color = "#a09b8c";
+    closeBtn.style.fontSize = "24px";
+    closeBtn.style.cursor = "pointer";
+    closeBtn.style.lineHeight = "0.5";
+    closeBtn.style.padding = "0";
+    closeBtn.style.margin = "0";
+    closeBtn.style.display = "flex";
+    closeBtn.style.alignItems = "center";
+    closeBtn.style.justifyContent = "center";
+    closeBtn.style.transition = "color 0.2s ease";
+    closeBtn.addEventListener("mouseenter", () => closeBtn.style.color = "#f0e6d2");
+    closeBtn.addEventListener("mouseleave", () => closeBtn.style.color = "#a09b8c");
+    closeBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      closePanel();
+    });
 
     headerButtons.appendChild(backBtn);
-    rightHeader.appendChild(rightTitle); rightHeader.appendChild(headerButtons);
+    headerButtons.appendChild(closeBtn);
+    rightHeader.appendChild(rightTitle); 
+    rightHeader.appendChild(headerButtons);
 
     const summaryView = document.createElement("div");
     summaryView.className = "rose-wheel-summary";
@@ -686,19 +714,58 @@
     panel._summaryRowsByTab = {};
 
     SUMMARY_TABS.forEach((tab) => {
-      const row = document.createElement("div"); row.className = "rose-wheel-summary-row";
-      const left = document.createElement("div"); left.className = "rose-wheel-summary-left";
-      const label = document.createElement("div"); label.className = "rose-wheel-summary-label"; label.style.display = "flex"; label.style.alignItems = "center"; label.style.gap = "6px";
-      const iconSpan = document.createElement("span"); iconSpan.className = "rose-wheel-summary-icon"; iconSpan.innerHTML = SUMMARY_ICONS[tab.id] || "";
-      label.appendChild(iconSpan);
-      const labelText = document.createElement("span"); labelText.textContent = tab.label; label.appendChild(labelText);
-      const value = document.createElement("div"); value.className = "rose-wheel-summary-value"; value.textContent = getSelectedSummaryForTab(tab.id);
-      panel._summaryValuesByTab[tab.id] = value;
-      left.appendChild(label); left.appendChild(value);
-      const changeBtn = document.createElement("button"); changeBtn.className = "mod-select-button"; changeBtn.textContent = "Change";
-      changeBtn.addEventListener("click", (e) => { e.stopPropagation(); switchTab(tab.id); setRightPaneMode("picker"); refreshSummaryValues(); });
-      row.appendChild(left); row.appendChild(changeBtn); panel._summaryRowsByTab[tab.id] = row; summaryView.appendChild(row);
-    });
+          const row = document.createElement("div"); row.className = "rose-wheel-summary-row";
+          const left = document.createElement("div"); left.className = "rose-wheel-summary-left";
+          const label = document.createElement("div"); label.className = "rose-wheel-summary-label"; label.style.display = "flex"; label.style.alignItems = "center"; label.style.gap = "6px";
+          const iconSpan = document.createElement("span"); iconSpan.className = "rose-wheel-summary-icon"; iconSpan.innerHTML = SUMMARY_ICONS[tab.id] || "";
+          label.appendChild(iconSpan);
+          const labelText = document.createElement("span"); labelText.textContent = tab.label; label.appendChild(labelText);
+          const value = document.createElement("div"); value.className = "rose-wheel-summary-value"; value.textContent = getSelectedSummaryForTab(tab.id);
+          panel._summaryValuesByTab[tab.id] = value;
+          left.appendChild(label); left.appendChild(value);
+    
+          // Контейнер для кнопок действий в строке
+          const btnContainer = document.createElement("div");
+          btnContainer.style.display = "flex";
+          btnContainer.style.gap = "6px";
+    
+          // Кнопка "+" для быстрого добавления мода/открытия папки категории на ПК
+          const addBtn = document.createElement("button");
+          addBtn.className = "mod-select-button";
+          addBtn.textContent = "+";
+          addBtn.style.fontWeight = "bold";
+          addBtn.style.padding = "2px 8px";
+          addBtn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            if (tab.id === "skins") {
+              openChampionSelection();
+            } else {
+              if (bridge) bridge.send({
+                type: "add-custom-mods-category-selected",
+                category: tab.id
+              });
+            }
+          });
+    
+          // Кнопка "Change" для перехода к выбору из уже установленных модов
+          const changeBtn = document.createElement("button");
+          changeBtn.className = "mod-select-button";
+          changeBtn.textContent = "Change";
+          changeBtn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            switchTab(tab.id);
+            setRightPaneMode("picker");
+            refreshSummaryValues();
+          });
+    
+          btnContainer.appendChild(addBtn);
+          btnContainer.appendChild(changeBtn);
+    
+          row.appendChild(left);
+          row.appendChild(btnContainer);
+          panel._summaryRowsByTab[tab.id] = row;
+          summaryView.appendChild(row);
+        });
 
     const pickerView = document.createElement("div");
     pickerView.className = "rose-wheel-picker"; pickerView.appendChild(scrollable);
@@ -920,19 +987,20 @@
   }
 
   function closePanel() {
-    if (!panel) {
+      if (!panel) {
+        isOpen = false;
+        isGlobalMode = false;
+        if (button) button.classList.remove("pressed");
+        return;
+      }
+      if (panel.parentNode) {
+        panel.style.display = "none";
+        panel.style.pointerEvents = "none";
+      }
       isOpen = false;
+      isGlobalMode = false;
       if (button) button.classList.remove("pressed");
-      return;
     }
-    if (panel.parentNode) {
-      panel.style.display = "none";
-      panel.style.pointerEvents = "none";
-    }
-    isOpen = false;
-
-    if (button) button.classList.remove("pressed");
-  }
 
   function requestModsForCurrentSkin() {
     const state = window.__roseSkinState || {};
@@ -1909,41 +1977,30 @@
   }
 
   function positionPanel(panelElement, buttonElement) {
-    if (!panelElement || !buttonElement) return;
-
-    const flyoutFrame = panelElement.querySelector(".flyout");
-    if (!flyoutFrame) return;
-
-    const rect = buttonElement.getBoundingClientRect();
-    let flyoutRect = flyoutFrame.getBoundingClientRect();
-
-    if (flyoutRect.width === 0) {
-      const modal = flyoutFrame.querySelector(".chroma-modal");
-      if (modal) {
-        const modalRect = modal.getBoundingClientRect();
-        if (modalRect.width > 0) flyoutRect = { width: modalRect.width, height: flyoutRect.height || 400 };
-        else flyoutRect = { width: rect.width + 32, height: 400 };
-      } else {
-        flyoutRect = { width: rect.width + 32, height: 400 };
+      if (!panelElement || !buttonElement) return;
+  
+      const flyoutFrame = panelElement.querySelector(".flyout");
+      if (!flyoutFrame) return;
+  
+      const rect = buttonElement.getBoundingClientRect();
+      let flyoutRect = flyoutFrame.getBoundingClientRect();
+  
+      if (flyoutRect.width === 0) {
+        const modal = flyoutFrame.querySelector(".chroma-modal");
+        if (modal) {
+          const modalRect = modal.getBoundingClientRect();
+          if (modalRect.width > 0) flyoutRect = { width: modalRect.width, height: flyoutRect.height || 400 };
+          else flyoutRect = { width: rect.width + 32, height: 400 };
+        } else {
+          flyoutRect = { width: rect.width + 32, height: 400 };
+        }
       }
-    }
-
-    const inLobby = isActuallyInLobby();
-    
-    if (inLobby && isSwiftplayMode) {
-      flyoutFrame.style.position = "absolute";
-      flyoutFrame.style.overflow = "visible";
-      // Открываем ПОВЕРХ кнопки
-      flyoutFrame.style.bottom = `${window.innerHeight - rect.top + 10}px`;
-      // Выравниваем по правому краю кнопки, чтобы панель не уходила за экран
-      flyoutFrame.style.left = `${rect.right - flyoutRect.width}px`;
-      flyoutFrame.style.top = "auto";
-      flyoutFrame.style.right = "auto";
-      flyoutFrame.style.transform = "none";
-    } else {
+  
+      // Всегда центрируем панель по центру экрана через фиксированное позиционирование,
+      // чтобы избежать обрезания из-за скрытых границ (overflow: hidden) лобби.
       const centerX = (window.innerWidth - flyoutRect.width) / 2;
       const centerY = (window.innerHeight - flyoutRect.height) / 2;
-
+  
       flyoutFrame.style.position = "fixed";
       flyoutFrame.style.overflow = "visible";
       flyoutFrame.style.top = `${centerY}px`;
@@ -1951,16 +2008,15 @@
       flyoutFrame.style.right = ""; 
       flyoutFrame.style.bottom = "";
       flyoutFrame.style.transform = ""; 
+  
+      panelElement.style.position = "fixed";
+      panelElement.style.top = "0";
+      panelElement.style.left = "0";
+      panelElement.style.width = "100%";
+      panelElement.style.height = "100%";
+      panelElement.style.pointerEvents = "none";
+      flyoutFrame.style.pointerEvents = "all";
     }
-
-    panelElement.style.position = "fixed";
-    panelElement.style.top = "0";
-    panelElement.style.left = "0";
-    panelElement.style.width = "100%";
-    panelElement.style.height = "100%";
-    panelElement.style.pointerEvents = "none";
-    flyoutFrame.style.pointerEvents = "all";
-  }
 
   function whenReady(cb) {
     if (document.readyState === "loading") {
@@ -1985,6 +2041,8 @@
     window.addEventListener(EVENT_SKIN_STATE, handleSkinState, { passive: true });
 
     if (bridge) {
+      bridge.subscribe("champions-list-response", (data) => handleChampionsListResponse(data));
+      bridge.subscribe("champion-skins-response", (data) => handleChampionSkinsResponse(data));
       bridge.subscribe("skin-mods-response", (data) => handleModsResponse({ detail: data }));
       bridge.subscribe("maps-response", (data) => handleMapsResponse({ detail: data }));
       bridge.subscribe("fonts-response", (data) => handleFontsResponse({ detail: data }));
@@ -2018,7 +2076,7 @@
             bridge.send({type: "request-swiftplay-state"});
         }
         if (data.phase !== "Lobby" && data.phase !== "ChampSelect" && data.phase !== "FINALIZATION") {
-            if (isOpen) closePanel();
+            if (isOpen && !isGlobalMode) closePanel();
         }
       });
 
@@ -2034,13 +2092,67 @@
     }
 
     const repositionButton = () => {
-      if (isOpen && panel && button) {
+      if (isOpen && panel && button && !isGlobalMode) {
         positionPanel(panel, button);
       }
     };
 
     window.addEventListener("resize", repositionButton);
     window.addEventListener("scroll", repositionButton);
+
+    // ГЛОБАЛЬНЫЙ СЛУШАТЕЛЬ ДЛЯ ОТКРЫТИЯ ИЗ SETTINGSPANEL
+    window.addEventListener("rose-open-custom-wheel", () => {
+      isGlobalMode = true;
+      if (!panel) createPanel();
+      if (!panel.parentNode) document.body.appendChild(panel);
+      
+      panel.style.display = "block";
+      panel.style.pointerEvents = "none"; 
+
+      if (isFirstOpenInSession) {
+        activeTab = "skins";
+        isFirstOpenInSession = false;
+      }
+
+      setRightPaneMode("summary");
+      refreshSummaryValues();
+
+      panel.querySelectorAll(".tab-content").forEach((content) => {
+        if (content && content.dataset && content.dataset.tab === activeTab) {
+          content.classList.add("active");
+        } else if (content) {
+          content.classList.remove("active");
+        }
+      });
+
+      requestModsForCurrentSkin();
+      requestMaps();
+      requestFonts();
+      requestAnnouncers();
+      for (const t of OTHER_CATEGORY_TABS) {
+        requestCategoryMods(t.id);
+      }
+
+      const flyoutFrame = panel.querySelector(".flyout");
+      if (flyoutFrame) {
+        flyoutFrame.style.position = "fixed";
+        flyoutFrame.style.top = "50%";
+        flyoutFrame.style.left = "50%";
+        flyoutFrame.style.transform = "translate(-50%, -50%)";
+        flyoutFrame.style.right = ""; 
+        flyoutFrame.style.bottom = "";
+      }
+
+      isOpen = true;
+
+      const closeHandler = (e) => {
+        if (panel && panel.parentNode && !panel.contains(e.target)) {
+          closePanel();
+          document.removeEventListener("click", closeHandler);
+        }
+      };
+      setTimeout(() => document.addEventListener("click", closeHandler), 100);
+    });
 
     // Smart Visibility Controller
     setInterval(() => {
@@ -2061,8 +2173,369 @@
         button.style.setProperty("display", "none", "important");
         button.style.setProperty("visibility", "hidden", "important");
         button.setAttribute("data-hidden", "true");
-        if (isOpen) closePanel();
+        if (isOpen && !isGlobalMode) closePanel();
       }
     }, 150);
   });
+
+  function openChampionSelection() {
+      const existingDialog = document.getElementById("champion-selection-dialog");
+      if (existingDialog) {
+        existingDialog.remove();
+      }
+  
+      const dialog = document.createElement("div");
+      dialog.id = "champion-selection-dialog";
+      dialog.addEventListener("click", (e) => {
+        if (e.target === dialog) {
+          closeChampionSelection();
+        }
+      });
+      document.body.appendChild(dialog);
+  
+      const flyoutFrame = document.createElement("div");
+      flyoutFrame.id = "champion-selection-flyout";
+      flyoutFrame.className = "flyout";
+      flyoutFrame.style.maxHeight = "75vh";
+      flyoutFrame.style.width = "700px";
+      flyoutFrame.style.overflowY = "hidden";
+      flyoutFrame.style.overflowX = "hidden";
+      flyoutFrame.addEventListener("click", (e) => e.stopPropagation());
+  
+      const flyoutContent = document.createElement("div");
+      flyoutContent.className = "lc-flyout-content";
+  
+      const header = document.createElement("div");
+      header.className = "dialog-header";
+  
+      const backButton = document.createElement("button");
+      backButton.className = "back-button";
+      backButton.innerHTML = '<svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"></polyline></svg>';
+      backButton.setAttribute("aria-label", "Go back");
+      backButton.addEventListener("click", () => {
+        closeChampionSelection();
+      });
+      header.appendChild(backButton);
+  
+      const titleWrapper = document.createElement("div");
+      titleWrapper.className = "dialog-title-wrapper";
+      titleWrapper.textContent = "Select Champion";
+      header.appendChild(titleWrapper);
+  
+      flyoutContent.appendChild(header);
+  
+      const searchContainer = document.createElement("div");
+      searchContainer.className = "settings-section";
+  
+      let flatInput;
+      try {
+        flatInput = document.createElement("lol-uikit-flat-input");
+      } catch (e) {
+        flatInput = document.createElement("div");
+        flatInput.className = "lol-uikit-flat-input";
+      }
+      flatInput.className = "champion-search-input";
+      flyoutContent.style.width = "700px";
+  
+      const searchInput = document.createElement("input");
+      searchInput.type = "search";
+      searchInput.name = "champion_search";
+      searchInput.id = "champion-search-input";
+      searchInput.placeholder = "Search champions...";
+      searchInput.autocomplete = "off";
+      searchInput.autocorrect = "off";
+      searchInput.autocapitalize = "off";
+      searchInput.spellcheck = "false";
+  
+      flatInput.appendChild(searchInput);
+      searchContainer.appendChild(flatInput);
+      flyoutContent.appendChild(searchContainer);
+  
+      const loadingIndicator = document.createElement("div");
+      loadingIndicator.id = "champion-loading";
+      loadingIndicator.textContent = "Loading champions...";
+      loadingIndicator.style.color = "#cdbe91";
+      loadingIndicator.style.textAlign = "center";
+      loadingIndicator.style.padding = "20px";
+      loadingIndicator.style.fontFamily = '"Beaufort for LOL", serif';
+      flyoutContent.appendChild(loadingIndicator);
+  
+      const championsGridWrapper = document.createElement("div");
+      championsGridWrapper.id = "champions-grid-wrapper";
+      championsGridWrapper.style.overflowY = "auto";
+      championsGridWrapper.style.overflowX = "hidden";
+      championsGridWrapper.style.maxHeight = "45vh";
+      championsGridWrapper.style.marginTop = "12px";
+  
+      const championsGrid = document.createElement("div");
+      championsGrid.id = "champions-grid";
+      championsGridWrapper.appendChild(championsGrid);
+      flyoutContent.appendChild(championsGridWrapper);
+  
+      flyoutFrame.appendChild(flyoutContent);
+      dialog.appendChild(flyoutFrame);
+  
+      if (bridge) bridge.send({
+        type: "add-custom-mods-champion-selected",
+        action: "list",
+      });
+  
+      searchInput.addEventListener("input", (e) => {
+        const searchTerm = e.target.value.toLowerCase().trim();
+        const allChampions = window.__roseAllChampions || [];
+        const filtered = allChampions.filter((champ) =>
+          champ.name.toLowerCase().includes(searchTerm)
+        );
+        renderChampionsGrid(filtered);
+      });
+  
+      window.__roseChampionRenderer = renderChampionsGrid;
+    }
+  
+    function closeChampionSelection() {
+      const dialog = document.getElementById("champion-selection-dialog");
+      if (dialog) {
+        dialog.remove();
+      }
+      delete window.__roseChampionRenderer;
+      delete window.__roseAllChampions;
+    }
+  
+    function renderChampionsGrid(champions) {
+      const championsGrid = document.getElementById("champions-grid");
+      if (!championsGrid) return;
+  
+      championsGrid.innerHTML = "";
+  
+      if (champions.length === 0) {
+        championsGrid.innerHTML = '<div style="grid-column: 1 / -1; color: #cdbe91; text-align: center; padding: 20px; font-family: \'Beaufort for LOL\', serif;">No champions found matching your search.</div>';
+        return;
+      }
+  
+      champions.forEach((champion) => {
+        const card = document.createElement("div");
+        card.className = "champion-card";
+  
+        const img = document.createElement("img");
+        img.src = `/lol-game-data/assets/v1/champion-icons/${champion.id}.png`;
+        img.alt = champion.name;
+        img.loading = "lazy";
+        img.onerror = function () { this.style.display = "none"; };
+        card.appendChild(img);
+  
+        const name = document.createElement("div");
+        name.className = "champion-name";
+        name.textContent = champion.name;
+        card.appendChild(name);
+  
+        card.addEventListener("click", () => handleChampionSelection(champion.id));
+        championsGrid.appendChild(card);
+      });
+    }
+  
+    function handleChampionSelection(championId) {
+      closeChampionSelection();
+      openSkinSelection(championId);
+    }
+  
+    function openSkinSelection(championId) {
+      const existingDialog = document.getElementById("skin-selection-dialog");
+      if (existingDialog) {
+        existingDialog.remove();
+      }
+  
+      const dialog = document.createElement("div");
+      dialog.id = "skin-selection-dialog";
+      dialog.addEventListener("click", (e) => {
+        if (e.target === dialog) {
+          closeSkinSelection();
+        }
+      });
+      document.body.appendChild(dialog);
+  
+      const flyoutFrame = document.createElement("div");
+      flyoutFrame.id = "skin-selection-flyout";
+      flyoutFrame.className = "flyout";
+      flyoutFrame.style.maxHeight = "75vh";
+      flyoutFrame.style.width = "700px";
+      flyoutFrame.style.overflowY = "hidden";
+      flyoutFrame.style.overflowX = "hidden";
+      flyoutFrame.addEventListener("click", (e) => e.stopPropagation());
+  
+      const flyoutContent = document.createElement("div");
+      flyoutContent.className = "lc-flyout-content";
+  
+      const header = document.createElement("div");
+      header.className = "dialog-header";
+      header.id = "skin-selection-header";
+  
+      const backButton = document.createElement("button");
+      backButton.className = "back-button";
+      backButton.innerHTML = '<svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"></polyline></svg>';
+      backButton.setAttribute("aria-label", "Go back");
+      backButton.addEventListener("click", (e) => {
+        e.stopPropagation();
+        closeSkinSelection();
+        openChampionSelection();
+      });
+      header.appendChild(backButton);
+  
+      const titleWrapper = document.createElement("div");
+      titleWrapper.className = "dialog-title-wrapper";
+      titleWrapper.textContent = "Select Skin";
+      header.appendChild(titleWrapper);
+  
+      flyoutContent.appendChild(header);
+  
+      const loadingIndicator = document.createElement("div");
+      loadingIndicator.id = "skin-loading";
+      loadingIndicator.textContent = "Loading skins...";
+      loadingIndicator.style.color = "#cdbe91";
+      loadingIndicator.style.textAlign = "center";
+      loadingIndicator.style.padding = "20px";
+      loadingIndicator.style.fontFamily = '"Beaufort for LOL", serif';
+      flyoutContent.appendChild(loadingIndicator);
+  
+      const skinsList = document.createElement("div");
+      skinsList.style.overflowY = "auto";
+      skinsList.style.overflowX = "hidden";
+      skinsList.id = "skins-list";
+  
+      const skinsListContainer = document.createElement("div");
+      skinsListContainer.className = "skins-list-container";
+      skinsList.appendChild(skinsListContainer);
+  
+      flyoutContent.appendChild(skinsList);
+  
+      flyoutFrame.appendChild(flyoutContent);
+      dialog.appendChild(flyoutFrame);
+  
+      if (bridge) bridge.send({
+        type: "add-custom-mods-skin-selected",
+        action: "list",
+        championId: championId,
+      });
+  
+      window.__roseSelectedChampionId = championId;
+    }
+  
+    function closeSkinSelection() {
+      const dialog = document.getElementById("skin-selection-dialog");
+      if (dialog) {
+        dialog.remove();
+      }
+      delete window.__roseSelectedChampionId;
+    }
+  
+    function handleSkinSelection(championId, skinId) {
+      closeSkinSelection();
+  
+      if (bridge) bridge.send({
+        type: "add-custom-mods-skin-selected",
+        action: "create",
+        championId: championId,
+        skinId: skinId,
+      });
+      log("info", `Skin selected: champion=${championId}, skin=${skinId}`);
+    }
+  
+    function handleChampionsListResponse(payload) {
+      const loadingIndicator = document.getElementById("champion-loading");
+      if (loadingIndicator) {
+        loadingIndicator.style.display = "none";
+      }
+  
+      const championsGrid = document.getElementById("champions-grid");
+      if (!championsGrid) return;
+  
+      if (payload.error) {
+        championsGrid.innerHTML = `<div style="color: #ff6b6b; text-align: center; padding: 20px; font-family: 'Beaufort for LOL', serif;">${escapeHtml(payload.error)}</div>`;
+        return;
+      }
+  
+      const champions = payload.champions || [];
+      if (champions.length === 0) {
+        championsGrid.innerHTML = `<div style="color: #cdbe91; text-align: center; padding: 20px; font-family: 'Beaufort for LOL', serif;">No champions found. Please ensure League of Legends client is running.</div>`;
+        return;
+      }
+  
+      window.__roseAllChampions = champions;
+  
+      if (window.__roseChampionRenderer) {
+        window.__roseChampionRenderer(champions);
+      } else {
+        renderChampionsGrid(champions);
+      }
+    }
+  
+    function handleChampionSkinsResponse(payload) {
+      const loadingIndicator = document.getElementById("skin-loading");
+      if (loadingIndicator) {
+        loadingIndicator.style.display = "none";
+      }
+  
+      const skinsList = document.getElementById("skins-list");
+      if (!skinsList) return;
+  
+      if (payload.error) {
+        let skinsListContainer = skinsList.querySelector(".skins-list-container");
+        if (!skinsListContainer) {
+          skinsListContainer = document.createElement("div");
+          skinsListContainer.className = "skins-list-container";
+          skinsList.innerHTML = "";
+          skinsList.appendChild(skinsListContainer);
+        } else {
+          skinsListContainer.innerHTML = "";
+        }
+        skinsListContainer.innerHTML = `<div style="color: #ff6b6b; text-align: center; padding: 20px; font-family: 'Beaufort for LOL', serif;">${escapeHtml(payload.error)}</div>`;
+        return;
+      }
+  
+      const skins = payload.skins || [];
+      const championId = payload.championId;
+  
+      const header = document.getElementById("skin-selection-header");
+      if (header && payload.championName) {
+        const titleWrapper = header.querySelector(".dialog-title-wrapper");
+        if (titleWrapper) {
+          titleWrapper.textContent = `Select Skin - ${payload.championName}`;
+        }
+      }
+  
+      let skinsListContainer = skinsList.querySelector(".skins-list-container");
+      if (!skinsListContainer) {
+        skinsListContainer = document.createElement("div");
+        skinsListContainer.className = "skins-list-container";
+        skinsList.innerHTML = "";
+        skinsList.appendChild(skinsListContainer);
+      } else {
+        skinsListContainer.innerHTML = "";
+      }
+  
+      if (skins.length === 0) {
+        skinsListContainer.innerHTML = `<div style="color: #cdbe91; text-align: center; padding: 20px; font-family: 'Beaufort for LOL', serif;">No skins found for this champion.</div>`;
+        return;
+      }
+  
+      skins.forEach((skin) => {
+        const card = document.createElement("div");
+        card.className = "skin-card";
+  
+        const img = document.createElement("img");
+        const skinId = skin.skinId || skin.id;
+        img.src = skin.tilePath || `/lol-game-data/assets/v1/champion-tiles/${skinId}.jpg`;
+        img.alt = skin.name || `Skin ${skinId}`;
+        img.loading = "lazy";
+        img.onerror = function () { this.style.display = "none"; };
+        card.appendChild(img);
+  
+        const nameEl = document.createElement("div");
+        nameEl.className = "skin-name";
+        nameEl.textContent = skin.name || `Skin ${skinId}`;
+        card.appendChild(nameEl);
+  
+        card.addEventListener("click", () => handleSkinSelection(championId, skinId));
+        skinsListContainer.appendChild(card);
+      });
+    }
 })();
