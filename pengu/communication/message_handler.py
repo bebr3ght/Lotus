@@ -1325,6 +1325,14 @@ class MessageHandler:
                 "mod_folder_name": mod_folder_name,
                 "relative_path": str(selected_mod.path.relative_to(self.mod_storage.mods_root)).replace("\\", "/"),
             }
+
+            # === МГНОВЕННОЕ СОХРАНЕНИЕ КАРТЫ ===
+            try:
+                from utils.core.mod_historic import write_historic_mod
+                write_historic_mod("map", self.shared_state.selected_map_mod["relative_path"])
+                log.debug("[MOD_HISTORIC] Map mod saved immediately on selection")
+            except Exception as e:
+                log.debug(f"[MOD_HISTORIC] Failed to save map mod on selection: {e}")
             
             log.info(f"[SkinMonitor] Map mod selected and extracted: {selected_mod.mod_name}")
             log.info(f"[SkinMonitor] Map mod ready for injection alongside skin")
@@ -1424,6 +1432,14 @@ class MessageHandler:
                 "mod_folder_name": mod_folder_name,
                 "relative_path": str(selected_mod.path.relative_to(self.mod_storage.mods_root)).replace("\\", "/"),
             }
+
+            # === МГНОВЕННОЕ СОХРАНЕНИЕ ШРИФТА ===
+            try:
+                from utils.core.mod_historic import write_historic_mod
+                write_historic_mod("font", self.shared_state.selected_font_mod["relative_path"])
+                log.debug("[MOD_HISTORIC] Font mod saved immediately on selection")
+            except Exception as e:
+                log.debug(f"[MOD_HISTORIC] Failed to save font mod on selection: {e}")
             
             log.info(f"[SkinMonitor] Font mod selected and extracted: {selected_mod.mod_name}")
             log.info(f"[SkinMonitor] Font mod ready for injection alongside skin")
@@ -1523,6 +1539,14 @@ class MessageHandler:
                 "mod_folder_name": mod_folder_name,
                 "relative_path": str(selected_mod.path.relative_to(self.mod_storage.mods_root)).replace("\\", "/"),
             }
+
+            # === МГНОВЕННОЕ СОХРАНЕНИЕ ДИКТОРA ===
+            try:
+                from utils.core.mod_historic import write_historic_mod
+                write_historic_mod("announcer", self.shared_state.selected_announcer_mod["relative_path"])
+                log.debug("[MOD_HISTORIC] Announcer mod saved immediately on selection")
+            except Exception as e:
+                log.debug(f"[MOD_HISTORIC] Failed to save announcer mod on selection: {e}")
             
             log.info(f"[SkinMonitor] Announcer mod selected and extracted: {selected_mod.mod_name}")
             log.info(f"[SkinMonitor] Announcer mod ready for injection alongside skin")
