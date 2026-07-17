@@ -90,187 +90,227 @@
   }
 
   const INLINE_RULES = `
-    lol-uikit-navigation-item.menu_item_Golden\\ Rose {
-      position: relative;
-    }
-
-    /* Prevent active state styling for Golden Rose */
-    lol-uikit-navigation-item.menu_item_Golden\\ Rose .section.active::before,
-    lol-uikit-navigation-item.menu_item_Golden\\ Rose .section.active::after,
-    lol-uikit-navigation-item.menu_item_Golden\\ Rose .section.active,
-    lol-uikit-navigation-item.menu_item_Golden\\ Rose .section.active .section-glow,
-    lol-uikit-navigation-item.menu_item_Golden\\ Rose .section.active .section-glow-container {
-      display: none !important;
-      background: none !important;
-      background-image: none !important;
-    }
-
-    /* Prevent hover state from showing navigation pointer */
-    lol-uikit-navigation-item.menu_item_Golden\\ Rose .section:hover::after {
-      opacity: 0 !important;
-      background: none !important;
-      background-image: none !important;
-    }
-
-    .skin-selection-carousel .skin-selection-item {
-      position: relative;
-      z-index: 1;
-    }
-
-    .skin-selection-carousel .skin-selection-item .skin-selection-item-information {
-      position: relative;
-      z-index: 2;
-    }
-
-    .skin-selection-carousel .skin-selection-item.disabled,
-    .skin-selection-carousel .skin-selection-item[aria-disabled="true"] {
-      filter: grayscale(0) saturate(1.1) contrast(1.05) !important;
-      -webkit-filter: grayscale(0) saturate(1.1) contrast(1.05) !important;
-      pointer-events: auto !important;
-      cursor: pointer !important;
-    }
-
-    .skin-selection-carousel .skin-selection-item.disabled .skin-selection-thumbnail,
-    .skin-selection-carousel .skin-selection-item[aria-disabled="true"] .skin-selection-thumbnail {
-      filter: grayscale(0) saturate(1.15) contrast(1.05) !important;
-      -webkit-filter: grayscale(0) saturate(1.15) contrast(1.05) !important;
-      transition: filter 0.25s ease;
-    }
-
-    /* Hover glow effect for owned skins (matching official client) */
-    .skin-selection-carousel .skin-selection-item:not(.disabled):not([aria-disabled="true"]):not(.skin-selection-item-selected):hover .skin-selection-thumbnail {
-      filter: brightness(1.2) saturate(1.1) !important;
-      -webkit-filter: brightness(1.2) saturate(1.1) !important;
-      transition: filter 0.25s ease;
-    }
-
-    /* Hover glow effect for unowned skins (identical to owned - override base filters on hover) */
-    .skin-selection-carousel .skin-selection-item.disabled:not(.skin-selection-item-selected):hover .skin-selection-thumbnail,
-    .skin-selection-carousel .skin-selection-item[aria-disabled="true"]:not(.skin-selection-item-selected):hover .skin-selection-thumbnail {
-      filter: brightness(1.2) saturate(1.1) !important;
-      -webkit-filter: brightness(1.2) saturate(1.1) !important;
-      transition: filter 0.25s ease;
-    }
-
-    .skin-selection-carousel .skin-selection-item.disabled::before,
-    .skin-selection-carousel .skin-selection-item.disabled::after,
-    .skin-selection-carousel .skin-selection-item[aria-disabled="true"]::before,
-    .skin-selection-carousel .skin-selection-item[aria-disabled="true"]::after,
-    .skin-selection-carousel .skin-selection-item.disabled .skin-selection-thumbnail::before,
-    .skin-selection-carousel .skin-selection-item.disabled .skin-selection-thumbnail::after,
-    .skin-selection-carousel .skin-selection-item[aria-disabled="true"] .skin-selection-thumbnail::before,
-    .skin-selection-carousel .skin-selection-item[aria-disabled="true"] .skin-selection-thumbnail::after {
-      display: none !important;
-    }
-
-    .skin-selection-carousel .skin-selection-item.disabled .locked-state,
-    .skin-selection-carousel .skin-selection-item[aria-disabled="true"] .locked-state {
-      display: none !important;
-    }
-
-    .skin-selection-carousel .skin-selection-item.${HIDDEN_CLASS} {
-      pointer-events: none !important;
-    }
-
-    .champion-select .uikit-background-switcher.locked:after {
-      background: none !important;
-    }
-
-    .unlock-skin-hit-area {
-      display: none !important;
-      pointer-events: none !important;
-    }
-
-    .unlock-skin-hit-area .locked-state {
-      display: none !important;
-    }
-
-    .skin-selection-carousel-container .skin-selection-carousel .skin-selection-item .skin-selection-thumbnail {
-      height: 100% !important;
-      margin: 0 !important;
-      transition: filter 0.25s ease !important;
-      transform: none !important;
-    }
-
-    .skin-selection-carousel-container .skin-selection-carousel .skin-selection-item.skin-selection-item-selected {
-      background: #3c3c41 !important;
-    }
-
-    .skin-selection-carousel-container .skin-selection-carousel .skin-selection-item.skin-selection-item-selected .skin-selection-thumbnail {
-      height: 100% !important;
-      margin: 0 !important;
-    }
-
-    .skin-selection-carousel .skin-selection-item .lpp-skin-border {
-      position: absolute;
-      inset: -2px;
-      border: 2px solid transparent;
-      border-image-source: linear-gradient(0deg, #4f4f54 0%, #3c3c41 50%, #29272b 100%);
-      border-image-slice: 1;
-      border-radius: inherit;
-      box-sizing: border-box;
-      pointer-events: none;
-      z-index: 0;
-    }
-
-    .skin-selection-carousel .skin-selection-item.skin-carousel-offset-2 .lpp-skin-border {
-      border: 2px solid transparent;
-      border-image-source: linear-gradient(0deg, #c8aa6e 0%, #c89b3c 44%, #a07b32 59%, #785a28 100%);
-      border-image-slice: 1;
-      box-shadow: inset 0 0 0 1px rgba(1, 10, 19, 0.6);
-    }
-
-    /* Golden border on hover for all skins (matching official client) */
-    .skin-selection-carousel .skin-selection-item:not(.skin-selection-item-selected):hover .lpp-skin-border {
-      border: 2px solid transparent;
-      border-image-source: linear-gradient(0deg, #c8aa6e 0%, #c89b3c 44%, #a07b32 59%, #785a28 100%);
-      border-image-slice: 1;
-      box-shadow: inset 0 0 0 1px rgba(1, 10, 19, 0.6);
-    }
-
-    .skin-selection-carousel .skin-selection-item .${CHROMA_CONTAINER_CLASS} {
-      position: absolute;
-      inset: 0;
-      display: flex;
-      align-items: flex-end;
-      justify-content: center;
-      pointer-events: none;
-      z-index: 4;
-      overflow: hidden;
-    }
-
-    .skin-selection-carousel .skin-selection-item .${CHROMA_CONTAINER_CLASS} .chroma-button {
-      pointer-events: auto;
-    }
-
-    .chroma-button.chroma-selection {
-      display: none !important;
-    }
-
-    /* Remove grey filters and locks */
-    .thumbnail-wrapper {
-      filter: grayscale(0) saturate(1) contrast(1) !important;
-      -webkit-filter: grayscale(0) saturate(1) contrast(1) !important;
-    }
-
-    .skin-thumbnail-img {
-      filter: grayscale(0) saturate(1) contrast(1) !important;
-      -webkit-filter: grayscale(0) saturate(1) contrast(1) !important;
-    }
-
-    .locked-state {
-      display: none !important;
-    }
-
-    .unlock-skin-hit-area {
-      display: none !important;
-      pointer-events: none !important;
-    }
-
-    .skin-selection-carousel-container {
-      clip-path: inset(-200px -9999px -9999px -9999px) !important;
-    }
-  `;
+      lol-uikit-navigation-item.menu_item_Golden {
+        position: relative;
+      }
+  
+      /* Prevent active state styling for Golden Rose */
+      lol-uikit-navigation-item.menu_item_Golden .section.active::before,
+      lol-uikit-navigation-item.menu_item_Golden .section.active::after,
+      lol-uikit-navigation-item.menu_item_Golden .section.active,
+      lol-uikit-navigation-item.menu_item_Golden .section.active .section-glow,
+      lol-uikit-navigation-item.menu_item_Golden .section.active .section-glow-container {
+        display: none !important;
+        background: none !important;
+        background-image: none !important;
+      }
+  
+      /* Prevent hover state from showing navigation pointer */
+      lol-uikit-navigation-item.menu_item_Golden .section:hover::after {
+        opacity: 0 !important;
+        background: none !important;
+        background-image: none !important;
+      }
+  
+      .skin-selection-carousel .skin-selection-item {
+        position: relative;
+        z-index: 1;
+      }
+  
+      .skin-selection-carousel .skin-selection-item .skin-selection-item-information {
+        position: relative;
+        z-index: 2;
+      }
+  
+      .skin-selection-carousel .skin-selection-item.disabled,
+      .skin-selection-carousel .skin-selection-item[aria-disabled="true"] {
+        filter: grayscale(0) saturate(1.1) contrast(1.05) !important;
+        -webkit-filter: grayscale(0) saturate(1.1) contrast(1.05) !important;
+        pointer-events: auto !important;
+        cursor: pointer !important;
+      }
+  
+      .skin-selection-carousel .skin-selection-item.disabled .skin-selection-thumbnail,
+      .skin-selection-carousel .skin-selection-item[aria-disabled="true"] .skin-selection-thumbnail {
+        filter: grayscale(0) saturate(1.15) contrast(1.05) !important;
+        -webkit-filter: grayscale(0) saturate(1.15) contrast(1.05) !important;
+        transition: filter 0.25s ease;
+      }
+  
+      /* Hover glow effect for owned skins (matching official client) */
+      .skin-selection-carousel .skin-selection-item:not(.disabled):not([aria-disabled="true"]):not(.skin-selection-item-selected):hover .skin-selection-thumbnail {
+        filter: brightness(1.2) saturate(1.1) !important;
+        -webkit-filter: brightness(1.2) saturate(1.1) !important;
+        transition: filter 0.25s ease;
+      }
+  
+      /* Hover glow effect for unowned skins (identical to owned - override base filters on hover) */
+      .skin-selection-carousel .skin-selection-item.disabled:not(.skin-selection-item-selected):hover .skin-selection-thumbnail,
+      .skin-selection-carousel .skin-selection-item[aria-disabled="true"]:not(.skin-selection-item-selected):hover .skin-selection-thumbnail {
+        filter: brightness(1.2) saturate(1.1) !important;
+        -webkit-filter: brightness(1.2) saturate(1.1) !important;
+        transition: filter 0.25s ease;
+      }
+  
+      .skin-selection-carousel .skin-selection-item.disabled::before,
+      .skin-selection-carousel .skin-selection-item.disabled::after,
+      .skin-selection-carousel .skin-selection-item[aria-disabled="true"]::before,
+      .skin-selection-carousel .skin-selection-item[aria-disabled="true"]::after,
+      .skin-selection-carousel .skin-selection-item.disabled .skin-selection-thumbnail::before,
+      .skin-selection-carousel .skin-selection-item.disabled .skin-selection-thumbnail::after,
+      .skin-selection-carousel .skin-selection-item[aria-disabled="true"] .skin-selection-thumbnail::before,
+      .skin-selection-carousel .skin-selection-item[aria-disabled="true"] .skin-selection-thumbnail::after {
+        display: none !important;
+      }
+  
+      .skin-selection-carousel .skin-selection-item.disabled .locked-state,
+      .skin-selection-carousel .skin-selection-item[aria-disabled="true"] .locked-state {
+        display: none !important;
+      }
+  
+      .skin-selection-carousel .skin-selection-item.${HIDDEN_CLASS} {
+        pointer-events: none !important;
+      }
+  
+      .champion-select .uikit-background-switcher.locked:after {
+        background: none !important;
+      }
+  
+      .unlock-skin-hit-area {
+        display: none !important;
+        pointer-events: none !important;
+      }
+  
+      .unlock-skin-hit-area .locked-state {
+        display: none !important;
+      }
+  
+      .skin-selection-carousel-container .skin-selection-carousel .skin-selection-item .skin-selection-thumbnail {
+        height: 100% !important;
+        margin: 0 !important;
+        transition: filter 0.25s ease !important;
+        transform: none !important;
+      }
+  
+      .skin-selection-carousel-container .skin-selection-carousel .skin-selection-item.skin-selection-item-selected {
+        background: #3c3c41 !important;
+      }
+  
+      .skin-selection-carousel-container .skin-selection-carousel .skin-selection-item.skin-selection-item-selected .skin-selection-thumbnail {
+        height: 100% !important;
+        margin: 0 !important;
+      }
+  
+      .skin-selection-carousel .skin-selection-item .lpp-skin-border {
+        position: absolute;
+        inset: -2px;
+        border: 2px solid transparent;
+        border-image-source: linear-gradient(0deg, #4f4f54 0%, #3c3c41 50%, #29272b 100%);
+        border-image-slice: 1;
+        border-radius: inherit;
+        box-sizing: border-box;
+        pointer-events: none;
+        z-index: 0;
+      }
+  
+      .skin-selection-carousel .skin-selection-item.skin-carousel-offset-2 .lpp-skin-border {
+        border: 2px solid transparent;
+        border-image-source: linear-gradient(0deg, #c8aa6e 0%, #c89b3c 44%, #a07b32 59%, #785a28 100%);
+        border-image-slice: 1;
+        box-shadow: inset 0 0 0 1px rgba(1, 10, 19, 0.6);
+      }
+  
+      /* Golden border on hover for all skins (matching official client) */
+      .skin-selection-carousel .skin-selection-item:not(.skin-selection-item-selected):hover .lpp-skin-border {
+        border: 2px solid transparent;
+        border-image-source: linear-gradient(0deg, #c8aa6e 0%, #c89b3c 44%, #a07b32 59%, #785a28 100%);
+        border-image-slice: 1;
+        box-shadow: inset 0 0 0 1px rgba(1, 10, 19, 0.6);
+      }
+  
+      .skin-selection-carousel .skin-selection-item .${CHROMA_CONTAINER_CLASS} {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: flex-end;
+        justify-content: center;
+        pointer-events: none;
+        z-index: 4;
+        overflow: hidden;
+      }
+  
+      .skin-selection-carousel .skin-selection-item .${CHROMA_CONTAINER_CLASS} .chroma-button {
+        pointer-events: auto;
+      }
+  
+      .chroma-button.chroma-selection {
+        display: none !important;
+      }
+  
+      /* Remove grey filters and locks */
+      .thumbnail-wrapper {
+        filter: grayscale(0) saturate(1) contrast(1) !important;
+        -webkit-filter: grayscale(0) saturate(1) contrast(1) !important;
+      }
+  
+      .skin-thumbnail-img {
+        filter: grayscale(0) saturate(1) contrast(1) !important;
+        -webkit-filter: grayscale(0) saturate(1) contrast(1) !important;
+      }
+  
+      .locked-state {
+        display: none !important;
+      }
+  
+      .unlock-skin-hit-area {
+        display: none !important;
+        pointer-events: none !important;
+      }
+  
+      .skin-selection-carousel-container {
+        clip-path: inset(-200px -9999px -9999px -9999px) !important;
+      }
+  
+      @keyframes rose-rgb-glow {
+        0% { 
+          background-color: hsl(340, 35%, 72%);
+          filter: drop-shadow(0 0 3px hsla(340, 35%, 72%, 0.35));
+        }
+        20% { 
+          background-color: hsl(280, 25%, 72%);
+          filter: drop-shadow(0 0 3px hsla(280, 25%, 72%, 0.35));
+        }
+        40% { 
+          background-color: hsl(210, 35%, 72%);
+          filter: drop-shadow(0 0 3px hsla(210, 35%, 72%, 0.35));
+        }
+        60% { 
+          background-color: hsl(150, 25%, 70%);
+          filter: drop-shadow(0 0 3px hsla(150, 25%, 70%, 0.35));
+        }
+        80% { 
+          background-color: hsl(35, 35%, 72%);
+          filter: drop-shadow(0 0 3px hsla(35, 35%, 72%, 0.35));
+        }
+        100% { 
+          background-color: hsl(340, 35%, 72%);
+          filter: drop-shadow(0 0 3px hsla(340, 35%, 72%, 0.35));
+        }
+      }
+  
+      /* Применяем мягкую пастельную анимацию к нашей розе */
+      body lol-uikit-navigation-item.menu_item_Golden .menu-item-icon-wrapper .menu-item-icon.rose-rgb-icon {
+        animation: rose-rgb-glow 12s linear infinite !important;
+        background-size: cover !important;
+        -webkit-mask-size: 100% 100% !important;
+        -webkit-mask-repeat: no-repeat !important;
+        transition: transform 0.25s cubic-bezier(0.22, 1, 0.36, 1) !important;
+      }
+  
+      body lol-uikit-navigation-item.menu_item_Golden:hover .menu-item-icon-wrapper .menu-item-icon.rose-rgb-icon {
+        transform: scale(1.08) !important;
+      }
+    `;
 
   const log = {
     info: (msg, extra) => console.info(`${LOG_PREFIX} ${msg}`, extra ?? ""),
@@ -629,13 +669,13 @@
       'lol-uikit-navigation-item .menu-item-icon[style*="golden_rose.png"]'
     );
     if (existingItem) {
-      const navItem = existingItem.closest("lol-uikit-navigation-item");
-      if (navItem) {
-        attachGoldenRoseListeners(navItem);
+        existingItem.classList.add("rose-rgb-icon");
+        const navItem = existingItem.closest("lol-uikit-navigation-item");
+        if (navItem) {
+          attachGoldenRoseListeners(navItem);
+        }
+        return true;
       }
-      return true;
-    }
-
     // Create the navigation item
     const navItem = document.createElement("lol-uikit-navigation-item");
     navItem.id = `ember${Date.now()}`;
@@ -650,7 +690,7 @@
     glow.className = "menu-item-glow";
 
     const icon = document.createElement("div");
-    icon.className = "menu-item-icon";
+    icon.className = "menu-item-icon rose-rgb-icon";
     icon.style.webkitMaskImage = `url(http://127.0.0.1:${window.__roseBridge ? window.__roseBridge.port : 50000}/asset/golden_rose.png)`;
 
     iconWrapper.appendChild(glow);
