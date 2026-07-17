@@ -95,6 +95,7 @@ class SkinProcessor:
         
         if broadcaster:
             broadcaster.broadcast_skin_state(skin_name, skin_id)
+            broadcaster.broadcast_swiftplay_state()
     
     def _process_regular_skin_name(self, skin_name: str, broadcaster=None) -> None:
         """Process skin name for regular champion select"""

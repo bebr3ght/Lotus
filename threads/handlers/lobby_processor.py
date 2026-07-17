@@ -81,11 +81,14 @@ class LobbyProcessor:
         # Stored queue ID fallback: only trust if we were already in Swiftplay mode
         # (prevents stale queue ID from a previous session from triggering false detection)
         elif detected_queue is None and self.state.current_queue_id == SWIFTPLAY_QUEUE_ID and self.state.is_swiftplay_mode:
-            is_swiftplay = True
-            detected_queue = 480
-            log.debug("[phase] lobby: Swiftplay via stored queue 480 fallback (already in swiftplay mode)")
-            if not detected_mode:
-                detected_mode = "SWIFTPLAY"
+            if detected_mode and isinstance(detected_mode, str) and detected_mode.upper() not in SWIFTPLAY_MODES:
+                is_swiftplay = False
+            else:
+                is_swiftplay = True
+                detected_queue = 480
+                log.debug("[phase] lobby: Swiftplay via stored queue 480 fallback (already in swiftplay mode)")
+                if not detected_mode:
+                    detected_mode = "SWIFTPLAY"
         elif detected_mode is None and self.lcu.ok and self.lcu.is_swiftplay:
             is_swiftplay = True
             fallback_mode = self.lcu.game_mode
@@ -111,12 +114,29 @@ class LobbyProcessor:
             prev_queue_label = previous_queue if previous_queue is not None else "-"
             new_queue_label = detected_queue if detected_queue is not None else prev_queue_label
             log.info(f"[phase] Lobby game mode updated: {prev_mode_label} → {new_mode_label} (queue: {prev_queue_label} → {new_queue_label})")
+            # Broadcast phase change with new mode/queue to update UI plugins
+            try:
+                ui_thread = getattr(self.state, "ui_skin_thread", None)
+                if ui_thread:
+                    ui_thread._broadcast_phase_change("Lobby")
+                    if hasattr(ui_thread, "broadcaster"):
+                        ui_thread.broadcaster.broadcast_swiftplay_state()
+            except Exception as e:
+                log.debug(f"[phase] Failed to broadcast phase change on lobby update: {e}")
 
         if is_swiftplay:
             if swiftplay_changed or force or mode_changed or queue_changed:
                 if not swiftplay_previous:
                     mode_label = (effective_mode or "Swiftplay").upper()
                     log_action(log, f"{mode_label} lobby detected - triggering early skin detection", "⚡")
+                    
+                    # Clear UI thread cache when entering Swiftplay to ensure fresh skin detection
+                    ui_thread = getattr(self.state, "ui_skin_thread", None)
+                    if ui_thread:
+                        try:
+                            ui_thread.clear_cache()
+                        except Exception:
+                            pass
                 if self.swiftplay_handler:
                     self.swiftplay_handler.handle_swiftplay_lobby(
                         detected_mode=effective_mode,

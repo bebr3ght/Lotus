@@ -220,6 +220,15 @@ class PhaseHandler:
         self.state.all_locked_announced = False
         self.state.loadout_countdown_active = False
         self.state.last_hover_written = False
+
+        # Clear UI thread cache so subsequent skin detections aren't ignored
+        ui_thread = getattr(self.state, "ui_skin_thread", None)
+        if ui_thread:
+            try:
+                ui_thread.clear_cache()
+            except Exception as e:
+                log.debug(f"[phase] Failed to clear UI cache: {e}")
+        
         # Note: is_swiftplay_mode is NOT cleared here.  It is only cleared
         # via cleanup_swiftplay_exit() which also handles the associated
         # tracking/mods state atomically.  Clearing the flag alone would

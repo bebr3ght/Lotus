@@ -19,7 +19,11 @@
       'lol-uikit-full-page-modal',     
       '.champion-customization-flyout',
       'lol-uikit-dialog-frame',        
-      '.modal-root'                    
+      '.modal-root',
+      '#rose-custom-wheel-panel-container',
+      '#lu-chroma-panel-container',
+      '#forms-wheel-panel-container',
+      '#rose-settings-panel'
     ];
     for (const selector of overlays) {
       const el = document.querySelector(selector);
