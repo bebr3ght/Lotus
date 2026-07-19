@@ -1264,9 +1264,9 @@ class MessageHandler:
             # map_data contains: id (relative path), name, path, updatedAt, description
             mod_identifier = map_data.get("id") or map_data.get("name") or map_id
             for entry_dict in entries:
-                # Match by id (relative path) or name
-                if (entry_dict.get("id") == mod_identifier or 
-                    entry_dict.get("name") == mod_identifier):
+                # Match by id (relative path) or name (case-insensitive)
+                if (entry_dict.get("id", "").lower() == str(mod_identifier).lower() or 
+                    entry_dict.get("name", "").lower() == str(mod_identifier).lower()):
                     # Convert dict to Path for extraction
                     mod_path = self.mod_storage.mods_root / entry_dict["path"].replace("/", "\\")
                     selected_mod = type('ModEntry', (), {
@@ -1888,7 +1888,7 @@ class MessageHandler:
             for mod_dict in mod_list:
                 mod_id = mod_dict.get("id") or mod_dict.get("relativePath") or ""
                 # Normalize paths for comparison
-                if mod_id.replace("\\", "/") == historic_path.replace("\\", "/"):
+                if mod_id.replace("\\", "/").lower() == str(historic_path).replace("\\", "/").lower():
                     selected_mod_dict = mod_dict
                     break
             

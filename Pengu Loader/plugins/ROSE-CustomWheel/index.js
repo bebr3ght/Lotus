@@ -1714,40 +1714,41 @@
 
   function handleAnnouncersResponse(event) {
     const detail = event?.detail;
-    if (!detail || detail.type !== "announcers-response") return;
+    if (!detail || detail.type !== "maps-response") return;
 
-    const announcersList = Array.isArray(detail.announcers) ? detail.announcers :[];
-    lastAnnouncersList = announcersList; // CACHE IT
+    const mapsList = Array.isArray(detail.maps) ? detail.maps :[];
+    lastMapsList = mapsList; // CACHE IT
 
     const historicMod = detail.historicMod;
-    if (historicMod && !selectedAnnouncerId) {
-      const historicAnnouncer = announcersList.find(announcer => {
-        const announcerId = announcer.id || "";
-        return announcerId.replace(/\\/g, "/") === String(historicMod).replace(/\\/g, "/");
+    if (historicMod && !selectedMapId) {
+      const historicMap = mapsList.find(map => {
+        const mapId = map.id || "";
+        // ДОБАВЛЕНО .toLowerCase() для игнорирования регистра
+        return mapId.replace(/\\/g, "/").toLowerCase() === String(historicMod).replace(/\\/g, "/").toLowerCase();
       });
 
-      if (historicAnnouncer) {
-        const announcerId = historicAnnouncer.id || historicAnnouncer.name || `announcer-${Date.now()}-${Math.random()}`;
-        selectedAnnouncerId = announcerId;
+      if (historicMap) {
+        const mapId = historicMap.id || historicMap.name || `map-${Date.now()}-${Math.random()}`;
+        selectedMapId = mapId;
       }
     }
 
     refreshSummaryValues();
     refreshButtonBadgeFromSelections();
 
-    if (isOpen && rightPaneMode === "picker" && activeTab === "announcers") {
-      updateAnnouncersEntries(announcersList);
+    if (isOpen && rightPaneMode === "picker" && activeTab === "maps") {
+      updateMapsEntries(mapsList);
     }
 
-    if (historicMod && selectedAnnouncerId) {
-      const historicAnnouncer = announcersList.find(announcer => {
-        const announcerId = announcer.id || announcer.name || `announcer-${Date.now()}-${Math.random()}`;
-        return announcerId === selectedAnnouncerId;
+    if (historicMod && selectedMapId) {
+      const historicMap = mapsList.find(map => {
+        const mapId = map.id || map.name || `map-${Date.now()}-${Math.random()}`;
+        return mapId === selectedMapId;
       });
-      if (historicAnnouncer) {
-        const button = panel?._announcersList?.querySelector(`[data-announcer-id="${selectedAnnouncerId}"] .mod-select-button`);
+      if (historicMap) {
+        const button = panel?._mapsList?.querySelector(`[data-map-id="${selectedMapId}"] .mod-select-button`);
         if (button) { button.textContent = "Selected"; button.classList.add("selected"); }
-        if (bridge) bridge.send({ type: "select-announcer", announcerId: selectedAnnouncerId, announcerData: historicAnnouncer });
+        if (bridge) bridge.send({ type: "select-map", mapId: selectedMapId, mapData: historicMap });
       }
     }
   }
