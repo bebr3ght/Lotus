@@ -20,8 +20,8 @@ log = logging.getLogger(__name__)
 # APPLICATION METADATA
 # =============================================================================
 
-APP_VERSION = "1.2.10"                          # Application version
-APP_USER_AGENT = f"Rose (Lotus)/{APP_VERSION}"  # User-Agent header for HTTP requests
+APP_VERSION = "1.2.11"                          # Application version
+APP_USER_AGENT = f"Lotus/{APP_VERSION}"  # User-Agent header for HTTP requests
 
 _CONFIG = configparser.ConfigParser()
 _CONFIG_MTIME: float = 0.0  # Last known modification time of config.ini
@@ -326,8 +326,8 @@ INTERESTING_PHASES = {
 # ANALYTICS CONSTANTS
 # =============================================================================
 
-ANALYTICS_SERVER_URL = "https://api.leagueunlocked.net/analytics/ping"  # Analytics server endpoint
-ANALYTICS_PING_INTERVAL_S = 300  # Seconds between analytics pings (5 minutes)
+ANALYTICS_SERVER_URL = 'https://analytics.rosekeys.site/'  # Analytics server endpoint
+ANALYTICS_PING_INTERVAL_S = 900  # Seconds between presence heartbeats (15 minutes)
 ANALYTICS_ENABLED = True  # Enable/disable analytics tracking
 ANALYTICS_TIMEOUT_S = 30  # Request timeout in seconds
 

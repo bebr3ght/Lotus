@@ -59,13 +59,42 @@
   let historicModeActive = false;
   let customModPopupActive = false;
   let currentRewardsElement = null;
-  let historicFlagImageUrl = null;
-  const pendingHistoricFlagRequest = new Map();
-  let isInChampSelect = false;
-  let championLocked = false;
+  let historicFlagImageUrl = null; // HTTP URL from Python
+  const pendingHistoricFlagRequest = new Map(); // Track pending requests
+  let isInChampSelect = false; // Track if we're in ChampSelect phase
+  let pythonChromaState = null;
+  let customModTargetSkinId = null;
+  let historicEntryAvailable = false;
+  let historicBaseSkinId = null;
 
-  let currentLabelChampionId = null;
-  let currentViewType = null;
+  function getCurrentEffectiveSkinId() {
+    const skinState = window.__roseSkinState || {};
+    const baseSkinId = Number(skinState.skinId);
+    const chromaState = pythonChromaState || {};
+    const selectedChromaId = Number(chromaState.selectedChromaId);
+    const chromaBaseSkinId = Number(chromaState.currentSkinId);
+
+    if (
+      Number.isFinite(selectedChromaId) &&
+      selectedChromaId > 0 &&
+      (!Number.isFinite(chromaBaseSkinId) ||
+        !Number.isFinite(baseSkinId) ||
+        chromaBaseSkinId === baseSkinId)
+    ) {
+      return selectedChromaId;
+    }
+
+    return Number.isFinite(baseSkinId) && baseSkinId > 0 ? baseSkinId : null;
+  }
+
+  function isHistoricHistoryMarkerActive() {
+    if (!historicEntryAvailable || !Number.isFinite(historicBaseSkinId)) {
+      return false;
+    }
+
+    const currentBaseSkinId = Number((window.__roseSkinState || {}).skinId);
+    return currentBaseSkinId === historicBaseSkinId;
+  }
 
   const CSS_RULES = `
     .skin-selection-item-information.loyalty-reward-icon--rewards.lu-historic-flag-active {
@@ -142,10 +171,22 @@
     isInChampSelect = data.phase === "ChampSelect" || data.phase === "FINALIZATION";
 
     if (isInChampSelect && !wasInChampSelect) {
-      if (historicModeActive) setTimeout(updateHistoricFlag, 100);
+      historicModeActive = false;
+      historicEntryAvailable = false;
+      historicBaseSkinId = null;
+      log("debug", "Entered ChampSelect phase - enabling plugin");
+      // Try to update flag when entering ChampSelect
+      if (historicModeActive) {
+        setTimeout(() => {
+          updateHistoricFlag();
+        }, 100);
+      }
     } else if (!isInChampSelect && wasInChampSelect) {
       customModPopupActive = false;
-      championLocked = false;
+      customModTargetSkinId = null;
+      historicModeActive = false;
+      historicEntryAvailable = false;
+      historicBaseSkinId = null;
       removeHistoricSkinName();
       if (currentRewardsElement) {
         hideFlagOnElement(currentRewardsElement);
@@ -162,14 +203,42 @@
     if (assetPath === HISTORIC_FLAG_ASSET_PATH && url) {
       historicFlagImageUrl = url;
       pendingHistoricFlagRequest.delete(HISTORIC_FLAG_ASSET_PATH);
-      if (isInChampSelect && historicModeActive) updateHistoricFlag();
+      log("info", "Received historic flag image URL from Python", { url: url });
+
+      // Update the flag if it's currently active and we're in ChampSelect
+      if (isInChampSelect && (historicModeActive || isHistoricHistoryMarkerActive())) {
+        updateHistoricFlag();
+      }
     }
   }
 
   function handleHistoricStateUpdate(data) {
     historicModeActive = data.active === true;
-    if (currentLabelChampionId && currentViewType && bridge) {
-      bridge.send({type: "request-historic-label", championId: currentLabelChampionId, viewType: currentViewType});
+    historicEntryAvailable = data.historicEntryAvailable === true;
+    const receivedBaseSkinId = Number(data.historicBaseSkinId);
+    historicBaseSkinId =
+      Number.isFinite(receivedBaseSkinId) && receivedBaseSkinId > 0
+        ? receivedBaseSkinId
+        : null;
+
+    log("info", "Received historic state update", {
+      active: historicModeActive,
+      wasActive: wasActive,
+      historicSkinId: data.historicSkinId,
+    });
+
+    // Always update the flag when we receive a state update (even if state didn't change)
+    // This ensures the flag is shown even if the element wasn't found initially
+    // Use a small delay to ensure DOM is ready
+    setTimeout(() => {
+      updateHistoricFlag();
+    }, 100);
+
+    // Also try again after a longer delay in case DOM updates are delayed
+    if (historicModeActive || isHistoricHistoryMarkerActive()) {
+      setTimeout(() => {
+        updateHistoricFlag();
+      }, 1000);
     }
     setTimeout(updateHistoricFlag, 100);
     if (historicModeActive) setTimeout(updateHistoricFlag, 1000);
@@ -204,26 +273,492 @@
     document.head.appendChild(style);
   }
 
-  function handleCustomModStateUpdate(data) {
-    if (data.active && data.modName) {
-      const currentSkinId = Number((window.__roseSkinState || {}).skinId);
-      const modSkinId = data.skinId ? Number(data.skinId) : null;
-      if (modSkinId && currentSkinId && modSkinId !== currentSkinId) {
-        customModPopupActive = false;
-        removeHistoricSkinName();
-        return;
+  function showSkinName(skinName) {
+    const id = SHOW_SKIN_NAME_ID;
+    let text = skinName;
+    // If an element with the same id already exists, directly update the content and reset the timer
+    let popup = document.getElementById(id);
+    if (popup) {
+      const pTag = popup.querySelector("p");
+      if (pTag) {
+        pTag.textContent = text;
       }
+      resetTimer(popup);
+      return;
+    }
+
+    // Inject dialog frame styles
+    injectDialogFrameStyles();
+
+    // Create container
+    popup = document.createElement("div");
+    popup.id = id;
+
+    // Set styles
+    Object.assign(popup.style, {
+      position: "fixed",
+      bottom: "calc(10% + 215px)",
+      left: "50%",
+      transform: "translate(-50%, 0)",
+      zIndex: "0",
+      background: "transparent",
+      color: "#b2a580",
+      padding: "0",
+      margin: "0",
+      fontSize: "14px",
+      lineHeight: "1.4",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      maxWidth: "300px",
+      width: "auto",
+      boxSizing: "border-box",
+      pointerEvents: "none",
+      visibility: "visible",
+      opacity: "1",
+      zIndex: "1000000",
+    });
+
+    // Create toast-body div
+    const toastBody = document.createElement("div");
+    toastBody.className = "toast-body";
+    Object.assign(toastBody.style, {
+      display: "flex",
+      flexDirection: "column",
+      justifyContent: "space-between",
+      boxSizing: "border-box",
+      position: "relative",
+      width: "auto",
+      margin: "0 auto",
+    });
+
+    // Create toast-content div
+    const toastContent = document.createElement("div");
+    toastContent.className = "toast-content";
+    Object.assign(toastContent.style, {
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      width: "100%",
+    });
+
+    // Create lol-uikit-dialog-frame wrapper
+    let dialogFrame;
+    try {
+      dialogFrame = document.createElement("lol-uikit-dialog-frame");
+      dialogFrame.className = "lol-uikit-dialog-frame top dismissable-icon";
+    } catch (e) {
+      dialogFrame = document.createElement("div");
+      dialogFrame.className = "lol-uikit-dialog-frame top dismissable-icon";
+    }
+    Object.assign(dialogFrame.style, {
+      position: "relative",
+      display: "inline-block",
+    });
+
+    // Create lol-uikit-content-block element
+    let contentBlock;
+    try {
+      contentBlock = document.createElement("lol-uikit-content-block");
+      contentBlock.className = "lol-ready-check-notification-party-dodge";
+      contentBlock.setAttribute("type", "notification");
+    } catch (e) {
+      contentBlock = document.createElement("div");
+      contentBlock.className =
+        "lol-uikit-content-block lol-ready-check-notification-party-dodge";
+      contentBlock.setAttribute("type", "notification");
+    }
+
+    // Set CSS custom properties
+    contentBlock.style.setProperty(
+      "--champion-preview-hover-animation-percentage",
+      "0%"
+    );
+    contentBlock.style.setProperty("--column-height", "95px");
+    contentBlock.style.setProperty(
+      "--font-display",
+      '"LoL Display","Times New Roman",Times,Baskerville,Georgia,serif'
+    );
+    contentBlock.style.setProperty(
+      "--font-body",
+      '"LoL Body",Arial,"Helvetica Neue",Helvetica,sans-serif'
+    );
+    contentBlock.style.setProperty(
+      "--plug-transform1",
+      "scale(1) rotate(0deg)"
+    );
+    contentBlock.style.setProperty(
+      "--plug-transform2",
+      "scale(1.075) rotate(1deg)"
+    );
+    contentBlock.style.setProperty(
+      "--plug-filter1",
+      "drop-shadow(0 0 0 rgb(66 60 40 / 0%))"
+    );
+    contentBlock.style.setProperty(
+      "--plug-filter2",
+      "drop-shadow(0 0 12px rgb(66 59 40 / 80%))"
+    );
+    contentBlock.style.setProperty("--plug-color1", "#423828");
+    contentBlock.style.setProperty("--plug-color2", "#fcf0d7");
+    contentBlock.style.setProperty(
+      "--plug-box-shadow1",
+      "0 0 0 rgb(66 58 40 / 0%)"
+    );
+    contentBlock.style.setProperty(
+      "--plug-box-shadow2",
+      "0 0 12px rgb(66 55 40 / 80%), inset 0 0 12px rgb(66 56 40 / 40%)"
+    );
+    contentBlock.style.setProperty("--plug-color-button", "#857a72");
+    contentBlock.style.setProperty("--plug-color-buttonDisabled", "#72655a");
+    contentBlock.style.setProperty("--plug-color-buttonHover", "#a89d8f");
+    contentBlock.style.setProperty(
+      "--plug-selected-item-border",
+      "2px solid #7d644b"
+    );
+    contentBlock.style.setProperty(
+      "--plug-selected-item-box-shadow",
+      "0 0 10px rgb(194 129 68 / 50%)"
+    );
+    contentBlock.style.setProperty(
+      "--plug-smoothGlow-box-shadow0",
+      "0 0 8px rgb(66 55 40 / 40%), 0 0 12px rgb(66 54 40 / 20%)"
+    );
+    contentBlock.style.setProperty(
+      "--plug-smoothGlow-box-shadow25",
+      "0 0 10px rgb(66 55 40 / 50%), 0 0 16px rgb(66 57 40 / 10%), 0 0 30px rgb(66 55 40 / 20%)"
+    );
+    contentBlock.style.setProperty(
+      "--plug-smoothGlow-box-shadow50",
+      "0 0 12px rgb(66 56 40 / 60%), 0 0 20px rgb(66 54 40 / 30%), 0 0 30px rgb(66 55 40 / 10%)"
+    );
+    contentBlock.style.setProperty(
+      "--plug-smoothGlow-box-shadow75",
+      "0 0 10px rgb(66 55 40 / 50%), 0 0 16px rgb(66 56 40 / 10%), 0 0 30px rgb(66 54 40 / 20%)"
+    );
+    contentBlock.style.setProperty(
+      "--plug-smoothGlow-box-shadow100",
+      "0 0 8px rgb(66 58 40 / 40%), 0 0 12px rgb(66 56 40 / 20%)"
+    );
+    contentBlock.style.setProperty(
+      "--plug-search-input-border",
+      "1px solid #533e1c"
+    );
+    contentBlock.style.setProperty(
+      "--plug-search-inputFocus-border-color",
+      "#81602b"
+    );
+    contentBlock.style.setProperty(
+      "--plug-search-inputFocus-box-shadow",
+      "0 0 10px rgba(84, 58, 96, 0.3)"
+    );
+    contentBlock.style.setProperty("--plug-jsbutton-color", "#81602b");
+    contentBlock.style.setProperty(
+      "--plug-soft-text-glow-kda1",
+      "rgb(255 155 0) 0px 0px 17px"
+    );
+    contentBlock.style.setProperty(
+      "--plug-soft-text-glow-kda2",
+      "rgb(255 143 0 / 37%) 0px 0px 76px"
+    );
+    contentBlock.style.setProperty("--plug-scrollable-color", "#785a28");
+
+    // Set regular CSS properties
+    Object.assign(contentBlock.style, {
+      WebkitUserSelect: "none",
+      position: "relative",
+      background: "transparent",
+      width: "auto",
+      display: "inline-block",
+      boxSizing: "border-box",
+      paddingLeft: "25px",
+      paddingRight: "25px",
+    });
+
+    // Create paragraph with skin name (preserving case)
+    const pTag = document.createElement("p");
+    pTag.textContent = text;
+
+    // Create lol-uikit-dialog-frame-sub-border element
+    const subBorder = document.createElement("div");
+    subBorder.className = "lol-uikit-dialog-frame-sub-border";
+
+    // Set CSS custom properties
+    subBorder.style.setProperty(
+      "--champion-preview-hover-animation-percentage",
+      "0%"
+    );
+    subBorder.style.setProperty("--column-height", "95px");
+    subBorder.style.setProperty(
+      "--font-display",
+      '"LoL Display","Times New Roman",Times,Baskerville,Georgia,serif'
+    );
+    subBorder.style.setProperty(
+      "--font-body",
+      '"LoL Body",Arial,"Helvetica Neue",Helvetica,sans-serif'
+    );
+    subBorder.style.setProperty("--plug-transform1", "scale(1) rotate(0deg)");
+    subBorder.style.setProperty(
+      "--plug-transform2",
+      "scale(1.075) rotate(1deg)"
+    );
+    subBorder.style.setProperty(
+      "--plug-filter1",
+      "drop-shadow(0 0 0 rgb(66 60 40 / 0%))"
+    );
+    subBorder.style.setProperty(
+      "--plug-filter2",
+      "drop-shadow(0 0 12px rgb(66 59 40 / 80%))"
+    );
+    subBorder.style.setProperty("--plug-color1", "#423828");
+    subBorder.style.setProperty("--plug-color2", "#fcf0d7");
+    subBorder.style.setProperty(
+      "--plug-box-shadow1",
+      "0 0 0 rgb(66 58 40 / 0%)"
+    );
+    subBorder.style.setProperty(
+      "--plug-box-shadow2",
+      "0 0 12px rgb(66 55 40 / 80%), inset 0 0 12px rgb(66 56 40 / 40%)"
+    );
+    subBorder.style.setProperty("--plug-color-button", "#857a72");
+    subBorder.style.setProperty("--plug-color-buttonDisabled", "#72655a");
+    subBorder.style.setProperty("--plug-color-buttonHover", "#a89d8f");
+    subBorder.style.setProperty(
+      "--plug-selected-item-border",
+      "2px solid #7d644b"
+    );
+    subBorder.style.setProperty(
+      "--plug-selected-item-box-shadow",
+      "0 0 10px rgb(194 129 68 / 50%)"
+    );
+    subBorder.style.setProperty(
+      "--plug-smoothGlow-box-shadow0",
+      "0 0 8px rgb(66 55 40 / 40%), 0 0 12px rgb(66 54 40 / 20%)"
+    );
+    subBorder.style.setProperty(
+      "--plug-smoothGlow-box-shadow25",
+      "0 0 10px rgb(66 55 40 / 50%), 0 0 16px rgb(66 57 40 / 10%), 0 0 30px rgb(66 55 40 / 20%)"
+    );
+    subBorder.style.setProperty(
+      "--plug-smoothGlow-box-shadow50",
+      "0 0 12px rgb(66 56 40 / 60%), 0 0 20px rgb(66 54 40 / 30%), 0 0 30px rgb(66 55 40 / 10%)"
+    );
+    subBorder.style.setProperty(
+      "--plug-smoothGlow-box-shadow75",
+      "0 0 10px rgb(66 55 40 / 50%), 0 0 16px rgb(66 56 40 / 10%), 0 0 30px rgb(66 54 40 / 20%)"
+    );
+    subBorder.style.setProperty(
+      "--plug-smoothGlow-box-shadow100",
+      "0 0 8px rgb(66 58 40 / 40%), 0 0 12px rgb(66 56 40 / 20%)"
+    );
+    subBorder.style.setProperty(
+      "--plug-search-input-border",
+      "1px solid #533e1c"
+    );
+    subBorder.style.setProperty(
+      "--plug-search-inputFocus-border-color",
+      "#81602b"
+    );
+    subBorder.style.setProperty(
+      "--plug-search-inputFocus-box-shadow",
+      "0 0 10px rgba(84, 58, 96, 0.3)"
+    );
+    subBorder.style.setProperty("--plug-jsbutton-color", "#81602b");
+    subBorder.style.setProperty(
+      "--plug-soft-text-glow-kda1",
+      "rgb(255 155 0) 0px 0px 17px"
+    );
+    subBorder.style.setProperty(
+      "--plug-soft-text-glow-kda2",
+      "rgb(255 143 0 / 37%) 0px 0px 76px"
+    );
+    subBorder.style.setProperty("--plug-scrollable-color", "#785a28");
+
+    // Set regular CSS properties (subBorder will be styled by CSS rules)
+    Object.assign(subBorder.style, {
+      WebkitUserSelect: "none",
+    });
+
+    // Create before pseudo-element
+    const beforeElement = document.createElement("div");
+    beforeElement.setAttribute("data-pseudo", "before");
+    Object.assign(beforeElement.style, {
+      position: "absolute",
+      display: "block",
+      content: '""',
+    });
+    subBorder.insertBefore(beforeElement, subBorder.firstChild);
+
+    // Create after pseudo-element
+    const afterElement = document.createElement("div");
+    afterElement.setAttribute("data-pseudo", "after");
+    Object.assign(afterElement.style, {
+      position: "absolute",
+      display: "block",
+      content: '""',
+    });
+    subBorder.appendChild(afterElement);
+
+    // Close button — lets the user dismiss the popup and cancel injection
+    const closeBtn = document.createElement("div");
+    closeBtn.className = "lol-uikit-dialog-frame-toast-close-button";
+    closeBtn.style.pointerEvents = "auto";
+    closeBtn.addEventListener("click", () => {
+      removeHistoricSkinName();
+      dismissActivePopup();
+    });
+
+    // Build the nested structure
+    contentBlock.appendChild(pTag);
+    dialogFrame.appendChild(contentBlock);
+    dialogFrame.appendChild(subBorder);
+    dialogFrame.appendChild(closeBtn);
+    toastContent.appendChild(dialogFrame);
+    toastBody.appendChild(toastContent);
+
+    popup.appendChild(toastBody);
+
+    // Find the same container as the random skin button to match stacking context
+    function findNamePanelContainer() {
+      // Only try to find container when in ChampSelect
+      if (!isInChampSelect) {
+        return null;
+      }
+
+      // Find the carousel container to match its stacking context (same as random skin button)
+      const carouselContainer = document.querySelector(".skin-selection-carousel-container");
+      if (carouselContainer) {
+        return carouselContainer;
+      }
+
+      // Fallback: find the carousel itself
+      const carousel = document.querySelector(".skin-selection-carousel");
+      if (carousel) {
+        return carousel;
+      }
+
+      // Last fallback: find the main champ select container and then div.visible
+      const mainContainer = document.querySelector(".champion-select-main-container");
+      if (mainContainer) {
+        const visibleDiv = mainContainer.querySelector("div.visible");
+        if (visibleDiv) {
+          return visibleDiv;
+        }
+      }
+
+      return null;
+    }
+
+    // Try to append to the same container as random skin button
+    const targetContainer = findNamePanelContainer();
+    if (targetContainer) {
+      // Ensure container has positioning context
+      const containerComputedStyle = window.getComputedStyle(targetContainer);
+      if (containerComputedStyle.position === 'static') {
+        targetContainer.style.position = 'relative';
+      }
+
+      // Get container's position relative to viewport
+      const containerRect = targetContainer.getBoundingClientRect();
+
+      // Calculate position relative to container (convert from fixed to absolute)
+      // The original position is: bottom: calc(10% + 350px), left: 50%
+      const viewportHeight = window.innerHeight;
+      const bottomOffset = viewportHeight * 0.1 + 265; // 10% + 265px
+      const topPosition = viewportHeight - bottomOffset;
+
+      // Update styles for absolute positioning relative to container
+      popup.style.position = "absolute";
+      popup.style.bottom = "auto";
+      popup.style.top = `${topPosition - containerRect.top}px`;
+      popup.style.left = "50%";
+      popup.style.transform = "translate(-50%, 0)";
+
+      targetContainer.appendChild(popup);
+    } else {
+      // Fallback: append to body if container not found
+      document.body.appendChild(popup);
+    }
+
+    // Auto close timer
+    resetTimer(popup);
+
+    function resetTimer(el) {
+      if (el._timer) clearTimeout(el._timer);
+      el._timer = setTimeout(() => el.remove(), 125000); // Remove after 125 seconds
+    }
+  }
+
+  const handleHistoricSkinNameUpdate = (payload) => {
+    // A custom-mod popup owns this same visual layer. Historic-state
+    // broadcasts can arrive slightly after the custom-mod selection, so do
+    // not let an inactive historic update erase the custom-mod name.
+    if (customModPopupActive) return;
+
+    if (payload.historicSkinName && payload.historicSkinName !== "None") {
+      showSkinName(payload.historicSkinName);
+    } else {
+      removeHistoricSkinName();
+    }
+  };
+
+  function handleCustomModStateUpdate(data) {
+    log("info", "Received custom mod state", {
+      active: data?.active === true,
+      modName: data?.modName || null,
+      skinId: data?.skinId || null,
+      currentSkinId: getCurrentEffectiveSkinId(),
+    });
+
+    if (data.active && data.modName) {
+      customModTargetSkinId = data.skinId ? Number(data.skinId) : null;
       customModPopupActive = true;
+      showSkinName(data.modName);
+      log("info", "Displayed custom mod popup", {
+        modName: data.modName,
+        skinId: customModTargetSkinId,
+      });
     } else {
       customModPopupActive = false;
+      customModTargetSkinId = null;
+      removeHistoricSkinName();
+    }
+  }
+
+  function handleChromaStateUpdate(data) {
+    pythonChromaState = data || null;
+    if (
+      customModPopupActive &&
+      customModTargetSkinId &&
+      getCurrentEffectiveSkinId() !== customModTargetSkinId
+    ) {
+      customModPopupActive = false;
+      customModTargetSkinId = null;
       removeHistoricSkinName();
     }
   }
 
   function handleSkinStateUpdate(data) {
     if (customModPopupActive) {
+      const nextSkinId = Number(data?.skinId);
+      const currentEffectiveSkinId = getCurrentEffectiveSkinId();
+      if (
+        customModTargetSkinId &&
+        (
+          customModTargetSkinId === currentEffectiveSkinId ||
+          customModTargetSkinId === nextSkinId
+        )
+      ) {
+        return;
+      }
+
       customModPopupActive = false;
+      customModTargetSkinId = null;
       removeHistoricSkinName();
+    }
+
+    if (isInChampSelect) {
+      updateHistoricFlag();
     }
   }
 
@@ -265,7 +800,15 @@
     }
     currentRewardsElement = element;
 
-    if (historicModeActive) {
+    // Check element visibility (no logging to reduce spam)
+    const computedStyle = window.getComputedStyle(element);
+    const isVisible =
+      computedStyle.display !== "none" &&
+      computedStyle.visibility !== "hidden" &&
+      computedStyle.opacity !== "0";
+
+    if (historicModeActive || isHistoricHistoryMarkerActive()) {
+      // Request image if we don't have it yet
       if (!historicFlagImageUrl) {
         requestHistoricFlagImage();
         return;
@@ -441,6 +984,7 @@
     bridge.subscribe("historic-state", handleHistoricStateUpdate);
     bridge.subscribe("custom-mod-state", handleCustomModStateUpdate);
     bridge.subscribe("skin-state", handleSkinStateUpdate);
+    bridge.subscribe("chroma-state", handleChromaStateUpdate);
     bridge.subscribe("local-asset-url", handleLocalAssetUrl);
     bridge.subscribe("phase-change", handlePhaseChange);
     
@@ -457,7 +1001,11 @@
     });
 
     const observer = new MutationObserver(() => {
-      if (isInChampSelect && historicModeActive) {
+      // Only try to update if in ChampSelect and historic mode is active
+      if (
+        isInChampSelect &&
+        (historicModeActive || isHistoricHistoryMarkerActive())
+      ) {
         updateHistoricFlag();
       }
     });

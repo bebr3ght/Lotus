@@ -107,11 +107,11 @@ PENGU_LOADER_EXCLUDED_ROOT_NAMES = {
 PENGU_LOADER_EXCLUDED_SUFFIXES = {'.log'}
 
 def _pengu_path_excluded(rel_path: Path) -> bool:
-    # Исключаем файлы только если они находятся В КОРНЕ папки Pengu Loader
+    # Exclude only from root folder
     if rel_path.parts and rel_path.parts[0].lower() in PENGU_LOADER_EXCLUDED_ROOT_NAMES:
         return True
     
-    # Исключаем логи (.log) в любой вложенности
+    # Exclude from any folders in /Pengu Loader/*
     if rel_path.suffix.lower() in PENGU_LOADER_EXCLUDED_SUFFIXES:
         return True
     return False

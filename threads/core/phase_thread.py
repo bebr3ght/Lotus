@@ -58,19 +58,22 @@ class PhaseThread(threading.Thread):
         """Main thread loop"""
         while not self.state.stop:
             try:
-                # --- ГЛОБАЛЬНАЯ ЗАЩИТА: ПОТОК НИКОГДА НЕ УМРЕТ ---
-                try:
-                    self.lcu.refresh_if_needed()
-                except (OSError, ConnectionError) as e:
-                    log.debug(f"LCU refresh failed in phase thread: {e}")
-                
-                ph = self.lcu.phase if self.lcu.ok else None
-                if ph == "None":
-                    ph = None
-                
-                if ph is None:
-                    self.state.phase = None
-                    self._null_phase_streak += 1
+                self.lcu.refresh_if_needed()
+            except (OSError, ConnectionError) as e:
+                log.debug(f"LCU refresh failed in phase thread: {e}")
+            
+            ph = self.lcu.phase if self.lcu.ok else None
+            if ph == "None":
+                ph = None
+            
+            # If phase is unknown (None), skip handling.
+            # Use a grace period to avoid wiping Swiftplay state on transient
+            # API hiccups (the LCU can briefly return None during transitions).
+            if ph is None:
+                from threads.handlers.champ_select_reset import note_phase_for_reset
+                note_phase_for_reset(self.state, None)
+                self.state.phase = None
+                self._null_phase_streak += 1
 
                     if self._null_phase_streak >= 3:
                         if not self.state.is_swiftplay_mode and self.state.swiftplay_extracted_mods:

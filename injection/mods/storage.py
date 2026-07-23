@@ -8,20 +8,28 @@ Handles mods organized by category: skins, maps, fonts, announcers, others
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
+import re
 import shutil
+import subprocess
+import tempfile
+import threading
 from pathlib import Path
 from typing import List, Optional
 
+from utils.core.junction import safe_remove_entry
 from utils.core.logging import get_logger
 from utils.core.paths import get_user_data_dir
+from utils.core.safe_extract import safe_extractall
 from utils.core.utilities import get_champion_id_from_skin_id
 
 log = get_logger()
+_STORAGE_LOCK = threading.RLock()
 
 
 @dataclass(frozen=True)
 class SkinModEntry:
-    """Metadata for a mod inside mods/skins/{skin_id}"""
+    """Metadata for a mod inside mods/skins/{champion_id}000."""
 
     champion_id: Optional[int]
     skin_id: int
@@ -29,10 +37,15 @@ class SkinModEntry:
     path: Path
     updated_at: float
     description: Optional[str] = None
+    affected_skin_ids: tuple[int, ...] = ()
 
 
 class ModStorageService:
     """Service exposing the on-disk mods hierarchy."""
+
+    ARCHIVE_SCAN_INTERVAL_SECONDS = 1.0
+    LEGACY_TARGET_METADATA = "rose_legacy_targets.json"
+    WAD_TARGET_METADATA = "rose_wad_targets.json"
 
     CATEGORY_SKINS = "skins"
     CATEGORY_MAPS = "maps"
@@ -57,10 +70,113 @@ class ModStorageService:
         CATEGORY_OTHERS,
     )
 
-    def __init__(self, mods_root: Optional[Path] = None):
+    def __init__(self, mods_root: Optional[Path] = None, watch_archives: bool = False):
         self.mods_root = mods_root or (get_user_data_dir() / "mods")
+        self._storage_lock = _STORAGE_LOCK
+        self._watcher_stop = threading.Event()
+        self._watcher_thread: Optional[threading.Thread] = None
+        self._failed_archive_signatures: dict[Path, tuple[int, int]] = {}
+        self._wad_scan_signatures: dict[Path, tuple[int, int]] = {}
+        self._affected_skin_cache: dict[Path, tuple[int, int, tuple[int, ...]]] = {}
         self.mods_root.mkdir(parents=True, exist_ok=True)
         self._ensure_mods_root_layout()
+        self._migrate_legacy_skin_layout()
+
+        if watch_archives:
+            self._watcher_thread = threading.Thread(
+                target=self._watch_archives,
+                name="RoseModArchiveWatcher",
+                daemon=True,
+            )
+            self._watcher_thread.start()
+
+    def _extract_archives_from_all_directories(self) -> None:
+        """Extract archives from every supported mod directory."""
+        skins_dir = self.skins_dir
+        if skins_dir.exists() and skins_dir.is_dir():
+            for skin_dir in skins_dir.iterdir():
+                if skin_dir.is_dir():
+                    self._extract_archives_in_directory(skin_dir)
+                    self._extract_wads_in_directory(skin_dir)
+
+        for category in self.ROOT_CATEGORIES:
+            if category == self.CATEGORY_SKINS:
+                continue
+            category_dir = self.mods_root / category
+            self._extract_archives_in_directory(category_dir)
+
+    def _extract_wads_in_directory(self, directory: Path) -> None:
+        """Persistently extract newly added WADs in direct mod folders."""
+        if not directory.exists() or not directory.is_dir():
+            return
+
+        extractor = Path(__file__).resolve().parents[1] / "tools" / "wad-extract.exe"
+        if not extractor.is_file():
+            return
+
+        try:
+            candidates = [path for path in directory.iterdir() if path.is_dir()]
+        except OSError:
+            return
+
+        for candidate in candidates:
+            try:
+                stat = candidate.stat()
+                signature = (stat.st_mtime_ns, stat.st_size)
+            except OSError:
+                continue
+
+            if self._wad_scan_signatures.get(candidate) == signature:
+                continue
+            self._wad_scan_signatures[candidate] = signature
+
+            try:
+                wad_files = sorted(
+                    (
+                        path
+                        for path in candidate.rglob("*")
+                        if path.is_file()
+                        and path.name.casefold().endswith(".wad.client")
+                    ),
+                    key=lambda path: path.as_posix().casefold(),
+                )
+            except OSError:
+                continue
+
+            for wad_file in wad_files:
+                self._extract_wad_file(wad_file, extractor)
+
+            # Extraction/removal changes the candidate directory timestamp.
+            # Store the new value so the watcher does not rescan this mod on
+            # every tick once all packed WADs have been converted.
+            try:
+                updated = candidate.stat()
+                self._wad_scan_signatures[candidate] = (
+                    updated.st_mtime_ns,
+                    updated.st_size,
+                )
+            except OSError:
+                self._wad_scan_signatures.pop(candidate, None)
+
+    def _watch_archives(self) -> None:
+        """Watch the mod tree and extract newly added archives."""
+        while not self._watcher_stop.is_set():
+            try:
+                with self._storage_lock:
+                    self._extract_archives_from_all_directories()
+            except Exception:  # noqa: BLE001
+                log.exception("[ModStorage] Archive watcher scan failed")
+
+            if self._watcher_stop.wait(self.ARCHIVE_SCAN_INTERVAL_SECONDS):
+                break
+
+    def stop(self) -> None:
+        """Stop the background archive watcher, if it is running."""
+        self._watcher_stop.set()
+        watcher = self._watcher_thread
+        if watcher and watcher.is_alive() and watcher is not threading.current_thread():
+            watcher.join(timeout=2.0)
+        self._watcher_thread = None
 
     def _ensure_mods_root_layout(self) -> None:
         """
@@ -89,6 +205,271 @@ class ModStorageService:
         except Exception as exc:  # noqa: BLE001
             log.warning("[ModStorage] Failed to scan mods root %s: %s", self.mods_root, exc)
 
+    def _migrate_legacy_skin_layout(self) -> None:
+        """Move old per-skin mod folders into the champion-level layout.
+
+        Older Rose versions stored mods as skins/<skin_id>/<mod>. The current
+        layout stores all mods for a champion under skins/<champion>000/<mod>
+        and discovers affected skins from the mod contents. Keep the old
+        target ID in migration metadata so a skin-specific legacy mod does not
+        become a base-skin mod after it is moved.
+        """
+        moved_paths: dict[str, str] = {}
+        try:
+            with self._storage_lock:
+                for legacy_dir in sorted(
+                    self.skins_dir.iterdir(),
+                    key=lambda path: path.name.casefold(),
+                ):
+                    if not legacy_dir.is_dir():
+                        continue
+
+                    legacy_id = self._to_int(legacy_dir.name)
+                    if legacy_id is None or legacy_id <= 0:
+                        continue
+
+                    # Base folders are already in the new layout. Numeric
+                    # folders below 1000 are handled as the intermediate
+                    # champion/skin layout used by older builds.
+                    if legacy_id >= 1000 and legacy_id % 1000 == 0:
+                        continue
+
+                    if legacy_id < 1000:
+                        destination_root = self.get_skin_dir(legacy_id * 1000)
+                        nested_skin_dirs = [
+                            child
+                            for child in sorted(
+                                legacy_dir.iterdir(),
+                                key=lambda path: path.name.casefold(),
+                            )
+                            if child.is_dir() and self._to_int(child.name) is not None
+                        ]
+
+                        for nested_dir in nested_skin_dirs:
+                            nested_id = int(nested_dir.name)
+                            target_skin_id = (
+                                nested_id
+                                if nested_id >= 1000
+                                else legacy_id * 1000 + nested_id
+                            )
+                            moved_paths.update(
+                                self._migrate_legacy_mod_directory(
+                                    nested_dir,
+                                    destination_root,
+                                    target_skin_id,
+                                )
+                            )
+
+                        moved_paths.update(
+                            self._migrate_legacy_mod_directory(
+                                legacy_dir,
+                                destination_root,
+                                None,
+                            )
+                        )
+                    else:
+                        destination_root = self.get_skin_dir(
+                            (legacy_id // 1000) * 1000
+                        )
+                        moved_paths.update(
+                            self._migrate_legacy_mod_directory(
+                                legacy_dir,
+                                destination_root,
+                                legacy_id,
+                            )
+                        )
+
+                self._rewrite_migrated_historic_paths(moved_paths)
+        except (OSError, ValueError, TypeError) as exc:
+            log.warning("[ModStorage] Legacy mod migration failed: %s", exc)
+
+    def _migrate_legacy_mod_directory(
+        self,
+        source_dir: Path,
+        destination_root: Path,
+        legacy_skin_id: Optional[int],
+    ) -> dict[str, str]:
+        """Move mod entries from one legacy directory into a new root."""
+        if not source_dir.exists() or not source_dir.is_dir():
+            return {}
+
+        self._extract_archives_in_directory(source_dir)
+        destination_root.mkdir(parents=True, exist_ok=True)
+        moved_paths: dict[str, str] = {}
+        archive_suffixes = {".zip", ".fantome"}
+
+        for candidate in sorted(
+            source_dir.iterdir(),
+            key=lambda path: path.name.casefold(),
+        ):
+            if not (
+                candidate.is_dir()
+                or (candidate.is_file() and candidate.suffix.casefold() in archive_suffixes)
+            ):
+                continue
+
+            destination = self._unique_migration_destination(
+                destination_root,
+                candidate,
+                legacy_skin_id,
+            )
+            old_relative_path = self._relative_mod_path(candidate)
+            try:
+                candidate.replace(destination)
+            except OSError as exc:
+                log.warning(
+                    "[ModStorage] Could not migrate legacy mod %s: %s",
+                    candidate,
+                    exc,
+                )
+                continue
+
+            if legacy_skin_id is not None and destination.is_dir():
+                self._write_legacy_target_metadata(destination, legacy_skin_id)
+
+            moved_paths[old_relative_path] = self._relative_mod_path(destination)
+            log.info(
+                "[ModStorage] Migrated legacy mod %s -> %s",
+                old_relative_path,
+                moved_paths[old_relative_path],
+            )
+
+        try:
+            if not any(source_dir.iterdir()):
+                source_dir.rmdir()
+        except OSError:
+            pass
+
+        return moved_paths
+
+    def _unique_migration_destination(
+        self,
+        destination_root: Path,
+        source: Path,
+        legacy_skin_id: Optional[int],
+    ) -> Path:
+        """Return a collision-free destination for a migrated mod."""
+        destination = destination_root / source.name
+        if not destination.exists() and not destination.is_symlink():
+            return destination
+
+        suffix = (
+            f" (legacy {legacy_skin_id})"
+            if legacy_skin_id is not None
+            else " (legacy)"
+        )
+        if source.is_file():
+            candidate = destination_root / (
+                f"{source.stem}{suffix}{source.suffix}"
+            )
+        else:
+            candidate = destination_root / f"{source.name}{suffix}"
+
+        index = 2
+        while candidate.exists() or candidate.is_symlink():
+            if source.is_file():
+                candidate = destination_root / (
+                    f"{source.stem}{suffix} {index}{source.suffix}"
+                )
+            else:
+                candidate = destination_root / f"{source.name}{suffix} {index}"
+            index += 1
+        return candidate
+
+    def _write_legacy_target_metadata(
+        self,
+        mod_directory: Path,
+        legacy_skin_id: int,
+    ) -> None:
+        """Record the old storage skin as an affected target."""
+        metadata_path = (
+            mod_directory / "META" / self.LEGACY_TARGET_METADATA
+        )
+        try:
+            metadata = {}
+            if metadata_path.is_file():
+                loaded = json.loads(metadata_path.read_text(encoding="utf-8"))
+                if isinstance(loaded, dict):
+                    metadata = loaded
+
+            existing = metadata.get("affectedSkinIds", [])
+            if isinstance(existing, dict):
+                existing = existing.keys()
+            if isinstance(existing, (str, bytes)):
+                existing = []
+            try:
+                affected = {int(value) for value in existing}
+            except (TypeError, ValueError):
+                affected = set()
+            affected.add(int(legacy_skin_id))
+
+            metadata["affectedSkinIds"] = sorted(affected)
+            metadata_path.parent.mkdir(parents=True, exist_ok=True)
+            metadata_path.write_text(
+                json.dumps(metadata, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        except (OSError, TypeError, ValueError) as exc:
+            log.warning(
+                "[ModStorage] Could not preserve legacy target %s for %s: %s",
+                legacy_skin_id,
+                mod_directory,
+                exc,
+            )
+
+    def _relative_mod_path(self, path: Path) -> str:
+        try:
+            relative = path.relative_to(self.mods_root)
+        except ValueError:
+            relative = path
+        return str(relative).replace(chr(92), "/")
+
+    def _rewrite_migrated_historic_paths(
+        self,
+        moved_paths: dict[str, str],
+    ) -> None:
+        """Update custom-mod history entries after moving their folders."""
+        if not moved_paths:
+            return
+
+        try:
+            from utils.core.historic import (
+                get_custom_mod_path,
+                is_custom_mod_path,
+                load_historic_map,
+                write_historic_entry,
+            )
+
+            def normalize_path(value: str) -> str:
+                return str(value).replace(chr(92), "/").casefold()
+
+            normalized_paths = {
+                normalize_path(old): new for old, new in moved_paths.items()
+            }
+            for champion_id, historic_value in load_historic_map().items():
+                if not is_custom_mod_path(historic_value):
+                    continue
+                old_path = get_custom_mod_path(historic_value)
+                if not old_path:
+                    continue
+                new_path = normalized_paths.get(normalize_path(old_path))
+                if not new_path:
+                    continue
+                write_historic_entry(
+                    int(champion_id),
+                    f"path:{new_path}",
+                )
+                log.info(
+                    "[ModStorage] Updated historic mod path %s -> %s",
+                    old_path,
+                    new_path,
+                )
+        except (OSError, TypeError, ValueError, ImportError) as exc:
+            log.warning(
+                "[ModStorage] Could not update historic mod paths: %s",
+                exc,
+            )
+
     @property
     def skins_dir(self) -> Path:
         return self.mods_root / self.CATEGORY_SKINS
@@ -96,7 +477,57 @@ class ModStorageService:
     def get_skin_dir(self, skin_id: int | str) -> Path:
         return self.skins_dir / str(skin_id)
 
+    def _extract_archives_in_directory(self, directory: Path) -> None:
+        """Convert dropped ZIP/fantome mods into extracted mod folders.
+
+        Archives are extracted into a temporary sibling directory first. The
+        source archive is removed only after extraction succeeds, so a broken
+        or unsafe archive remains available for troubleshooting/retry.
+        """
+        if not directory.exists() or not directory.is_dir():
+            return
+
+        for archive in sorted(directory.iterdir(), key=lambda p: p.name.lower()):
+            if not archive.is_file() or archive.suffix.lower() not in {".zip", ".fantome"}:
+                continue
+
+            try:
+                stat = archive.stat()
+                signature = (stat.st_size, stat.st_mtime_ns)
+            except OSError:
+                continue
+            if self._failed_archive_signatures.get(archive) == signature:
+                continue
+
+            target = directory / archive.stem
+            temporary = Path(
+                tempfile.mkdtemp(
+                    prefix=f".{archive.stem}.extracting-",
+                    dir=str(directory),
+                )
+            )
+
+            try:
+                safe_extractall(archive, temporary)
+                if not any(temporary.iterdir()):
+                    raise ValueError("archive contains no files")
+
+                if target.exists() or target.is_symlink():
+                    safe_remove_entry(target)
+                temporary.replace(target)
+                archive.unlink()
+                self._failed_archive_signatures.pop(archive, None)
+                log.info("[ModStorage] Extracted and removed archive: %s", archive)
+            except Exception as exc:  # noqa: BLE001
+                safe_remove_entry(temporary)
+                self._failed_archive_signatures[archive] = signature
+                log.warning("[ModStorage] Failed to extract %s: %s", archive, exc)
+
     def list_mods_for_skin(self, skin_id: int | str) -> List[SkinModEntry]:
+        with self._storage_lock:
+            return self._list_mods_for_skin(skin_id)
+
+    def _list_mods_for_skin(self, skin_id: int | str) -> List[SkinModEntry]:
         skin_dir = self.get_skin_dir(skin_id)
         if not skin_dir.exists() or not skin_dir.is_dir():
             return []
@@ -104,6 +535,8 @@ class ModStorageService:
         skin_id_int = self._to_int(skin_id)
         if skin_id_int is None:
             return []
+
+        self._extract_archives_in_directory(skin_dir)
 
         champion_id = get_champion_id_from_skin_id(skin_id_int)
         entries: List[SkinModEntry] = []
@@ -120,6 +553,12 @@ class ModStorageService:
             except OSError:
                 updated_at = 0.0
 
+            affected_skin_ids = self._get_affected_skin_ids(
+                candidate,
+                skin_id_int,
+                champion_id,
+            )
+
             entries.append(
                 SkinModEntry(
                     champion_id=champion_id,
@@ -128,6 +567,7 @@ class ModStorageService:
                     path=candidate,
                     updated_at=updated_at,
                     description=self._read_mod_description(candidate),
+                    affected_skin_ids=affected_skin_ids,
                 )
             )
 
@@ -163,7 +603,408 @@ class ModStorageService:
     def has_mods_for_skin(self, skin_id: int | str) -> bool:
         return bool(self.list_mods_for_skin(skin_id))
 
+    def _get_affected_skin_ids(
+        self,
+        candidate: Path,
+        storage_skin_id: int,
+        champion_id: Optional[int],
+    ) -> tuple[int, ...]:
+        """Discover the skin IDs touched by a custom mod.
+
+        Mods are stored under one skin directory, but a WAD can contain
+        assets for several skins/chromas. Most CSLOL exports expose those
+        targets as folders such as skins/skin04 and skins/skin05.
+        Optional affected-skin metadata is also supported for mods that do
+        not encode their targets in paths.
+        """
+        packed_wad_exists = False
+        if candidate.is_dir():
+            try:
+                packed_wad_exists = any(
+                    path.is_file()
+                    and path.name.casefold().endswith(".wad.client")
+                    for path in candidate.rglob("*")
+                )
+            except OSError:
+                packed_wad_exists = True
+
+        try:
+            stat = candidate.stat()
+            signature = (stat.st_mtime_ns, stat.st_size)
+            cached = self._affected_skin_cache.get(candidate)
+            if cached and cached[:2] == signature and not packed_wad_exists:
+                return cached[2]
+        except OSError:
+            signature = (0, 0)
+
+        # Prefer targets discovered from the mod itself. This matters for
+        # champion-level imports stored under the base folder: a mod that only
+        # contains skin04 assets must not also appear on the base skin just
+        # because the user selected the champion when importing it.
+        affected: set[int] = set()
+        chroma_only = False
+
+        def add_metadata_ids(value) -> None:
+            values = value.keys() if isinstance(value, dict) else value
+            if values is None or isinstance(values, (str, bytes)):
+                return
+            try:
+                values = iter(values)
+            except TypeError:
+                return
+            for raw_value in values:
+                try:
+                    affected.add(int(raw_value))
+                except (TypeError, ValueError):
+                    continue
+
+        if candidate.is_dir():
+            metadata_paths = (
+                candidate / "META" / self.LEGACY_TARGET_METADATA,
+                candidate / "META" / self.WAD_TARGET_METADATA,
+                candidate / "META" / "affected_skins.json",
+                candidate / "META" / "info.json",
+                candidate / "META" / "details.json",
+            )
+            for metadata_path in metadata_paths:
+                if not metadata_path.is_file():
+                    continue
+                try:
+                    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+                except (OSError, ValueError, TypeError):
+                    continue
+                if not isinstance(metadata, dict):
+                    continue
+                metadata_text = " ".join(
+                    str(metadata.get(key, ""))
+                    for key in ("Name", "name", "Description", "description")
+                )
+                if re.search(
+                    r"\ball\s+chromas?\b|\bchromas?\s+only\b",
+                    metadata_text,
+                    re.IGNORECASE,
+                ):
+                    chroma_only = True
+                for key in (
+                    "affectedSkinIds",
+                    "affectedSkins",
+                    "affected_skin_ids",
+                    "affected_skins",
+                    "skinIds",
+                ):
+                    if key in metadata:
+                        add_metadata_ids(metadata[key])
+
+            if champion_id is not None:
+                try:
+                    for asset_path in candidate.rglob("*"):
+                        try:
+                            parts = asset_path.relative_to(candidate).parts
+                        except ValueError:
+                            continue
+                        for index, part in enumerate(parts[:-1]):
+                            if part.casefold() != "skins":
+                                continue
+                            match = re.fullmatch(
+                                r"skin[_-]?(\d+)(?:\.[^.]+)?",
+                                parts[index + 1],
+                                re.IGNORECASE,
+                            )
+                            if not match:
+                                continue
+                            suffix = int(match.group(1))
+                            affected.add(
+                                suffix if suffix >= 1000 else int(champion_id) * 1000 + suffix
+                            )
+                except OSError:
+                    pass
+
+        wad_targets = self._get_wad_targets(candidate, champion_id)
+        if wad_targets is not None:
+            affected.update(wad_targets)
+
+        # Some chroma-only exports include a small base-skin carrier folder
+        # (for example skin04) even though their actual VFX are in skin05+.
+        # Their metadata commonly calls this out as "All chromas". In that
+        # case, do not expose the lowest skin in the detected family as a
+        # selectable target.
+        if chroma_only and champion_id is not None:
+            champion_skin_ids = sorted(
+                skin_id
+                for skin_id in affected
+                if skin_id // 1000 == int(champion_id)
+            )
+            if len(champion_skin_ids) > 1:
+                affected.discard(champion_skin_ids[0])
+
+        if not affected:
+            affected.add(int(storage_skin_id))
+
+        result = tuple(sorted(affected))
+        self._affected_skin_cache[candidate] = (signature[0], signature[1], result)
+        return result
+
+    def _get_wad_targets(
+        self,
+        candidate: Path,
+        champion_id: Optional[int],
+    ) -> Optional[set[int]]:
+        """Discover affected skins from packed WAD files.
+
+        WADs hide their asset paths until they are unpacked. Keep the
+        extracted directory beside the source WAD and cache the discovered
+        skin IDs beside the mod. The packed file is removed only after the
+        extraction has completed successfully, so a broken WAD remains
+        available for troubleshooting/retry.
+        """
+        if champion_id is None or not candidate.is_dir():
+            return None
+
+        wad_files = sorted(
+            (
+                path
+                for path in candidate.rglob("*")
+                if path.is_file() and path.name.casefold().endswith(".wad.client")
+            ),
+            key=lambda path: path.as_posix().casefold(),
+        )
+        if not wad_files:
+            return None
+
+        cache_path = candidate / "META" / self.WAD_TARGET_METADATA
+        current_signatures: dict[str, dict[str, int]] = {}
+        readable_wad_files: list[Path] = []
+        for path in wad_files:
+            try:
+                stat = path.stat()
+            except OSError:
+                continue
+            readable_wad_files.append(path)
+            current_signatures[self._relative_candidate_path(candidate, path)] = {
+                "size": stat.st_size,
+                "mtime_ns": stat.st_mtime_ns,
+            }
+        wad_files = readable_wad_files
+        if not wad_files:
+            return None
+        cached_targets = self._read_wad_target_cache(
+            cache_path,
+            current_signatures,
+        )
+        if cached_targets is not None:
+            return cached_targets
+
+        extractor = Path(__file__).resolve().parents[1] / "tools" / "wad-extract.exe"
+        if not extractor.is_file():
+            log.debug("[ModStorage] WAD extractor unavailable: %s", extractor)
+            return None
+
+        discovered: set[int] = set()
+        extraction_complete = True
+        try:
+            for wad_file in wad_files:
+                extracted_root = self._extract_wad_file(wad_file, extractor)
+                if extracted_root is None:
+                    extraction_complete = False
+                    continue
+                discovered.update(
+                    self._skin_ids_from_extracted_wad(
+                        extracted_root,
+                        int(champion_id),
+                    )
+                )
+        except (OSError, subprocess.SubprocessError, ValueError) as exc:
+            log.debug(
+                "[ModStorage] WAD target scan failed for %s: %s",
+                candidate,
+                exc,
+            )
+            return None
+
+        if not extraction_complete:
+            log.debug(
+                "[ModStorage] WAD target scan incomplete; will retry remaining packed files: %s",
+                candidate,
+            )
+            return discovered
+
+        self._write_wad_target_cache(
+            cache_path,
+            current_signatures,
+            discovered,
+        )
+        if discovered:
+            log.info(
+                "[ModStorage] WAD target scan found skins for %s: %s",
+                candidate.name,
+                sorted(discovered),
+            )
+        else:
+            log.debug("[ModStorage] WAD target scan found no skin IDs: %s", candidate)
+        return discovered
+
+    def _extract_wad_file(
+        self,
+        wad_file: Path,
+        extractor: Path,
+    ) -> Optional[Path]:
+        """Extract one WAD atomically and return its persistent directory."""
+        temporary_dir = Path(
+            tempfile.mkdtemp(
+                prefix=f".{wad_file.stem}.extracting-",
+                dir=str(wad_file.parent),
+            )
+        )
+        try:
+            temporary_wad = temporary_dir / wad_file.name
+            shutil.copy2(wad_file, temporary_wad)
+            result = subprocess.run(
+                [str(extractor), str(temporary_wad)],
+                cwd=str(extractor.parent),
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            if result.returncode != 0:
+                log.debug(
+                    "[ModStorage] WAD extraction failed for %s: %s",
+                    wad_file,
+                    result.stderr.strip() or result.stdout.strip(),
+                )
+                return None
+
+            extracted_root = temporary_dir / temporary_wad.stem
+            if not extracted_root.is_dir():
+                log.debug(
+                    "[ModStorage] WAD extractor produced no directory for %s",
+                    wad_file,
+                )
+                return None
+
+            destination = wad_file.with_suffix("")
+            if destination.exists() or destination.is_symlink():
+                safe_remove_entry(destination)
+            extracted_root.replace(destination)
+
+            try:
+                wad_file.unlink()
+            except OSError as exc:
+                # Keeping both representations would make mkoverlay process
+                # the same mod twice. Remove the new representation and keep
+                # the packed source for a later retry instead.
+                safe_remove_entry(destination)
+                log.warning(
+                    "[ModStorage] Could not remove packed WAD after extraction %s: %s",
+                    wad_file,
+                    exc,
+                )
+                return None
+
+            log.info(
+                "[ModStorage] Extracted and removed packed WAD: %s",
+                wad_file,
+            )
+            return destination
+        except (OSError, subprocess.SubprocessError, ValueError) as exc:
+            log.debug("[ModStorage] WAD extraction failed for %s: %s", wad_file, exc)
+            return None
+        finally:
+            safe_remove_entry(temporary_dir)
+
+    def _skin_ids_from_extracted_wad(
+        self,
+        extracted_root: Path,
+        champion_id: int,
+    ) -> set[int]:
+        if not extracted_root.is_dir():
+            return set()
+
+        affected: set[int] = set()
+        for path in extracted_root.rglob("*"):
+            try:
+                parts = path.relative_to(extracted_root).parts
+            except ValueError:
+                continue
+
+            for index, part in enumerate(parts[:-1]):
+                if part.casefold() != "skins":
+                    continue
+                skin_part = parts[index + 1]
+                match = re.fullmatch(
+                    r"skin[_-]?(\d+)(?:\.[^.]+)?",
+                    skin_part,
+                    re.IGNORECASE,
+                )
+                if match:
+                    suffix = int(match.group(1))
+                    affected.add(
+                        suffix
+                        if suffix >= 1000
+                        else champion_id * 1000 + suffix
+                    )
+                elif skin_part.casefold() == "base":
+                    affected.add(champion_id * 1000)
+        return affected
+
+    def _read_wad_target_cache(
+        self,
+        cache_path: Path,
+        signatures: dict[str, dict[str, int]],
+    ) -> Optional[set[int]]:
+        try:
+            if not cache_path.is_file():
+                return None
+            cached = json.loads(cache_path.read_text(encoding="utf-8"))
+            if (
+                not isinstance(cached, dict)
+                or cached.get("wadFiles") != signatures
+                or not isinstance(cached.get("affectedSkinIds"), list)
+            ):
+                return None
+            return {int(value) for value in cached["affectedSkinIds"]}
+        except (OSError, TypeError, ValueError, json.JSONDecodeError):
+            return None
+
+    def _write_wad_target_cache(
+        self,
+        cache_path: Path,
+        signatures: dict[str, dict[str, int]],
+        affected_skin_ids: set[int],
+    ) -> None:
+        try:
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            cache_path.write_text(
+                json.dumps(
+                    {
+                        "wadFiles": signatures,
+                        "affectedSkinIds": sorted(affected_skin_ids),
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+        except OSError as exc:
+            log.debug(
+                "[ModStorage] Could not cache WAD targets for %s: %s",
+                cache_path.parent,
+                exc,
+            )
+
+    @staticmethod
+    def _relative_candidate_path(candidate: Path, path: Path) -> str:
+        try:
+            return str(path.relative_to(candidate)).replace(chr(92), "/")
+        except ValueError:
+            return path.name
+
     def list_mods_for_category(self, category: str) -> List[dict]:
+        with self._storage_lock:
+            return self._list_mods_for_category(category)
+
+    def _list_mods_for_category(self, category: str) -> List[dict]:
         """List all mods in a category (maps, fonts, announcers, others)
         
         Args:
@@ -188,6 +1029,8 @@ class ModStorageService:
         category_dir = self.mods_root / category
         if not category_dir.exists() or not category_dir.is_dir():
             return []
+
+        self._extract_archives_in_directory(category_dir)
         
         entries = []
         for candidate in sorted(category_dir.iterdir(), key=lambda p: p.name.lower()):
