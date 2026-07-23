@@ -59,42 +59,13 @@
   let historicModeActive = false;
   let customModPopupActive = false;
   let currentRewardsElement = null;
-  let historicFlagImageUrl = null; // HTTP URL from Python
-  const pendingHistoricFlagRequest = new Map(); // Track pending requests
-  let isInChampSelect = false; // Track if we're in ChampSelect phase
-  let pythonChromaState = null;
-  let customModTargetSkinId = null;
-  let historicEntryAvailable = false;
-  let historicBaseSkinId = null;
+  let historicFlagImageUrl = null;
+  const pendingHistoricFlagRequest = new Map();
+  let isInChampSelect = false;
+  let championLocked = false;
 
-  function getCurrentEffectiveSkinId() {
-    const skinState = window.__roseSkinState || {};
-    const baseSkinId = Number(skinState.skinId);
-    const chromaState = pythonChromaState || {};
-    const selectedChromaId = Number(chromaState.selectedChromaId);
-    const chromaBaseSkinId = Number(chromaState.currentSkinId);
-
-    if (
-      Number.isFinite(selectedChromaId) &&
-      selectedChromaId > 0 &&
-      (!Number.isFinite(chromaBaseSkinId) ||
-        !Number.isFinite(baseSkinId) ||
-        chromaBaseSkinId === baseSkinId)
-    ) {
-      return selectedChromaId;
-    }
-
-    return Number.isFinite(baseSkinId) && baseSkinId > 0 ? baseSkinId : null;
-  }
-
-  function isHistoricHistoryMarkerActive() {
-    if (!historicEntryAvailable || !Number.isFinite(historicBaseSkinId)) {
-      return false;
-    }
-
-    const currentBaseSkinId = Number((window.__roseSkinState || {}).skinId);
-    return currentBaseSkinId === historicBaseSkinId;
-  }
+  let currentLabelChampionId = null;
+  let currentViewType = null;
 
   const CSS_RULES = `
     .skin-selection-item-information.loyalty-reward-icon--rewards.lu-historic-flag-active {
@@ -171,22 +142,10 @@
     isInChampSelect = data.phase === "ChampSelect" || data.phase === "FINALIZATION";
 
     if (isInChampSelect && !wasInChampSelect) {
-      historicModeActive = false;
-      historicEntryAvailable = false;
-      historicBaseSkinId = null;
-      log("debug", "Entered ChampSelect phase - enabling plugin");
-      // Try to update flag when entering ChampSelect
-      if (historicModeActive) {
-        setTimeout(() => {
-          updateHistoricFlag();
-        }, 100);
-      }
+      if (historicModeActive) setTimeout(updateHistoricFlag, 100);
     } else if (!isInChampSelect && wasInChampSelect) {
       customModPopupActive = false;
-      customModTargetSkinId = null;
-      historicModeActive = false;
-      historicEntryAvailable = false;
-      historicBaseSkinId = null;
+      championLocked = false;
       removeHistoricSkinName();
       if (currentRewardsElement) {
         hideFlagOnElement(currentRewardsElement);
@@ -203,42 +162,14 @@
     if (assetPath === HISTORIC_FLAG_ASSET_PATH && url) {
       historicFlagImageUrl = url;
       pendingHistoricFlagRequest.delete(HISTORIC_FLAG_ASSET_PATH);
-      log("info", "Received historic flag image URL from Python", { url: url });
-
-      // Update the flag if it's currently active and we're in ChampSelect
-      if (isInChampSelect && (historicModeActive || isHistoricHistoryMarkerActive())) {
-        updateHistoricFlag();
-      }
+      if (isInChampSelect && historicModeActive) updateHistoricFlag();
     }
   }
 
   function handleHistoricStateUpdate(data) {
     historicModeActive = data.active === true;
-    historicEntryAvailable = data.historicEntryAvailable === true;
-    const receivedBaseSkinId = Number(data.historicBaseSkinId);
-    historicBaseSkinId =
-      Number.isFinite(receivedBaseSkinId) && receivedBaseSkinId > 0
-        ? receivedBaseSkinId
-        : null;
-
-    log("info", "Received historic state update", {
-      active: historicModeActive,
-      wasActive: wasActive,
-      historicSkinId: data.historicSkinId,
-    });
-
-    // Always update the flag when we receive a state update (even if state didn't change)
-    // This ensures the flag is shown even if the element wasn't found initially
-    // Use a small delay to ensure DOM is ready
-    setTimeout(() => {
-      updateHistoricFlag();
-    }, 100);
-
-    // Also try again after a longer delay in case DOM updates are delayed
-    if (historicModeActive || isHistoricHistoryMarkerActive()) {
-      setTimeout(() => {
-        updateHistoricFlag();
-      }, 1000);
+    if (currentLabelChampionId && currentViewType && bridge) {
+      bridge.send({type: "request-historic-label", championId: currentLabelChampionId, viewType: currentViewType});
     }
     setTimeout(updateHistoricFlag, 100);
     if (historicModeActive) setTimeout(updateHistoricFlag, 1000);
@@ -800,15 +731,7 @@
     }
     currentRewardsElement = element;
 
-    // Check element visibility (no logging to reduce spam)
-    const computedStyle = window.getComputedStyle(element);
-    const isVisible =
-      computedStyle.display !== "none" &&
-      computedStyle.visibility !== "hidden" &&
-      computedStyle.opacity !== "0";
-
-    if (historicModeActive || isHistoricHistoryMarkerActive()) {
-      // Request image if we don't have it yet
+    if (historicModeActive) {
       if (!historicFlagImageUrl) {
         requestHistoricFlagImage();
         return;
@@ -1001,11 +924,7 @@
     });
 
     const observer = new MutationObserver(() => {
-      // Only try to update if in ChampSelect and historic mode is active
-      if (
-        isInChampSelect &&
-        (historicModeActive || isHistoricHistoryMarkerActive())
-      ) {
+      if (isInChampSelect && historicModeActive) {
         updateHistoricFlag();
       }
     });

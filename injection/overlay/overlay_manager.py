@@ -212,6 +212,9 @@ class OverlayManager:
             
             # Wait for process to complete with timeout
             # Read both stdout and stderr in separate threads to see what mkoverlay is doing
+            output_lines = []
+            error_lines = []
+            
             def read_output(pipe, lines_list, prefix):
                 try:
                     for line in pipe:
@@ -362,11 +365,19 @@ class OverlayManager:
             runoverlay_log_file.close() # ЗАКРЫВАЕМ ФАЙЛ
             
             if proc.returncode != 0:
-                self._report_low_disk_space_failure(
-                    mod_names=mod_names,
-                    result_code=proc.returncode,
-                )
-                log.error(f"[INJECT] runoverlay failed with return code: {proc.returncode}")
+                # ЧИТАЕМ И ВЫВОДИМ КОНКРЕТНУЮ ОШИБКУ
+                error_details = "No details captured."
+                try:
+                    if runoverlay_log_path.exists():
+                        with open(runoverlay_log_path, "r", encoding="utf-8", errors="replace") as f:
+                            lines = f.readlines()
+                            if lines:
+                                error_details = "".join(lines[-15:]).strip() # Последние 15 строк
+                except Exception as e:
+                    error_details = f"Could not read runoverlay log: {e}"
+                    
+                log.error(f"[INJECT] runoverlay failed with return code: {proc.returncode}. Reason:\n{error_details}")
+                self._wipe_overlay_dir(overlay_dir)
                 return proc.returncode
             else:
                 log.debug(f"[INJECT] runoverlay completed successfully")

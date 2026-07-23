@@ -75,63 +75,63 @@ class PhaseThread(threading.Thread):
                 self.state.phase = None
                 self._null_phase_streak += 1
 
-                    if self._null_phase_streak >= 3:
-                        if not self.state.is_swiftplay_mode and self.state.swiftplay_extracted_mods:
-                            log.debug("[phase] Null-phase streak: clearing extracted mods (non-swiftplay)")
-                            self.state.swiftplay_extracted_mods = []
-                    time.sleep(self.interval)
-                    continue
+                # Only clean up after several consecutive None polls (~1.5-2.5 s)
+                if self._null_phase_streak >= 3:
+                    if self.state.is_swiftplay_mode:
+                        # Swiftplay flag is still set but LCU returned None for
+                        # several polls — the session is gone.  Full cleanup.
+                        log.info("[phase] Null-phase streak in Swiftplay mode - cleaning up")
+                        self.swiftplay_handler.cleanup_swiftplay_exit()
+                    elif self.state.swiftplay_extracted_mods:
+                        # Flag already cleared but orphaned mods remain
+                        self.state.swiftplay_extracted_mods = []
 
-                self._null_phase_streak = 0
-                phase_changed = (ph != self.last_phase)
+                time.sleep(self.interval)
+                continue
 
-                if ph == "Lobby":
-                    self.lobby_processor.process_lobby_state(force=phase_changed)
-                    if phase_changed:
-                        try:
-                            ui_thread = getattr(self.state, "ui_skin_thread", None)
-                            if ui_thread:
-                                ui_thread._broadcast_phase_change("Lobby")
-                        except Exception as e:
-                            log.debug(f"[phase] Failed to broadcast phase change to JavaScript: {e}")
+            self._null_phase_streak = 0
+            phase_changed = (ph != self.last_phase)
 
-                if phase_changed:
-                    if ph in["ChampSelect", "FINALIZATION", "Lobby"]:
-                        try:
-                            ui_thread = getattr(self.state, "ui_skin_thread", None)
-                            if ui_thread:
-                                ui_thread._broadcast_phase_change(ph)
-                        except Exception as e:
-                            log.debug(f"[phase] Failed to broadcast phase change to JavaScript: {e}")
-                    
-                    if ph is not None and self.log_transitions and ph in self.INTERESTING:
-                        log_status(log, "Phase", ph, "")
-                    
-                    if ph is not None:
-                        self.state.phase = ph
-                    
-                    self.phase_handler.handle_phase_change(ph, self.last_phase)
-                    
-                    if self.last_phase == "Lobby" and ph != "Lobby":
-                        self.lobby_processor.reset_lobby_tracking()
+            if ph == "Lobby":
+                self.lobby_processor.process_lobby_state(force=phase_changed)
 
-                    self.last_phase = ph
-                elif ph == "Lobby":
-                    self.lobby_processor.process_lobby_state(force=False)
-                elif ph == "Matchmaking":
-                    # СТРАХОВКА: Если мы в поиске, но инжект еще не сработал
-                    if self.state.is_swiftplay_mode and self.swiftplay_handler and not self.swiftplay_handler._injection_triggered:
-                        log.info("[phase] Periodic check: Matchmaking phase active - triggering injection")
-                        self.swiftplay_handler.trigger_swiftplay_injection()
-                        self.swiftplay_handler._injection_triggered = True
-                
-                if ph == "InProgress":
-                    time.sleep(max(self.interval, PHASE_POLL_INTERVAL_INGAME))
-                else:
-                    time.sleep(self.interval)
-                
-            except Exception as e:
-                log.error(f"[phase] CRITICAL ERROR IN PHASE THREAD: {e}")
-                import traceback
-                log.error(traceback.format_exc())
-            # --------------------------------------------------
+            if phase_changed:
+                # Broadcast every phase transition so JS plugins can pause work during InProgress
+                if ph is not None:
+                    try:
+                        ui_thread = getattr(self.state, "ui_skin_thread", None)
+                        if ui_thread:
+                            ui_thread._broadcast_phase_change(ph)
+                    except Exception as e:
+                        log.debug(f"[phase] Failed to broadcast phase change to JavaScript: {e}")
+
+                # Log phase transition
+                if ph is not None and self.log_transitions and ph in self.INTERESTING:
+                    log_status(log, "Phase", ph, "")
+
+                # Update phase
+                if ph is not None:
+                    self.state.phase = ph
+
+                # Handle phase change
+                self.phase_handler.handle_phase_change(ph, self.last_phase)
+
+                # Reset lobby tracking when leaving lobby
+                if self.last_phase == "Lobby" and ph != "Lobby":
+                    self.lobby_processor.reset_lobby_tracking()
+
+                self.last_phase = ph
+            elif ph == "Lobby":
+                # Phase unchanged but still in lobby – continue monitoring
+                self.lobby_processor.process_lobby_state(force=False)
+            elif ph == "Matchmaking":
+                # СТРАХОВКА: Если мы в поиске, но инжект еще не сработал
+                if self.state.is_swiftplay_mode and self.swiftplay_handler and not self.swiftplay_handler._injection_triggered:
+                    log.info("[phase] Periodic check: Matchmaking phase active - triggering injection")
+                    self.swiftplay_handler.trigger_swiftplay_injection()
+                    self.swiftplay_handler._injection_triggered = True
+
+            if ph == "InProgress":
+                time.sleep(max(self.interval, PHASE_POLL_INTERVAL_INGAME))
+            else:
+                time.sleep(self.interval)

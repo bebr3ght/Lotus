@@ -21,101 +21,18 @@
   let championSelectObserver = null;
   let championLocked = false;
   let currentSkinData = null;
-  let selectedModId = null; // Track which mod is currently selected
-  let selectedModSkinId = null; // Track which skin the selected mod belongs to
+  let selectedModId = null; 
+  let selectedModSkinId = null; 
   let pythonChromaState = null;
   let currentPhase = null;
   let selectionRequestCounter = 0;
   let pendingSelectionRequest = null;
   let currentSkinMods = [];
-  let activeTab = "skins"; // Current active tab: "skins", "maps", "fonts", "announcers", "others"
+  let activeTab = "skins"; 
   let selectedMapId = null;
   let selectedFontId = null;
   let selectedAnnouncerId = null;
-  // Per-category multi-selection (UI / Voiceover / Loading Screen / VFX / SFX / Others).
-  // These are first-class categories in the UI; they just share the same list rendering logic.
-  let selectedCategoryIds = Object.create(null);
-
-  function getCurrentSkinContext() {
-    const state = window.__roseSkinState || {};
-    const championId = Number(state.championId);
-    let skinId = Number(state.skinId);
-    const selectedChromaId = Number(pythonChromaState?.selectedChromaId);
-    const currentSkinId = Number(pythonChromaState?.currentSkinId);
-
-    const chromaBelongsToChampion =
-      Number.isFinite(selectedChromaId) &&
-      selectedChromaId > 0 &&
-      Number.isFinite(championId) &&
-      championId > 0 &&
-      Math.floor(selectedChromaId / 1000) === championId;
-    const chromaContextMatches =
-      !Number.isFinite(currentSkinId) ||
-      currentSkinId <= 0 ||
-      Math.floor(currentSkinId / 1000) === championId;
-
-    if (chromaBelongsToChampion && chromaContextMatches) {
-      skinId = selectedChromaId;
-    }
-
-    return { championId, skinId };
-  }
-
-  function handleChromaStateUpdate(data) {
-    pythonChromaState = data && typeof data === "object" ? data : null;
-    requestModsForCurrentSkin();
-    if (isOpen && activeTab === "skins") {
-      refreshSummaryValues();
-    }
-  }
-
-  function resetStaleChromaStateForSkin(skinId) {
-    if (!pythonChromaState) return;
-
-    const incomingSkinId = Number(skinId);
-    const selectedChromaId = Number(pythonChromaState.selectedChromaId);
-    const currentSkinId = Number(pythonChromaState.currentSkinId);
-    if (!Number.isFinite(incomingSkinId) || incomingSkinId <= 0) return;
-
-    const belongsToPreviousChromaContext =
-      incomingSkinId === selectedChromaId ||
-      incomingSkinId === currentSkinId;
-    if (!belongsToPreviousChromaContext) {
-      pythonChromaState = null;
-    }
-  }
-
-  function resetCustomSkinSessionState() {
-    pythonChromaState = null;
-    selectedModId = null;
-    selectedModSkinId = null;
-    pendingSelectionRequest = null;
-    currentSkinMods = [];
-  }
-
-  function handlePhaseChange(data) {
-    const phase = String(data?.phase || "");
-    const previousPhase = currentPhase;
-    currentPhase = phase;
-
-    if (
-      phase === "ChampSelect" &&
-      previousPhase &&
-      previousPhase !== "ChampSelect"
-    ) {
-      resetCustomSkinSessionState();
-    } else if (
-      phase !== "ChampSelect" &&
-      previousPhase === "ChampSelect"
-    ) {
-      resetCustomSkinSessionState();
-    }
-  }
-  let lastChampionSelectSession = null; // Track current champ select session
-  let isFirstOpenInSession = true; // Track if this is first open in current session
-  let lastCategoryModsById = {}; // Cache per category id (ui/voiceover/loading_screen/vfx/sfx/others)
-  let emittedHistoricSelectionKeys = new Set(); // Avoid re-emitting historic selections across category responses
-  let rightPaneMode = "summary"; // "summary" | "picker"
+  let isGlobalMode = false;
 
   let selectedCategoryIds = Object.create(null);
   let lastChampionSelectSession = null; 
@@ -204,16 +121,16 @@
 
   function getSelectedIdsForCategory(categoryId) {
     const key = String(categoryId || "").trim();
-    if (!key) return[];
+    if (!key) return [];
     if (!Array.isArray(selectedCategoryIds[key])) {
-      selectedCategoryIds[key] =[];
+      selectedCategoryIds[key] = [];
     }
     return selectedCategoryIds[key];
   }
 
   function clearAllCategorySelections() {
     for (const t of OTHER_CATEGORY_TABS) {
-      selectedCategoryIds[t.id] =[];
+      selectedCategoryIds[t.id] = [];
     }
   }
 
@@ -286,6 +203,82 @@
       } else {
         panel._rightTitle.textContent = "Custom Mods";
       }
+    }
+  }
+
+  function getCurrentSkinContext() {
+    const state = window.__roseSkinState || {};
+    const championId = Number(state.championId);
+    let skinId = Number(state.skinId);
+    const selectedChromaId = Number(pythonChromaState?.selectedChromaId);
+    const currentSkinId = Number(pythonChromaState?.currentSkinId);
+
+    const chromaBelongsToChampion =
+      Number.isFinite(selectedChromaId) &&
+      selectedChromaId > 0 &&
+      Number.isFinite(championId) &&
+      championId > 0 &&
+      Math.floor(selectedChromaId / 1000) === championId;
+    const chromaContextMatches =
+      !Number.isFinite(currentSkinId) ||
+      currentSkinId <= 0 ||
+      Math.floor(currentSkinId / 1000) === championId;
+
+    if (chromaBelongsToChampion && chromaContextMatches) {
+      skinId = selectedChromaId;
+    }
+
+    return { championId, skinId };
+  }
+
+  function handleChromaStateUpdate(data) {
+    pythonChromaState = data && typeof data === "object" ? data : null;
+    requestModsForCurrentSkin();
+    if (isOpen && activeTab === "skins") {
+      refreshSummaryValues();
+    }
+  }
+
+  function resetStaleChromaStateForSkin(skinId) {
+    if (!pythonChromaState) return;
+
+    const incomingSkinId = Number(skinId);
+    const selectedChromaId = Number(pythonChromaState.selectedChromaId);
+    const currentSkinId = Number(pythonChromaState.currentSkinId);
+    if (!Number.isFinite(incomingSkinId) || incomingSkinId <= 0) return;
+
+    const belongsToPreviousChromaContext =
+      incomingSkinId === selectedChromaId ||
+      incomingSkinId === currentSkinId;
+    if (!belongsToPreviousChromaContext) {
+      pythonChromaState = null;
+    }
+  }
+
+  function resetCustomSkinSessionState() {
+    pythonChromaState = null;
+    selectedModId = null;
+    selectedModSkinId = null;
+    pendingSelectionRequest = null;
+    currentSkinMods = [];
+  }
+
+  function handlePhaseChange(data) {
+    const phase = String(data?.phase || "");
+    const previousPhase = currentPhase;
+    currentPhase = phase;
+
+    if (
+      phase === "ChampSelect" &&
+      previousPhase &&
+      previousPhase !== "ChampSelect"
+    ) {
+      resetCustomSkinSessionState();
+    } else if (
+      phase !== "ChampSelect" &&
+      previousPhase === "ChampSelect"
+    ) {
+      resetCustomSkinSessionState();
     }
   }
 
@@ -531,19 +524,20 @@
 
     .${PANEL_CLASS} .mod-selection li:hover {
       background: linear-gradient(to right, rgba(40, 45, 50, 0.9), rgba(40, 45, 50, 0.7));
-      border-color: #5c5c61; border-left-color: #c8aa6e; transform: translateX(2px);
+      border-color: #5c5c61;
+      border-left-color: #c8aa6e;
+      transform: translateX(2px);
     }
 
     .${PANEL_CLASS} .mod-selection li.selected-row {
-      border-left-color: #c8aa6e; background: linear-gradient(to right, rgba(200, 170, 110, 0.12), rgba(30, 35, 40, 0.6));
+      border-left-color: #c8aa6e;
+      background: linear-gradient(to right, rgba(200, 170, 110, 0.12), rgba(30, 35, 40, 0.6));
     }
 
-    .${PANEL_CLASS} .mod-selection li .mod-name.none-label { font-style: italic; color: #8b8b8b; }
-    .${PANEL_CLASS} .mod-name-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; }
-    .${PANEL_CLASS} .mod-name { color: #f0e6d2; font-size: 13px; font-weight: 700; letter-spacing: 0.5px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .${PANEL_CLASS} .mod-description { color: #a09b8c; font-size: 11px; font-weight: 400; line-height: 1.4; word-wrap: break-word; }
-    .${PANEL_CLASS} .mod-meta, .${PANEL_CLASS} .mod-injection-note { color: #7a7a7d; font-size: 10px; font-style: italic; }
-    .${PANEL_CLASS} .mod-loading { color: #a09b8c; font-size: 12px; text-align: center; padding: 20px; font-style: italic; }
+    .${PANEL_CLASS} .mod-selection li .mod-name.none-label {
+      font-style: italic;
+      color: #8b8b8b;
+    }
 
     .${PANEL_CLASS} .mod-name-row {
       display: flex;
@@ -587,23 +581,46 @@
       font-style: italic;
     }
 
-    .${PANEL_CLASS} .rose-wheel-back-button {
-      background: transparent;
-      border: 1px solid #c8aa6e;
-      color: #c8aa6e;
-      padding: 4px 10px;
-      font-size: 11px;
-      font-weight: 700;
-      text-transform: uppercase;
-      cursor: pointer;
-      transition: all 0.2s;
-      flex-shrink: 0;
-      border-radius: 0;
+    .${PANEL_CLASS} .rose-wheel-back-button,
+    .${PANEL_CLASS} .mod-select-button {
+      background: transparent !important;
+      background-color: transparent !important;
+      border: 1px solid #c8aa6e !important;
+      color: #c8aa6e !important;
+      cursor: pointer !important;
+      transition: all 0.2s ease !important;
+      flex-shrink: 0 !important;
+      border-radius: 0 !important;
+      display: flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      outline: none !important;
     }
 
-    .${PANEL_CLASS} .rose-wheel-back-button:hover {
-      background: rgba(200, 170, 110, 0.1);
-      box-shadow: 0 0 8px rgba(200, 170, 110, 0.2);
+    .${PANEL_CLASS} .rose-wheel-back-button {
+      padding: 4px 10px !important;
+      font-size: 11px !important;
+      font-weight: 700 !important;
+      text-transform: uppercase !important;
+    }
+
+    .${PANEL_CLASS} .mod-select-button {
+      width: 26px !important;
+      height: 26px !important;
+      font-size: 20px !important;
+      font-weight: 400 !important;
+      padding: 0 !important;
+      margin: 0 !important;
+      line-height: 1 !important;
+    }
+
+    .${PANEL_CLASS} .rose-wheel-back-button:hover,
+    .${PANEL_CLASS} .mod-select-button:hover {
+      background: rgba(200, 170, 110, 0.15) !important;
+      background-color: rgba(200, 170, 110, 0.15) !important;
+      box-shadow: 0 0 8px rgba(200, 170, 110, 0.3) !important;
+      color: #f0e6d2 !important;
+      border-color: #f0e6d2 !important;
     }
   `;
 
@@ -842,8 +859,8 @@
     headerButtons.style.alignItems = "center";
 
     const backBtn = document.createElement("button");
-    backBtn.className = "rose-wheel-back-button";
-    backBtn.textContent = "Back";
+    backBtn.className = "rose-wheel-back-button"; 
+    backBtn.textContent = "Back"; 
     backBtn.style.display = "none";
 
     const closeBtn = document.createElement("button");
@@ -884,32 +901,54 @@
       row.setAttribute("role", "button");
       row.tabIndex = 0;
 
-      // Left cell: value
       const left = document.createElement("div");
       left.className = "rose-wheel-summary-left";
-
+      
       const label = document.createElement("div");
       label.className = "rose-wheel-summary-label";
       label.style.display = "flex";
       label.style.alignItems = "center";
       label.style.gap = "6px";
-
+      
       const iconSpan = document.createElement("span");
       iconSpan.className = "rose-wheel-summary-icon";
       iconSpan.innerHTML = SUMMARY_ICONS[tab.id] || "";
       label.appendChild(iconSpan);
-
+      
       const labelText = document.createElement("span");
       labelText.textContent = tab.label;
       label.appendChild(labelText);
-
+      
       const value = document.createElement("div");
       value.className = "rose-wheel-summary-value";
       value.textContent = getSelectedSummaryForTab(tab.id);
+      
       panel._summaryValuesByTab[tab.id] = value;
-
       left.appendChild(label);
       left.appendChild(value);
+
+      const btnContainer = document.createElement("div");
+      btnContainer.style.display = "flex";
+      btnContainer.style.gap = "6px";
+
+      const addBtn = document.createElement("button");
+      addBtn.className = "mod-select-button";
+      addBtn.textContent = "+";
+      addBtn.style.fontWeight = "bold";
+      addBtn.style.padding = "2px 8px";
+      addBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        if (tab.id === "skins") {
+          openChampionSelection();
+        } else {
+          if (bridge) bridge.send({
+            type: "add-custom-mods-category-selected",
+            category: tab.id
+          });
+        }
+      });
+
+      btnContainer.appendChild(addBtn);
 
       const openPicker = () => {
         switchTab(tab.id);
@@ -917,7 +956,11 @@
         refreshSummaryValues();
       };
 
-      row.addEventListener("click", openPicker);
+      row.addEventListener("click", (e) => {
+        if (e.target !== addBtn) {
+          openPicker();
+        }
+      });
       row.addEventListener("keydown", (e) => {
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
@@ -926,11 +969,11 @@
       });
 
       row.appendChild(left);
+      row.appendChild(btnContainer);
       panel._summaryRowsByTab[tab.id] = row;
       summaryView.appendChild(row);
     });
 
-    // Picker view (reuses existing scrollable with tab contents)
     const pickerView = document.createElement("div");
     pickerView.className = "rose-wheel-picker"; pickerView.appendChild(scrollable);
 
@@ -1025,6 +1068,15 @@
     closePanel();
   }
 
+  function refreshUIVisibility() {
+    if (championSelectRoot || (isSwiftplayMode && isActuallyInLobby())) {
+      attachToChampionSelect();
+      return;
+    }
+    closePanel();
+    detachFromChampionSelect();
+  }
+
   function updateChampionSelectTarget() {
     const target = document.querySelector(".champion-select");
     const inLobby = isActuallyInLobby();
@@ -1032,8 +1084,8 @@
     if (!target && !inLobby) {
        if (championSelectRoot) {
           championSelectRoot = null;
-          // refreshUIVisibility() has its own checks
        }
+       refreshUIVisibility();
        return;
     }
 
@@ -1049,6 +1101,7 @@
            championSelectRoot = "swiftplay_lobby";
         }
     }
+    refreshUIVisibility();
   }
 
   function observeChampionSelect() {
@@ -1151,20 +1204,20 @@
   }
 
   function closePanel() {
-      if (!panel) {
-        isOpen = false;
-        isGlobalMode = false;
-        if (button) button.classList.remove("pressed");
-        return;
-      }
-      if (panel.parentNode) {
-        panel.style.display = "none";
-        panel.style.pointerEvents = "none";
-      }
+    if (!panel) {
       isOpen = false;
       isGlobalMode = false;
       if (button) button.classList.remove("pressed");
+      return;
     }
+    if (panel.parentNode) {
+      panel.style.display = "none";
+      panel.style.pointerEvents = "none";
+    }
+    isOpen = false;
+    isGlobalMode = false;
+    if (button) button.classList.remove("pressed");
+  }
 
   function requestModsForCurrentSkin() {
     const state = window.__roseSkinState || {};
@@ -1283,7 +1336,7 @@
   }
 
   function updateNoneRow(listEl, isNoneActive) {
-    const noneLi = listEl?.querySelector('[data-mod-id="__none__"],[data-map-id="__none__"], [data-font-id="__none__"],[data-announcer-id="__none__"], [data-other-id="__none__"]');
+    const noneLi = listEl?.querySelector('[data-mod-id="__none__"], [data-map-id="__none__"], [data-font-id="__none__"], [data-announcer-id="__none__"], [data-other-id="__none__"]');
     if (!noneLi) return;
     if (isNoneActive) {
       noneLi.classList.add("selected-row");
@@ -1293,26 +1346,54 @@
   }
 
   function handleModSelect(modId, listItem, modData) {
-    const { championId, skinId } = getCurrentSkinContext();
-
     if (selectedModId === modId) {
-      sendSkinModSelection({
-        championId,
-        skinId,
-        modId: null,
-        expectedModId: selectedModId,
-      });
+      selectedModId = null;
+      selectedModSkinId = null;
+      listItem.classList.remove("selected-row");
+
+      const state = window.__roseSkinState || {};
+      const championId = Number(state.championId);
+      const skinId = Number(state.skinId);
+
+      if (championId && skinId) {
+        if (bridge) bridge.send({
+          type: "select-skin-mod",
+          championId,
+          skinId,
+          modId: null, 
+          modData: null,
+        });
+      }
     } else {
-      console.log(`[ROSE-CustomWheel] Sending mod selection:`, { championId, skinId, modId, modData });
-      sendSkinModSelection({ championId, skinId, modId, modData });
+      if (selectedModId) {
+        const prevLi = panel?._modList?.querySelector(`[data-mod-id="${selectedModId}"]`);
+        if (prevLi) {
+          prevLi.classList.remove("selected-row");
+        }
+      }
+
+      selectedModId = modId;
+      const modTargetSkinId = modData?.skinId ? Number(modData.skinId) : null;
+      const state = window.__roseSkinState || {};
+      selectedModSkinId = modTargetSkinId || Number(state.skinId);
+
+      listItem.classList.add("selected-row");
+
+      const championId = Number(state.championId);
+      const emitSkinId = selectedModSkinId;
+
+      if (championId && emitSkinId) {
+        if (bridge) bridge.send({ type: "select-skin-mod", championId, skinId: emitSkinId, modId, modData });
+      }
     }
+
+    updateNoneRow(panel?._modList, !selectedModId);
+    refreshSummaryValues();
+    refreshButtonBadgeFromSelections();
   }
 
   function updateModEntries(mods) {
-    currentSkinMods = Array.isArray(mods) ? mods : [];
-    if (!panel || !panel._modList || !panel._loadingEl) {
-      return;
-    }
+    if (!panel || !panel._modList || !panel._loadingEl) return;
 
     const modList = panel._modList;
     const loadingEl = panel._loadingEl;
@@ -1334,23 +1415,29 @@
       const noneRow = document.createElement("div"); noneRow.className = "mod-name-row";
       const noneName = document.createElement("div"); noneName.className = "mod-name none-label"; noneName.textContent = "None";
       noneRow.appendChild(noneName);
+      
       const nothingSelected = !selectedModId;
-      if (nothingSelected) {
-        noneItem.classList.add("selected-row");
-      }
+      if (nothingSelected) { noneItem.classList.add("selected-row"); }
+      
       noneItem.addEventListener("click", () => {
         if (selectedModId) {
-          const { championId, skinId } = getCurrentSkinContext();
-          sendSkinModSelection({
-            championId,
-            skinId,
-            modId: null,
-            expectedModId: selectedModId,
-          });
+          const prevLi = modList.querySelector(`[data-mod-id="${selectedModId}"]`);
+          if (prevLi) {
+            prevLi.classList.remove("selected-row");
+          }
+          const state = window.__roseSkinState || {};
+          const championId = Number(state.championId);
+          const skinId = Number(state.skinId);
+          selectedModId = null;
+          selectedModSkinId = null;
+          if (championId && skinId) {
+            if (bridge) bridge.send({ type: "select-skin-mod", championId, skinId, modId: null, modData: null });
+          }
         }
+        noneItem.classList.add("selected-row");
+        refreshSummaryValues(); refreshButtonBadgeFromSelections();
       });
-      noneItem.appendChild(noneRow);
-      modList.appendChild(noneItem);
+      noneItem.appendChild(noneRow); modList.appendChild(noneItem);
     }
 
     mods.forEach((mod) => {
@@ -1367,16 +1454,10 @@
         selectedModId = modId;
       }
 
-      if (isSelected) {
-        listItem.classList.add("selected-row");
-      }
-      listItem.addEventListener("click", () => {
-        handleModSelect(modId, listItem, mod);
-      });
+      if (isSelected) { listItem.classList.add("selected-row"); }
+      listItem.addEventListener("click", () => { handleModSelect(modId, listItem, mod); });
 
       listItem.appendChild(modNameRow);
-
-      // Store mod ID on list item for easy reference
       listItem.setAttribute("data-mod-id", modId);
 
       if (mod.description) {
@@ -1448,35 +1529,27 @@
     updateModEntries(mods);
 
     if (didAutoSelect && selectedModId) {
-      const button = panel?._modList?.querySelector(`[data-mod-id="${selectedModId}"] .mod-select-button`);
-      if (button) {
-        button.textContent = "Selected";
-        button.classList.add("selected");
+      const li = panel?._modList?.querySelector(`[data-mod-id="${selectedModId}"]`);
+      if (li) {
+        li.classList.add("selected-row");
       }
     }
   }
 
-  function handleMapSelect(mapId, buttonElement, mapData) {
-    const parentLi = buttonElement.closest("li");
+  function handleMapSelect(mapId, listItem, mapData) {
     if (selectedMapId === mapId) {
       selectedMapId = null;
-      buttonElement.textContent = "Select";
-      buttonElement.classList.remove("selected");
-      if (parentLi) parentLi.classList.remove("selected-row");
+      listItem.classList.remove("selected-row");
       if (bridge) bridge.send({ type: "select-map", mapId: null });
     } else {
       if (selectedMapId) {
         const prevLi = panel?._mapsList?.querySelector(`[data-map-id="${selectedMapId}"]`);
         if (prevLi) {
-          const previousButton = prevLi.querySelector(".mod-select-button");
-          if (previousButton) { previousButton.textContent = "Select"; previousButton.classList.remove("selected"); }
           prevLi.classList.remove("selected-row");
         }
       }
       selectedMapId = mapId;
-      buttonElement.textContent = "Selected";
-      buttonElement.classList.add("selected");
-      if (parentLi) parentLi.classList.add("selected-row");
+      listItem.classList.add("selected-row");
       if (bridge) bridge.send({ type: "select-map", mapId, mapData });
     }
 
@@ -1520,8 +1593,7 @@
         noneItem.classList.add("selected-row");
         refreshSummaryValues(); refreshButtonBadgeFromSelections();
       });
-      noneItem.appendChild(noneRow);
-      mapsListEl.appendChild(noneItem);
+      noneItem.appendChild(noneRow); mapsListEl.appendChild(noneItem);
     }
 
     mapsList.forEach((map) => {
@@ -1538,9 +1610,7 @@
         listItem.classList.add("selected-row");
       }
 
-      listItem.addEventListener("click", () => {
-        handleMapSelect(mapId, listItem, map);
-      });
+      listItem.addEventListener("click", () => { handleMapSelect(mapId, listItem, map); });
 
       listItem.appendChild(mapNameRow);
 
@@ -1586,32 +1656,27 @@
         return mapId === selectedMapId;
       });
       if (historicMap) {
-        const button = panel?._mapsList?.querySelector(`[data-map-id="${selectedMapId}"] .mod-select-button`);
-        if (button) { button.textContent = "Selected"; button.classList.add("selected"); }
+        const li = panel?._mapsList?.querySelector(`[data-map-id="${selectedMapId}"]`);
+        if (li) { li.classList.add("selected-row"); }
         if (bridge) bridge.send({ type: "select-map", mapId: selectedMapId, mapData: historicMap });
       }
     }
   }
 
-  function handleFontSelect(fontId, buttonElement, fontData) {
-    const parentLi = buttonElement.closest("li");
+  function handleFontSelect(fontId, listItem, fontData) {
     if (selectedFontId === fontId) {
       selectedFontId = null;
-      buttonElement.textContent = "Select"; buttonElement.classList.remove("selected");
-      if (parentLi) parentLi.classList.remove("selected-row");
+      listItem.classList.remove("selected-row");
       if (bridge) bridge.send({ type: "select-font", fontId: null });
     } else {
       if (selectedFontId) {
         const prevLi = panel?._fontsList?.querySelector(`[data-font-id="${selectedFontId}"]`);
         if (prevLi) {
-          const previousButton = prevLi.querySelector(".mod-select-button");
-          if (previousButton) { previousButton.textContent = "Select"; previousButton.classList.remove("selected"); }
           prevLi.classList.remove("selected-row");
         }
       }
       selectedFontId = fontId;
-      buttonElement.textContent = "Selected"; buttonElement.classList.add("selected");
-      if (parentLi) parentLi.classList.add("selected-row");
+      listItem.classList.add("selected-row");
       if (bridge) bridge.send({ type: "select-font", fontId, fontData });
     }
 
@@ -1654,8 +1719,7 @@
         noneItem.classList.add("selected-row");
         refreshSummaryValues(); refreshButtonBadgeFromSelections();
       });
-      noneItem.appendChild(noneRow);
-      fontsListEl.appendChild(noneItem);
+      noneItem.appendChild(noneRow); fontsListEl.appendChild(noneItem);
     }
 
     fontsList.forEach((font) => {
@@ -1672,9 +1736,7 @@
         listItem.classList.add("selected-row");
       }
 
-      listItem.addEventListener("click", () => {
-        handleFontSelect(fontId, listItem, font);
-      });
+      listItem.addEventListener("click", () => { handleFontSelect(fontId, listItem, font); });
 
       listItem.appendChild(fontNameRow);
 
@@ -1720,32 +1782,27 @@
         return fontId === selectedFontId;
       });
       if (historicFont) {
-        const button = panel?._fontsList?.querySelector(`[data-font-id="${selectedFontId}"] .mod-select-button`);
-        if (button) { button.textContent = "Selected"; button.classList.add("selected"); }
+        const li = panel?._fontsList?.querySelector(`[data-font-id="${selectedFontId}"]`);
+        if (li) { li.classList.add("selected-row"); }
         if (bridge) bridge.send({ type: "select-font", fontId: selectedFontId, fontData: historicFont });
       }
     }
   }
 
-  function handleAnnouncerSelect(announcerId, buttonElement, announcerData) {
-    const parentLi = buttonElement.closest("li");
+  function handleAnnouncerSelect(announcerId, listItem, announcerData) {
     if (selectedAnnouncerId === announcerId) {
       selectedAnnouncerId = null;
-      buttonElement.textContent = "Select"; buttonElement.classList.remove("selected");
-      if (parentLi) parentLi.classList.remove("selected-row");
+      listItem.classList.remove("selected-row");
       if (bridge) bridge.send({ type: "select-announcer", announcerId: null });
     } else {
       if (selectedAnnouncerId) {
         const prevLi = panel?._announcersList?.querySelector(`[data-announcer-id="${selectedAnnouncerId}"]`);
         if (prevLi) {
-          const previousButton = prevLi.querySelector(".mod-select-button");
-          if (previousButton) { previousButton.textContent = "Select"; previousButton.classList.remove("selected"); }
           prevLi.classList.remove("selected-row");
         }
       }
       selectedAnnouncerId = announcerId;
-      buttonElement.textContent = "Selected"; buttonElement.classList.add("selected");
-      if (parentLi) parentLi.classList.add("selected-row");
+      listItem.classList.add("selected-row");
       if (bridge) bridge.send({ type: "select-announcer", announcerId, announcerData });
     }
 
@@ -1788,8 +1845,7 @@
         noneItem.classList.add("selected-row");
         refreshSummaryValues(); refreshButtonBadgeFromSelections();
       });
-      noneItem.appendChild(noneRow);
-      announcersListEl.appendChild(noneItem);
+      noneItem.appendChild(noneRow); announcersListEl.appendChild(noneItem);
     }
 
     announcersList.forEach((announcer) => {
@@ -1806,9 +1862,7 @@
         listItem.classList.add("selected-row");
       }
 
-      listItem.addEventListener("click", () => {
-        handleAnnouncerSelect(announcerId, listItem, announcer);
-      });
+      listItem.addEventListener("click", () => { handleAnnouncerSelect(announcerId, listItem, announcer); });
 
       listItem.appendChild(announcerNameRow);
 
@@ -1823,10 +1877,73 @@
 
   function handleAnnouncersResponse(event) {
     const detail = event?.detail;
-    if (!detail || detail.type !== "maps-response") return;
+    if (!detail || detail.type !== "announcers-response") return;
 
-    const mapsList = Array.isArray(detail.maps) ? detail.maps :[];
-    lastMapsList = mapsList; // CACHE IT
+    const announcersList = Array.isArray(detail.announcers) ? detail.announcers :[];
+    lastAnnouncersList = announcersList; // CACHE IT
+
+    const historicMod = detail.historicMod;
+    if (historicMod && !selectedAnnouncerId) {
+      const historicAnnouncer = announcersList.find(announcer => {
+        const announcerId = announcer.id || "";
+        return announcerId.replace(/\\/g, "/") === String(historicMod).replace(/\\/g, "/");
+      });
+
+      if (historicAnnouncer) {
+        const announcerId = historicAnnouncer.id || historicAnnouncer.name || `announcer-${Date.now()}-${Math.random()}`;
+        selectedAnnouncerId = announcerId;
+      }
+    }
+
+    refreshSummaryValues();
+    refreshButtonBadgeFromSelections();
+
+    if (isOpen && rightPaneMode === "picker" && activeTab === "announcers") {
+      updateAnnouncersEntries(announcersList);
+    }
+
+    if (historicMod && selectedAnnouncerId) {
+      const historicAnnouncer = announcersList.find(announcer => {
+        const announcerId = announcer.id || announcer.name || `announcer-${Date.now()}-${Math.random()}`;
+        return announcerId === selectedAnnouncerId;
+      });
+      if (historicAnnouncer) {
+        const li = panel?._announcersList?.querySelector(`[data-announcer-id="${selectedAnnouncerId}"]`);
+        if (li) { li.classList.add("selected-row"); }
+        if (bridge) bridge.send({ type: "select-announcer", announcerId: selectedAnnouncerId, announcerData: historicAnnouncer });
+      }
+    }
+  }
+
+  function handleCategoryModSelect(categoryId, otherId, listItem, otherData) {
+    const selectedIds = getSelectedIdsForCategory(categoryId);
+    const index = selectedIds.indexOf(otherId);
+    if (index !== -1) {
+      // Deselect
+      selectedIds.splice(index, 1);
+      listItem.classList.remove("selected-row");
+      if (bridge) bridge.send({ type: "select-other", category: categoryId, otherId, otherData, action: "deselect" });
+    } else {
+      // Select
+      selectedIds.push(otherId);
+      listItem.classList.add("selected-row");
+      if (bridge) bridge.send({ type: "select-other", category: categoryId, otherId, otherData, action: "select" });
+    }
+
+    const listEl = panel?.[`_${categoryId}List`];
+    updateNoneRow(listEl, selectedIds.length === 0);
+    refreshSummaryValues();
+    refreshButtonBadgeFromSelections();
+  }
+
+  function updateOtherCategoryEntries(categoryId, items) {
+    if (!panel) return;
+    const listEl = panel[`_${categoryId}List`];
+    const loadingEl = panel[`_${categoryId}Loading`];
+    if (!listEl || !loadingEl) return;
+
+    listEl.innerHTML = "";
+    const selectedIds = getSelectedIdsForCategory(categoryId);
 
     if (!items || items.length === 0) {
       const label = OTHER_CATEGORY_TABS.find((t) => t.id === categoryId)?.label || "mods";
@@ -1837,15 +1954,10 @@
 
     loadingEl.style.display = "none";
 
-    // "None" deselect option (clears all selections for this category)
     {
-      const noneItem = document.createElement("li");
-      noneItem.setAttribute("data-other-id", "__none__");
-      const noneRow = document.createElement("div");
-      noneRow.className = "mod-name-row";
-      const noneName = document.createElement("div");
-      noneName.className = "mod-name none-label";
-      noneName.textContent = "None";
+      const noneItem = document.createElement("li"); noneItem.setAttribute("data-other-id", "__none__");
+      const noneRow = document.createElement("div"); noneRow.className = "mod-name-row";
+      const noneName = document.createElement("div"); noneName.className = "mod-name none-label"; noneName.textContent = "None";
       noneRow.appendChild(noneName);
       const nothingSelected = selectedIds.length === 0;
       if (nothingSelected) { noneItem.classList.add("selected-row"); }
@@ -1863,864 +1975,7 @@
         noneItem.classList.add("selected-row");
         refreshSummaryValues(); refreshButtonBadgeFromSelections();
       });
-      noneItem.appendChild(noneRow);
-      listEl.appendChild(noneItem);
-    }
-
-    items.forEach((other) => {
-      const listItem = document.createElement("li");
-      const otherId = other.id || other.name || `other-${Date.now()}-${Math.random()}`;
-
-      const otherNameRow = document.createElement("div");
-      otherNameRow.className = "mod-name-row";
-
-      const otherName = document.createElement("div");
-      otherName.className = "mod-name";
-      otherName.textContent = cleanModName(other.name || other.modName) || "Unnamed mod";
-      otherNameRow.appendChild(otherName);
-
-      listItem.setAttribute("data-other-id", otherId);
-
-      if (selectedIds.includes(otherId)) {
-        listItem.classList.add("selected-row");
-      }
-
-      listItem.addEventListener("click", () => {
-        handleCategoryModSelect(categoryId, otherId, listItem, other);
-      });
-
-      listItem.appendChild(otherNameRow);
-
-      if (other.description) {
-        const otherDesc = document.createElement("div");
-        otherDesc.className = "mod-description";
-        otherDesc.textContent = other.description;
-        listItem.appendChild(otherDesc);
-      }
-
-      listEl.appendChild(listItem);
-    });
-  }
-
-  function handleMapSelect(mapId, listItem, mapData) {
-    if (selectedMapId === mapId) {
-      selectedMapId = null;
-      listItem.classList.remove("selected-row");
-      if (bridge) bridge.send({ type: "select-map", mapId: null });
-    } else {
-      if (selectedMapId) {
-        const prevLi = panel?._mapsList?.querySelector(
-          `[data-map-id="${selectedMapId}"]`
-        );
-        if (prevLi) {
-          prevLi.classList.remove("selected-row");
-        }
-      }
-      selectedMapId = mapId;
-      listItem.classList.add("selected-row");
-      if (bridge) bridge.send({ type: "select-map", mapId, mapData });
-    }
-
-    refreshSummaryValues();
-    refreshButtonBadgeFromSelections();
-
-  function handleFontSelect(fontId, listItem, fontData) {
-    if (selectedFontId === fontId) {
-      selectedFontId = null;
-      listItem.classList.remove("selected-row");
-      if (bridge) bridge.send({ type: "select-font", fontId: null });
-    } else {
-      if (selectedFontId) {
-        const prevLi = panel?._fontsList?.querySelector(
-          `[data-font-id="${selectedFontId}"]`
-        );
-        if (prevLi) {
-          prevLi.classList.remove("selected-row");
-        }
-      }
-      selectedFontId = fontId;
-      listItem.classList.add("selected-row");
-      if (bridge) bridge.send({ type: "select-font", fontId, fontData });
-    }
-
-    updateNoneRow(panel?._fontsList, !selectedFontId);
-    refreshSummaryValues();
-    refreshButtonBadgeFromSelections();
-  }
-
-  function handleAnnouncerSelect(announcerId, listItem, announcerData) {
-    if (selectedAnnouncerId === announcerId) {
-      selectedAnnouncerId = null;
-      listItem.classList.remove("selected-row");
-      if (bridge) bridge.send({ type: "select-announcer", announcerId: null });
-    } else {
-      if (selectedAnnouncerId) {
-        const prevLi = panel?._announcersList?.querySelector(
-          `[data-announcer-id="${selectedAnnouncerId}"]`
-        );
-        if (prevLi) {
-          prevLi.classList.remove("selected-row");
-        }
-      }
-      selectedAnnouncerId = announcerId;
-      listItem.classList.add("selected-row");
-      if (bridge) bridge.send({ type: "select-announcer", announcerId, announcerData });
-    }
-  }
-
-  function handleCategoryModSelect(categoryId, otherId, listItem, otherData) {
-    const selectedIds = getSelectedIdsForCategory(categoryId);
-    const index = selectedIds.indexOf(otherId);
-    if (index !== -1) {
-      selectedIds.splice(index, 1);
-      listItem.classList.remove("selected-row");
-      if (bridge) bridge.send({ type: "select-other", category: categoryId, otherId, otherData, action: "deselect" });
-    } else {
-      selectedIds.push(otherId);
-      listItem.classList.add("selected-row");
-      if (bridge) bridge.send({ type: "select-other", category: categoryId, otherId, otherData, action: "select" });
-    }
-
-    const listEl = panel?.[`_${categoryId}List`];
-    updateNoneRow(listEl, selectedIds.length === 0);
-    refreshSummaryValues();
-    refreshButtonBadgeFromSelections();
-  }
-
-  function findButtonContainer() {
-    // Find the bottom-right-buttons container to position the button above it
-    return document.querySelector(".bottom-right-buttons");
-  }
-
-  function attachToChampionSelect() {
-    // Attach as soon as champ select UI exists (even before a champion is locked)
-    if (!championSelectRoot) {
-      return;
-    }
-
-    createButton();
-    createPanel();
-
-    const targetContainer = findButtonContainer();
-    if (!targetContainer) {
-      // Retry after a short delay if container not found (DOM might not be ready)
-      setTimeout(() => {
-        if (championSelectRoot) {
-          const retryContainer = findButtonContainer();
-          if (retryContainer) {
-            attachToChampionSelect();
-          }
-        }
-      }, 100);
-      return;
-    }
-
-    // Remove button from old parent if it exists
-    if (button.parentNode) {
-      button.parentNode.removeChild(button);
-    }
-
-    // Ensure container has relative positioning for absolute child
-    const containerStyles = window.getComputedStyle(targetContainer);
-    if (containerStyles.position === "static") {
-      targetContainer.style.position = "relative";
-    }
-
-    // Position button absolutely above the container buttons
-    button.style.position = "absolute";
-    button.style.right = "0"; // Align with right edge of container
-    button.style.bottom = "100%"; // Position above container
-    button.style.marginBottom = "10px"; // 10px spacing above buttons
-    button.style.left = "";
-    button.style.top = "";
-    button.style.width = "auto";
-    button.style.height = "auto";
-    button.style.padding = "";
-    button.style.display = "block";
-    button.style.visibility = "visible";
-    button.style.opacity = "1";
-    button.style.zIndex = "";
-    button.style.transform = "";
-
-    // Ensure badge positioning works - button needs to be relative for badge absolute positioning
-    // But we need absolute for button positioning, so we'll use a wrapper or ensure badge uses button as reference
-    // Actually, absolute children can still position relative to absolute parents, so this should work
-
-    // Append to container (same structure as QUIT button)
-    targetContainer.appendChild(button);
-
-    // Store reference to container for repositioning
-    button._container = targetContainer;
-
-    // Force badge positioning after button is attached
-    if (button._countBadge) {
-      const badge = button._countBadge;
-      badge.style.position = "absolute";
-      badge.style.top = "0";
-      badge.style.left = "0";
-      badge.style.transform = "translate(-170%, -70%)";
-      badge.style.zIndex = "10";
-    }
-
-    if (panel.parentNode !== document.body) {
-      document.body.appendChild(panel);
-    }
-  }
-
-  function detachFromChampionSelect() {
-    if (button && button.parentNode) {
-      button.parentNode.removeChild(button);
-    }
-    closePanel(); // Ensure panel is closed when detaching
-  }
-
-  function refreshUIVisibility() {
-    // Show the button whenever we're in champ select; only the Skins tab content
-    // is gated by champion lock/skin hover state.
-    if (championSelectRoot) {
-      attachToChampionSelect();
-      return;
-    }
-    closePanel();
-    detachFromChampionSelect();
-  }
-
-  function updateChampionSelectTarget() {
-    const target = document.querySelector(".champion-select");
-    if (target === championSelectRoot) {
-      // Even if target is the same, check if button needs to be attached
-      if (target && (!button || !button.parentNode)) {
-        refreshUIVisibility();
-      }
-      return;
-    }
-    // New champion select detected - reset session tracking
-    if (target && target !== championSelectRoot) {
-      lastChampionSelectSession = target;
-      isFirstOpenInSession = true;
-    }
-    championSelectRoot = target;
-    refreshUIVisibility();
-  }
-
-  function observeChampionSelect() {
-    if (championSelectObserver || !document.body) {
-      return;
-    }
-    championSelectObserver = new MutationObserver(() => {
-      updateChampionSelectTarget();
-    });
-    championSelectObserver.observe(document.body, {
-      childList: true,
-      subtree: true,
-    });
-  }
-
-  function openPanel() {
-    if (!championSelectRoot) {
-      return;
-    }
-
-    attachToChampionSelect();
-
-    if (!panel || !button) {
-      return;
-    }
-
-    // Create panel if it doesn't exist
-    if (!panel.parentNode) {
-      document.body.appendChild(panel);
-    }
-
-    // Show panel
-    panel.style.display = "block";
-    panel.style.pointerEvents = "none"; // Will be set to "all" by flyout frame
-
-    // Only switch to Skins tab on first open in this champ select session
-    // Otherwise, keep the last selected tab
-    if (isFirstOpenInSession) {
-      activeTab = "skins";
-      isFirstOpenInSession = false;
-    }
-
-    // Always start in summary view when opening the panel
-    setRightPaneMode("summary");
-    refreshSummaryValues();
-
-    // Update tab content based on activeTab (generic)
-    panel.querySelectorAll(".tab-content").forEach((content) => {
-      if (content && content.dataset && content.dataset.tab === activeTab) {
-        content.classList.add("active");
-      } else if (content) {
-        content.classList.remove("active");
-      }
-    });
-
-    // Request data for the active tab
-    if (activeTab === "skins") {
-      requestModsForCurrentSkin();
-    } else if (activeTab === "maps") {
-      requestMaps();
-    } else if (activeTab === "fonts") {
-      requestFonts();
-    } else if (activeTab === "announcers") {
-      requestAnnouncers();
-    } else if (OTHER_CATEGORY_TABS.some((t) => t.id === activeTab)) {
-      if (lastCategoryModsById[activeTab]) {
-        updateOtherCategoryEntries(activeTab, lastCategoryModsById[activeTab]);
-      } else {
-        requestCategoryMods(activeTab);
-      }
-    }
-
-    // Initial positioning (will be repositioned after width is calculated)
-    positionPanel(panel, button);
-
-    // Force a reflow
-    panel.offsetHeight;
-
-    // Reposition after render
-    setTimeout(() => {
-      positionPanel(panel, button);
-    }, 0);
-
-    isOpen = true;
-
-    // Update button pressed state
-    if (button) {
-      button.classList.add("pressed");
-    }
-
-    // Request data for all tabs when panel opens (in background, but don't switch to them)
-    requestModsForCurrentSkin();
-    requestMaps();
-    requestFonts();
-    requestAnnouncers();
-    for (const t of OTHER_CATEGORY_TABS) {
-      requestCategoryMods(t.id);
-    }
-
-    // Add click outside handler
-    const closeHandler = (e) => {
-      if (
-        panel &&
-        panel.parentNode &&
-        !panel.contains(e.target) &&
-        !button.contains(e.target)
-      ) {
-        closePanel();
-        document.removeEventListener("click", closeHandler);
-      }
-    };
-    setTimeout(() => {
-      document.addEventListener("click", closeHandler);
-    }, 100);
-  }
-
-  function closePanel() {
-    if (!panel) {
-      isOpen = false;
-      // Update button pressed state
-      if (button) {
-        button.classList.remove("pressed");
-      }
-      return;
-    }
-    // Hide panel but keep it in DOM for reuse
-    if (panel.parentNode) {
-      panel.style.display = "none";
-      panel.style.pointerEvents = "none";
-    }
-    isOpen = false;
-
-    // Update button pressed state
-    if (button) {
-      button.classList.remove("pressed");
-    }
-
-    // Keep selections when closing; users use the panel for quick checking/changing.
-  }
-
-  function requestModsForCurrentSkin() {
-    const { championId, skinId } = getCurrentSkinContext();
-
-    // Skins are only meaningful once a champion is locked in champ select.
-    if (!championLocked) {
-      // Badge reflects selected mods across categories; don't zero it here.
-      if (panel && panel._modsLoading) {
-        panel._modsLoading.textContent = "Waiting for champ lock…";
-        panel._modsLoading.style.display = "block";
-      }
-      return;
-    }
-
-    if (!championId || !skinId) {
-      // Badge reflects selected mods across categories; don't zero it here.
-      if (panel && panel._modsLoading) {
-        panel._modsLoading.textContent = "Hover a skin…";
-        panel._modsLoading.style.display = "block";
-      }
-      return;
-    }
-
-    if (bridge) bridge.send({ type: REQUEST_TYPE, championId, skinId });
-
-    if (panel && panel._modsLoading) {
-      panel._modsLoading.textContent = "Checking for mods…";
-      panel._modsLoading.style.display = "block";
-    }
-  }
-
-  // Request maps - global (not skin-specific)
-  // Backend should look in: %LOCALAPPDATA%\Rose\mods\maps
-  function requestMaps() {
-    if (bridge) bridge.send({ type: "request-maps" });
-    if (panel && panel._mapsLoading) {
-      panel._mapsLoading.textContent = "Loading maps…";
-      panel._mapsLoading.style.display = "block";
-    }
-  }
-
-  // Request fonts - global (not skin-specific)
-  // Backend should look in: %LOCALAPPDATA%\Rose\mods\fonts
-  function requestFonts() {
-    if (bridge) bridge.send({ type: "request-fonts" });
-    if (panel && panel._fontsLoading) {
-      panel._fontsLoading.textContent = "Loading fonts…";
-      panel._fontsLoading.style.display = "block";
-    }
-  }
-
-  // Request announcers - global (not skin-specific)
-  // Backend should look in: %LOCALAPPDATA%\Rose\mods\announcers
-  function requestAnnouncers() {
-    if (bridge) bridge.send({ type: "request-announcers" });
-    if (panel && panel._announcersLoading) {
-      panel._announcersLoading.textContent = "Loading announcers…";
-      panel._announcersLoading.style.display = "block";
-    }
-  }
-
-  // Request category mods - global (not skin-specific)
-  // Backend should look in: %LOCALAPPDATA%\Rose\mods\<category>
-  function requestCategoryMods(categoryId) {
-    if (!categoryId) return;
-    if (bridge) bridge.send({ type: "request-category-mods", category: categoryId });
-    if (!panel) return;
-    const listEl = panel[`_${categoryId}List`];
-    const loadingEl = panel[`_${categoryId}Loading`];
-    if (!listEl || !loadingEl) return;
-
-    listEl.innerHTML = "";
-    const selectedIds = getSelectedIdsForCategory(categoryId);
-
-    if (!items || items.length === 0) {
-      const label = OTHER_CATEGORY_TABS.find((t) => t.id === categoryId)?.label || "mods";
-      loadingEl.textContent = `No ${label.toLowerCase()} found`;
-      loadingEl.style.display = "block";
-    }
-  }
-
-  // Legacy alias (kept for compatibility)
-  function requestOthers() {
-    requestCategoryMods(activeTab || "others");
-  }
-
-  function handleSkinState(event) {
-    resetStaleChromaStateForSkin(event?.detail?.skinId);
-
-    // Always request mods to update badge, even if panel is not open
-    requestModsForCurrentSkin();
-
-    if (!isOpen) {
-      return;
-    }
-  }
-
-  function updateButtonBadge(count) {
-    if (!button || !button._countBadge) {
-      return;
-    }
-    const badge = button._countBadge;
-    // Ensure badge positioning is always correct
-    badge.style.position = "absolute";
-    badge.style.top = "0";
-    badge.style.left = "0";
-    badge.style.transform = "translate(-170%, -70%)";
-    badge.style.zIndex = "10";
-
-    if (count > 0) {
-      badge.textContent = String(count);
-      badge.style.display = "flex"; // Explicitly set to flex to match CSS
-    } else {
-      badge.textContent = "0"; // Reset text content
-      badge.style.display = "none";
-    }
-  }
-
-  // Badge should reflect how many mods are currently selected (across all categories),
-  // not how many mods are available for the hovered skin.
-  function getSelectedModsCount() {
-    let count = 0;
-    // Skins are only meaningful after champ lock.
-    if (championLocked && selectedModId) count += 1;
-    if (selectedMapId) count += 1;
-    if (selectedFontId) count += 1;
-    if (selectedAnnouncerId) count += 1;
-    // Sum the unique selections per category (UI / VO / Loading Screen / VFX / SFX / Others).
-    for (const t of OTHER_CATEGORY_TABS) {
-      const ids = getSelectedIdsForCategory(t.id);
-      if (Array.isArray(ids) && ids.length) {
-        count += new Set(ids).size;
-      }
-    }
-    return count;
-  }
-
-  function refreshButtonBadgeFromSelections() {
-    updateButtonBadge(getSelectedModsCount());
-  }
-
-  function createSelectionRequestId() {
-    selectionRequestCounter += 1;
-    return `${LOG_PREFIX}-${Date.now()}-${selectionRequestCounter}`;
-  }
-
-  function sendSkinModSelection({ championId, skinId, modId, modData, expectedModId } = {}) {
-    if (!bridge || !championId || !skinId) return false;
-
-    const requestId = createSelectionRequestId();
-    pendingSelectionRequest = { requestId, operation: modId == null ? "deselect" : "select", modId };
-    bridge.send({
-      type: "select-skin-mod",
-      championId,
-      skinId,
-      modId: modId ?? null,
-      modData: modData ?? null,
-      expectedModId,
-      requestId,
-    });
-    return true;
-  }
-
-  function handleSelectionResult(event) {
-    const detail = event?.detail;
-    if (!detail || detail.type !== "custom-mod-selection-result") return;
-
-    if (pendingSelectionRequest && detail.requestId && detail.requestId !== pendingSelectionRequest.requestId) {
-      return;
-    }
-
-    const pending = pendingSelectionRequest;
-    pendingSelectionRequest = null;
-
-    if (!detail.success) {
-      console.warn(`${LOG_PREFIX} Custom skin selection failed: ${detail.error || "unknown error"}`);
-      refreshSummaryValues();
-      refreshButtonBadgeFromSelections();
-      return;
-    }
-
-    if (detail.operation === "deselect") {
-      selectedModId = null;
-      selectedModSkinId = null;
-    } else if (detail.operation === "select") {
-      selectedModId = String(detail.relativePath || detail.modId || pending?.modId || "");
-      selectedModSkinId = Number(detail.skinId || getCurrentSkinContext().skinId);
-    }
-
-    if (isOpen) {
-      updateModEntries(currentSkinMods);
-    }
-    refreshSummaryValues();
-    refreshButtonBadgeFromSelections();
-  }
-
-  function handleModsResponse(event) {
-    const detail = event?.detail;
-    if (!detail || detail.type !== "skin-mods-response") {
-      return;
-    }
-
-    loadingEl.style.display = "none";
-
-    // Store current skin data for selection restoration
-    currentSkinData = { championId, skinId };
-
-    // Use the LIVE skin state for clearing / auto-select checks.
-    // The response's skinId can be stale if the user navigated away while
-    // the request was in flight.
-    const liveSkinId = getCurrentSkinContext().skinId || skinId;
-    if (liveSkinId !== skinId) {
-      return;
-    }
-
-    // Clear selection when the currently hovered skin differs from the mod's target skin.
-    let mods = (Array.isArray(detail.mods) ? detail.mods : []).filter((mod) => (
-      mod?.availableForRequestedSkin === true ||
-      (mod?.availableForRequestedSkin == null && Number(mod?.skinId) === liveSkinId)
-    ));
-    currentSkinMods = mods;
-
-    if (selectedModId && !pendingSelectionRequest) {
-      const selectedEntry = mods.find((mod) => (
-        String(mod?.relativePath || mod?.modName || "") === String(selectedModId)
-      ));
-      if (!selectedEntry) {
-        // Notify backend so it clears selected_custom_mod and the popup.
-        sendSkinModSelection({
-          championId,
-          skinId: liveSkinId,
-          modId: null,
-          expectedModId: selectedModId,
-        });
-      } else {
-        selectedModSkinId = liveSkinId;
-      }
-    }
-
-    // Auto-select the historic mod when the user is hovering the skin it targets.
-    const historicMod = detail.historicMod;
-    let didAutoSelect = false;
-    let historicSelectionId = null;
-    if (historicMod && !selectedModId && !pendingSelectionRequest) {
-      // Find the mod that matches the historic path
-      const historicModEntry = mods.find(mod => {
-        const modPath = mod.relativePath || "";
-        // Normalize paths for comparison
-        return modPath.replace(/\\/g, "/") === historicMod.replace(/\\/g, "/");
-      });
-
-      if (historicModEntry) {
-        const modTargetSkinId = historicModEntry.skinId ? Number(historicModEntry.skinId) : null;
-        // Only auto-select if the user is CURRENTLY on the mod's target skin
-        if (modTargetSkinId && (
-          modTargetSkinId === liveSkinId ||
-          historicModEntry.availableForRequestedSkin === true
-        )) {
-          const modId = historicModEntry.relativePath || historicModEntry.modName || `mod-${Date.now()}-${Math.random()}`;
-          historicSelectionId = modId;
-          didAutoSelect = true;
-        }
-      }
-    }
-
-    // Emit to backend immediately when historic auto-select fires, regardless
-    // of whether the panel is open.  The backend needs this to broadcast the
-    // custom-mod state so the mod-name popup appears.
-    if (didAutoSelect) {
-      const autoMod = mods.find(mod => {
-        const modPath = mod.relativePath || mod.modName || "";
-        return modPath === historicSelectionId || mod.relativePath === historicSelectionId;
-      });
-      if (autoMod) {
-        sendSkinModSelection({ championId, skinId: liveSkinId, modId: historicSelectionId, modData: autoMod });
-      }
-    }
-
-    // Keep Summary accurate even if the panel hasn't been opened yet
-    refreshSummaryValues();
-    refreshButtonBadgeFromSelections();
-
-    if (!isOpen) {
-      return;
-    }
-
-    updateModEntries(mods);
-
-    if (didAutoSelect && selectedModId) {
-      const li = panel?._modList?.querySelector(
-        `[data-mod-id="${selectedModId}"]`
-      );
-      if (li) {
-        li.classList.add("selected-row");
-      }
-    }
-  }
-
-  function handleMapsResponse(event) {
-    const detail = event?.detail;
-    if (!detail || detail.type !== "maps-response") {
-      return;
-    }
-
-    const mapsList = Array.isArray(detail.maps) ? detail.maps : [];
-
-    // Check for historic mod and auto-select it
-    const historicMod = detail.historicMod;
-    if (historicMod && !selectedMapId) {
-      // Find the mod that matches the historic path
-      // historicMod is the relative path (e.g., "maps/default-summoner-rift_1.0.1")
-      // map.id is also the relative path
-      const historicMap = mapsList.find(map => {
-        const mapId = map.id || "";
-        // Normalize paths for comparison
-        return mapId.replace(/\\/g, "/") === historicMod.replace(/\\/g, "/");
-      });
-
-      if (historicMap) {
-        // Use the same ID format as updateMapsEntries uses
-        const mapId = historicMap.id || historicMap.name || `map-${Date.now()}-${Math.random()}`;
-        selectedMapId = mapId;
-      }
-    }
-
-    refreshSummaryValues();
-    refreshButtonBadgeFromSelections();
-
-    if (isOpen && rightPaneMode === "picker" && activeTab === "maps") {
-      updateMapsEntries(mapsList);
-    }
-
-    // After UI is updated, emit selection to backend if historic mod was found
-    if (historicMod && selectedMapId) {
-      const historicMap = mapsList.find(map => {
-        const mapId = map.id || map.name || `map-${Date.now()}-${Math.random()}`;
-        return mapId === selectedMapId;
-      });
-      if (historicMap) {
-        const li = panel?._mapsList?.querySelector(
-          `[data-map-id="${selectedMapId}"]`
-        );
-        if (li) {
-          li.classList.add("selected-row");
-        }
-        if (bridge) bridge.send({ type: "select-map", mapId: selectedMapId, mapData: historicMap });
-      }
-    }
-  }
-
-  function handleFontsResponse(event) {
-    const detail = event?.detail;
-    if (!detail || detail.type !== "fonts-response") {
-      return;
-    }
-
-    const fontsList = Array.isArray(detail.fonts) ? detail.fonts : [];
-
-    // Check for historic mod and auto-select it
-    const historicMod = detail.historicMod;
-    if (historicMod && !selectedFontId) {
-      // Find the mod that matches the historic path
-      const historicFont = fontsList.find(font => {
-        const fontId = font.id || "";
-        // Normalize paths for comparison
-        return fontId.replace(/\\/g, "/") === historicMod.replace(/\\/g, "/");
-      });
-
-      if (historicFont) {
-        const fontId = historicFont.id || historicFont.name || `font-${Date.now()}-${Math.random()}`;
-        selectedFontId = fontId;
-      }
-    }
-
-    refreshSummaryValues();
-    refreshButtonBadgeFromSelections();
-
-    if (isOpen && rightPaneMode === "picker" && activeTab === "fonts") {
-      updateFontsEntries(fontsList);
-    }
-
-    // After UI is updated, emit selection to backend if historic mod was found
-    if (historicMod && selectedFontId) {
-      const historicFont = fontsList.find(font => {
-        const fontId = font.id || font.name || `font-${Date.now()}-${Math.random()}`;
-        return fontId === selectedFontId;
-      });
-      if (historicFont) {
-        const li = panel?._fontsList?.querySelector(
-          `[data-font-id="${selectedFontId}"]`
-        );
-        if (li) {
-          li.classList.add("selected-row");
-        }
-        if (bridge) bridge.send({ type: "select-font", fontId: selectedFontId, fontData: historicFont });
-      }
-    }
-  }
-
-  function handleAnnouncersResponse(event) {
-    const detail = event?.detail;
-    if (!detail || detail.type !== "announcers-response") {
-      return;
-    }
-
-    const announcersList = Array.isArray(detail.announcers) ? detail.announcers : [];
-
-    // Check for historic mod and auto-select it
-    const historicMod = detail.historicMod;
-    if (historicMod && !selectedAnnouncerId) {
-      // Find the mod that matches the historic path
-      const historicAnnouncer = announcersList.find(announcer => {
-        const announcerId = announcer.id || "";
-        // Normalize paths for comparison
-        return announcerId.replace(/\\/g, "/") === historicMod.replace(/\\/g, "/");
-      });
-
-      if (historicAnnouncer) {
-        const announcerId = historicAnnouncer.id || historicAnnouncer.name || `announcer-${Date.now()}-${Math.random()}`;
-        selectedAnnouncerId = announcerId;
-      }
-    }
-
-    refreshSummaryValues();
-    refreshButtonBadgeFromSelections();
-
-    if (isOpen && rightPaneMode === "picker" && activeTab === "announcers") {
-      updateAnnouncersEntries(announcersList);
-    }
-
-    // After UI is updated, emit selection to backend if historic mod was found
-    if (historicMod && selectedAnnouncerId) {
-      const historicAnnouncer = announcersList.find(announcer => {
-        const announcerId = announcer.id || announcer.name || `announcer-${Date.now()}-${Math.random()}`;
-        return announcerId === selectedAnnouncerId;
-      });
-      if (historicAnnouncer) {
-        const li = panel?._announcersList?.querySelector(
-          `[data-announcer-id="${selectedAnnouncerId}"]`
-        );
-        if (li) {
-          li.classList.add("selected-row");
-        }
-        if (bridge) bridge.send({ type: "select-announcer", announcerId: selectedAnnouncerId, announcerData: historicAnnouncer });
-      }
-    }
-  }
-
-  function handleOthersResponse(event) {
-    const detail = event?.detail;
-    if (!detail || detail.type !== "others-response") {
-      return;
-    }
-
-    const othersList = Array.isArray(detail.others) ? detail.others : [];
-    lastCategoryModsById["others"] = othersList;
-
-    // Check for historic mod(s) and auto-select them
-    // historicMod can be a string (legacy) or an array (new format)
-    const historicMod = detail.historicMod;
-    const historicMods = Array.isArray(historicMod) ? historicMod : (historicMod ? [historicMod] : []);
-    
-    const selectedIds = getSelectedIdsForCategory("others");
-    if (historicMods.length > 0 && selectedIds.length === 0) {
-      // Find all mods that match the historic paths
-      const historicOthers = [];
-      for (const historicPath of historicMods) {
-        const historicOther = othersList.find(other => {
-          const otherId = other.id || "";
-          // Normalize paths for comparison
-          return otherId.replace(/\\/g, "/") === String(historicPath).replace(/\\/g, "/");
-        });
-        const ids = getSelectedIdsForCategory(categoryId);
-        for (const id of [...ids]) {
-          if (bridge) bridge.send({ type: "select-other", category: categoryId, otherId: id, otherData: null, action: "deselect" });
-        }
-        ids.length = 0; 
-        noneBtn.textContent = "Selected"; noneBtn.classList.add("selected"); noneItem.classList.add("selected-row");
-        refreshSummaryValues(); refreshButtonBadgeFromSelections();
-      });
-      noneRow.appendChild(noneBtn); noneItem.appendChild(noneRow); listEl.appendChild(noneItem);
+      noneItem.appendChild(noneRow); listEl.appendChild(noneItem);
     }
 
     items.forEach((other) => {
@@ -2731,29 +1986,19 @@
       const otherName = document.createElement("div"); otherName.className = "mod-name"; otherName.textContent = cleanModName(other.name || other.modName) || "Unnamed mod";
       otherNameRow.appendChild(otherName);
 
-      const selectButton = document.createElement("button"); selectButton.className = "mod-select-button";
       listItem.setAttribute("data-other-id", otherId);
 
-    // After UI is updated, emit selection to backend for all historic mods found
-    if (historicMods.length > 0 && selectedIds.length > 0) {
-      for (const historicPath of historicMods) {
-        const historicOther = othersList.find(other => {
-          const otherId = other.id || "";
-          return otherId.replace(/\\/g, "/") === String(historicPath).replace(/\\/g, "/");
-        });
-        if (historicOther) {
-          const otherId = historicOther.id || historicOther.name || `other-${Date.now()}-${Math.random()}`;
-          const li = OTHER_CATEGORY_TABS.map((t) => panel?.[`_${t.id}List`])
-            .filter(Boolean)
-            .map((listEl) =>
-              listEl.querySelector(`[data-other-id="${otherId}"]`)
-            )
-            .find(Boolean);
-          if (li) {
-            li.classList.add("selected-row");
-          }
-          if (bridge) bridge.send({ type: "select-other", category: "others", otherId, otherData: historicOther, action: "select" });
-        }
+      if (selectedIds.includes(otherId)) {
+        listItem.classList.add("selected-row");
+      }
+
+      listItem.addEventListener("click", () => { handleCategoryModSelect(categoryId, otherId, listItem, other); });
+
+      listItem.appendChild(otherNameRow);
+
+      if (other.description) {
+        const otherDesc = document.createElement("div"); otherDesc.className = "mod-description"; otherDesc.textContent = other.description;
+        listItem.appendChild(otherDesc);
       }
 
       listEl.appendChild(listItem);
@@ -2783,11 +2028,11 @@
         const selectedIds = getSelectedIdsForCategory(category);
         if (!selectedIds.includes(otherId)) {
           selectedIds.push(otherId);
-        }
-        const key = `${category}:${otherId}`;
-        if (!emittedHistoricSelectionKeys.has(key)) {
-          emittedHistoricSelectionKeys.add(key);
-          if (bridge) bridge.send({ type: "select-other", category, otherId, otherData: match, action: "select" });
+          const key = `${category}:${otherId}`;
+          if (!emittedHistoricSelectionKeys.has(key)) {
+            emittedHistoricSelectionKeys.add(key);
+            if (bridge) bridge.send({ type: "select-other", category, otherId, otherData: match, action: "select" });
+          }
         }
       }
     }
@@ -2810,29 +2055,18 @@
     }
   }
 
-  function handleChampionLocked(event) {
-    const locked = Boolean(event?.detail?.locked);
-    if (!locked) {
-      // A dodge/unlock starts a new champ-select lifecycle. Do not let the
-      // previous lobby's chroma selection affect the next lobby.
-      pythonChromaState = null;
-    }
+  function handleOthersResponse(event) {
+    const detail = event?.detail;
+    if (!detail || detail.type !== "others-response") return;
 
-    if (locked === championLocked) {
-      // Even if state is the same, ensure button is attached if it should be
-      if (locked && championSelectRoot && (!button || !button.parentNode)) {
-        refreshUIVisibility();
-      }
-    }
+    const othersList = Array.isArray(detail.others) ? detail.others : [];
+    lastCategoryModsById["others"] = othersList;
 
-    refreshSummaryValues();
-    refreshButtonBadgeFromSelections();
-
-    if (!isOpen || rightPaneMode !== "picker" || !OTHER_CATEGORY_TABS.some((t) => t.id === activeTab)) return;
-
-    updateOtherCategoryEntries("others", othersList);
-
-    if (historicMods.length > 0 && selectedIds.length > 0) {
+    const historicMod = detail.historicMod;
+    const historicMods = Array.isArray(historicMod) ? historicMod : (historicMod ? [historicMod] : []);
+    
+    const selectedIds = getSelectedIdsForCategory("others");
+    if (historicMods.length > 0 && selectedIds.length === 0) {
       for (const historicPath of historicMods) {
         const historicOther = othersList.find(other => {
           const otherId = other.id || "";
@@ -2840,30 +2074,38 @@
         });
         if (historicOther) {
           const otherId = historicOther.id || historicOther.name || `other-${Date.now()}-${Math.random()}`;
-          const button = OTHER_CATEGORY_TABS.map((t) => panel?.[`_${t.id}List`])
-            .filter(Boolean)
-            .map((listEl) => listEl.querySelector(`[data-other-id="${otherId}"] .mod-select-button`))
-            .find(Boolean);
-          if (button) {
-            button.textContent = "Selected";
-            button.classList.add("selected");
+          if (!selectedIds.includes(otherId)) {
+            selectedIds.push(otherId);
+            const key = `others:${otherId}`;
+            if (!emittedHistoricSelectionKeys.has(key)) {
+              emittedHistoricSelectionKeys.add(key);
+              if (bridge) bridge.send({ type: "select-other", category: "others", otherId, otherData: historicOther, action: "select" });
+            }
           }
-          if (bridge) bridge.send({ type: "select-other", category: "others", otherId, otherData: historicOther, action: "select" });
         }
       }
     }
+
+    refreshSummaryValues();
+    refreshButtonBadgeFromSelections();
+
+    if (!isOpen || rightPaneMode !== "picker" || activeTab !== "others") return;
+
+    updateOtherCategoryEntries("others", othersList);
   }
 
   function handleChampionLocked(event) {
     const locked = Boolean(event?.detail?.locked);
-    if (locked === championLocked) return;
+    if (locked === championLocked) {
+      if (locked && championSelectRoot && (!button || !button.parentNode)) {
+        refreshUIVisibility();
+      }
+      return;
+    }
 
     if (locked && !championLocked) {
-      pythonChromaState = null;
       selectedModId = null;
       selectedModSkinId = null;
-      pendingSelectionRequest = null;
-      // New champ select session - reset to first open
       lastChampionSelectSession = championSelectRoot;
       isFirstOpenInSession = true;
     }
@@ -2871,6 +2113,14 @@
     championLocked = locked;
     refreshSummaryValues();
     refreshButtonBadgeFromSelections();
+
+    if (locked) {
+      setTimeout(() => {
+        if (championLocked && championSelectRoot && (!button || !button.parentNode)) {
+          refreshUIVisibility();
+        }
+      }, 200);
+    }
   }
 
   function positionPanel(panelElement, buttonElement) {
@@ -2941,9 +2191,6 @@
       bridge.subscribe("champions-list-response", (data) => handleChampionsListResponse(data));
       bridge.subscribe("champion-skins-response", (data) => handleChampionSkinsResponse(data));
       bridge.subscribe("skin-mods-response", (data) => handleModsResponse({ detail: data }));
-      bridge.subscribe("custom-mod-selection-result", (data) => handleSelectionResult({ detail: data }));
-      bridge.subscribe("chroma-state", handleChromaStateUpdate);
-      bridge.subscribe("phase-change", handlePhaseChange);
       bridge.subscribe("maps-response", (data) => handleMapsResponse({ detail: data }));
       bridge.subscribe("fonts-response", (data) => handleFontsResponse({ detail: data }));
       bridge.subscribe("announcers-response", (data) => handleAnnouncersResponse({ detail: data }));
@@ -2952,7 +2199,7 @@
       bridge.subscribe("champion-locked", (data) => handleChampionLocked({ detail: data }));
       bridge.subscribe("custom-mod-state", (data) => {
         if (!data) return;
-        if (!data.active) {
+        if (!data.active && selectedModId) {
           selectedModId = null;
           selectedModSkinId = null;
           if (panel && panel._modList) {
@@ -2963,7 +2210,7 @@
           }
           refreshSummaryValues();
           refreshButtonBadgeFromSelections();
-        } else if (data.relativePath || data.modName) {
+        } else if (data.active && (data.relativePath || data.modName)) {
           selectedModId = String(data.relativePath || data.modName);
           selectedModSkinId = Number(data.skinId) || Number(getCurrentSkinContext().skinId);
           refreshSummaryValues();

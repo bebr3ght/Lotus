@@ -1406,6 +1406,17 @@ class MessageHandler:
                 "mod_folder_name": mod_folder_name,  # Add this for injection
                 "relative_path": str(selected_mod.path.relative_to(self.mod_storage.mods_root)).replace("\\", "/"),
             }
+
+            # === ИСПРАВЛЕНИЕ: МГНОВЕННОЕ СОХРАНЕНИЕ КАСТОМНОГО СКИНА В ИСТОРИЮ ===
+            try:
+                from utils.core.historic import write_historic_entry, write_historic_target
+                custom_mod_path = f"path:{self.shared_state.selected_custom_mod['relative_path']}"
+                write_historic_entry(int(champion_id), custom_mod_path)
+                write_historic_target(int(champion_id), int(skin_id))
+                log.debug(f"[HISTORIC] Custom skin mod saved immediately on selection: {custom_mod_path}")
+            except Exception as e:
+                log.debug(f"[HISTORIC] Failed to save custom skin mod on selection: {e}")
+            # =====================================================================
             
             # Disable HistoricMode if active (custom mod takes priority)
             if getattr(self.shared_state, 'historic_mode_active', False):
@@ -2809,34 +2820,39 @@ class MessageHandler:
             return
             
         try:
-            from utils.core.historic import get_historic_skin_for_champion, is_custom_mod_path, get_custom_mod_path
+            from utils.core.historic import get_historic_skin_for_champion, is_custom_mod_path, get_custom_mod_path, clear_historic_entry
+            from utils.core.paths import get_user_data_dir
             from pathlib import Path
             
             historic_val = get_historic_skin_for_champion(champion_id)
             skin_name = "Default"
             has_historic = historic_val is not None
             
-            # --- НОВАЯ ЛОГИКА: НЕ ВРЕМ ИГРОКУ ---
-            # В классическом режиме показываем надпись ТОЛЬКО если авто-лок реально собирается сработать
+            # --- ЛОГИКА ОТОБРАЖЕНИЯ ---
             if view_type == "classic-view":
+                # В классическом режиме показываем надпись ТОЛЬКО если авто-лок реально сработал
                 is_active = getattr(self.shared_state, 'historic_mode_active', False)
                 if not is_active:
                     has_historic = False
+                    
+            # Проверка, что мы смотрим на того же чемпиона, который сейчас залочен
             locked_champ_id = getattr(self.shared_state, 'locked_champ_id', None)
             if locked_champ_id is not None and str(champion_id) != str(locked_champ_id):
                 has_historic = False
             
-            # В режиме Swiftplay авто-лок из файла истории пока не применяется к слотам лобби
-            # Так что скрываем надпись, чтобы не вводить в заблуждение
-            if view_type == "swiftplay-view":
-                has_historic = False
-            # ------------------------------------
-            
             if has_historic:
                 if is_custom_mod_path(historic_val):
                     path = get_custom_mod_path(historic_val)
-                    # Делаем красивое имя из названия zip файла мода
-                    skin_name = Path(path).stem.replace("-", " ").replace("_", " ").title()
+                    full_path = get_user_data_dir() / "mods" / path.replace("/", "\\")
+                    
+                    # Проверяем, существует ли файл мода физически
+                    if not full_path.exists():
+                        has_historic = False
+                        clear_historic_entry(int(champion_id))
+                        log.info(f"[HISTORIC] Cleared missing custom mod from history: {path}")
+                    else:
+                        # Делаем красивое имя из названия zip файла мода
+                        skin_name = Path(path).stem.replace("-", " ").replace("_", " ").title()
                 else:
                     historic_id = int(historic_val)
                     
