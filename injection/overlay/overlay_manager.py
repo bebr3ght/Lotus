@@ -217,8 +217,12 @@ class OverlayManager:
             if sys.platform == "win32":
                 creationflags = subprocess.CREATE_NO_WINDOW
             
-            # Don't capture stdout to avoid pipe buffer deadlock - send to devnull instead
-            proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=creationflags)
+            # ЗАПИСЫВАЕМ ВЫВОД В ФАЙЛ ВМЕСТО ПУСТОТЫ
+            runoverlay_log_path = overlay_dir / "runoverlay_debug.log"
+            runoverlay_log_file = open(runoverlay_log_path, "w", encoding="utf-8")
+            
+            # Capture output to file to avoid pipe buffer deadlock
+            proc = subprocess.Popen(cmd, stdout=runoverlay_log_file, stderr=subprocess.STDOUT, creationflags=creationflags)
             
             # Boost process priority to maximize CPU contention if enabled
             if ENABLE_RUNOVERLAY_PRIORITY_BOOST and PSUTIL_AVAILABLE:
@@ -240,7 +244,6 @@ class OverlayManager:
             # Monitor process with stop callback
             # No timeout - overlay will run until explicitly killed or game ends
             while proc.poll() is None:
-                # Check if we should stop (game ended)
                 if stop_callback and stop_callback():
                     log.info("[INJECT] Game ended, stopping overlay process")
                     proc.terminate()
@@ -251,19 +254,34 @@ class OverlayManager:
                         proc.wait()
                     if self.process_manager:
                         self.process_manager.current_overlay_process = None
+                    runoverlay_log_file.close() # ЗАКРЫВАЕМ ФАЙЛ
                     self._wipe_overlay_dir(overlay_dir)
-                    return 0  # Success - overlay ran through game
+                    return 0
 
                 time.sleep(PROCESS_MONITOR_SLEEP_S)
 
-            # Process completed normally (no stdout captured)
+            # Process completed
             self.current_overlay_process = None
-            self._wipe_overlay_dir(overlay_dir)
+            runoverlay_log_file.close() # ЗАКРЫВАЕМ ФАЙЛ
+            
             if proc.returncode != 0:
-                log.error(f"[INJECT] runoverlay failed with return code: {proc.returncode}")
+                # ЧИТАЕМ И ВЫВОДИМ КОНКРЕТНУЮ ОШИБКУ
+                error_details = "No details captured."
+                try:
+                    if runoverlay_log_path.exists():
+                        with open(runoverlay_log_path, "r", encoding="utf-8", errors="replace") as f:
+                            lines = f.readlines()
+                            if lines:
+                                error_details = "".join(lines[-15:]).strip() # Последние 15 строк
+                except Exception as e:
+                    error_details = f"Could not read runoverlay log: {e}"
+                    
+                log.error(f"[INJECT] runoverlay failed with return code: {proc.returncode}. Reason:\n{error_details}")
+                self._wipe_overlay_dir(overlay_dir)
                 return proc.returncode
             else:
                 log.debug(f"[INJECT] runoverlay completed successfully")
+                self._wipe_overlay_dir(overlay_dir)
                 return 0
         except Exception as e:
             log.error(f"[INJECT] runoverlay error: {e}")
