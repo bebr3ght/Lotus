@@ -1,0 +1,2542 @@
+/**
+ * @name ROSE-CustomWheel
+ * @author Rose Team
+ * @description Custom mod wheel for Pengu Loader - displays installed mods for hovered skins
+ * @link https://github.com/Alban1911/ROSE-CustomWheel
+ */
+(function createCustomWheel() {
+  const LOG_PREFIX = "[ROSE-CustomWheel]";
+  console.log(`${LOG_PREFIX} JS Loaded`);
+  const BUTTON_CLASS = "lu-chroma-button";
+  const BUTTON_SELECTOR = `.${BUTTON_CLASS}`;
+  const PANEL_CLASS = "lu-chroma-panel";
+  const PANEL_ID = "rose-custom-wheel-panel-container";
+  const REQUEST_TYPE = "request-skin-mods";
+  const EVENT_SKIN_STATE = "lu-skin-monitor-state";
+
+  let isOpen = false;
+  let panel = null;
+  let button = null;
+  let championSelectRoot = null;
+  let championSelectObserver = null;
+  let championLocked = false;
+  let currentSkinData = null;
+  let selectedModId = null; 
+  let selectedModSkinId = null; 
+  let lastVisibility = null;
+  let lastParent = null;
+  let activeTab = "skins"; 
+  let selectedMapId = null;
+  let selectedFontId = null;
+  let selectedAnnouncerId = null;
+  let isGlobalMode = false;
+
+  let selectedCategoryIds = Object.create(null);
+  let lastChampionSelectSession = null; 
+  let isFirstOpenInSession = true; 
+  
+  // Caches for instant loading
+  let lastCategoryModsById = {}; 
+  let lastMapsList = null;
+  let lastFontsList = null;
+  let lastAnnouncersList = null;
+  
+  let emittedHistoricSelectionKeys = new Set(); 
+  let rightPaneMode = "summary"; 
+
+  // --- SWIFTPLAY & OVERLAY LOGIC ---
+  let isSwiftplayMode = false;
+
+  function isActuallyInLobby() {
+    const lobbyBanners = document.querySelector('.v2-banner-component.local-player');
+    return !!(lobbyBanners && lobbyBanners.offsetParent !== null);
+  }
+
+  function isOverlayOpen() {
+    const overlays =[
+      'lol-perks-v2-editor',           
+      'lol-perks-v2-main-view',        
+      '.perks-editor-modal',           
+      'lol-uikit-full-page-modal',     
+      '.champion-customization-flyout',
+      'lol-uikit-dialog-frame',        
+      '.modal-root'                    
+    ];
+    for (const selector of overlays) {
+      const el = document.querySelector(selector);
+      if (el && (el.offsetWidth > 0 || el.offsetHeight > 0)) return true;
+    }
+    const backdrop = document.querySelector('.lol-uikit-layer-manager-wrapper');
+    if (backdrop && backdrop.children.length > 1) return true;
+    return false;
+  }
+  // ---------------------------------
+
+  const OTHER_CATEGORY_TABS =[
+    { id: "ui", label: "UI", prefixes: ["ui/"] },
+    { id: "voiceover", label: "Voiceover", prefixes:["voiceover/", "vo/"] },
+    { id: "loading_screen", label: "Loading Screen", prefixes: ["loading_screen/", "loading-screen/", "loading screen/"] },
+    { id: "vfx", label: "VFX", prefixes: ["vfx/"] },
+    { id: "sfx", label: "SFX", prefixes: ["sfx/"] },
+    { id: "others", label: "Others", prefixes:[] }, 
+  ];
+
+  function escapeHtml(str) {
+    if (typeof str !== 'string') return String(str);
+    return str
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
+  }
+
+  const SUMMARY_TABS =[
+    { id: "skins", label: "Skins" },
+    { id: "maps", label: "Maps" },
+    { id: "fonts", label: "Fonts" },
+    { id: "announcers", label: "Announcers" },
+    ...OTHER_CATEGORY_TABS.map((t) => ({ id: t.id, label: t.label })),
+  ];
+
+  const SUMMARY_ICONS = {
+    skins: '<svg viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>',
+    maps: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>',
+    fonts: '<svg viewBox="0 0 24 24"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></svg>',
+    announcers: '<svg viewBox="0 0 24 24"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>',
+    ui: '<svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>',
+    voiceover: '<svg viewBox="0 0 24 24"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>',
+    loading_screen: '<svg viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>',
+    vfx: '<svg viewBox="0 0 24 24"><path d="M12 3l1.5 4.5L18 9l-4.5 1.5L12 15l-1.5-4.5L6 9l4.5-1.5L12 3z"/><path d="M19 13l.75 2.25L22 16l-2.25.75L19 19l-.75-2.25L16 16l2.25-.75L19 13z"/><path d="M5 17l.75 2.25L8 20l-2.25.75L5 23l-.75-2.25L2 20l2.25-.75L5 17z"/></svg>',
+    sfx: '<svg viewBox="0 0 24 24"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>',
+    others: '<svg viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>',
+  };
+
+  function normalizePathLike(value) {
+    return String(value || "").replace(/\\/g, "/").trim().toLowerCase();
+  }
+
+  function getSelectedIdsForCategory(categoryId) {
+    const key = String(categoryId || "").trim();
+    if (!key) return[];
+    if (!Array.isArray(selectedCategoryIds[key])) {
+      selectedCategoryIds[key] =[];
+    }
+    return selectedCategoryIds[key];
+  }
+
+  function clearAllCategorySelections() {
+    for (const t of OTHER_CATEGORY_TABS) {
+      selectedCategoryIds[t.id] =[];
+    }
+  }
+
+  function getSelectedSummaryForTab(tabId) {
+    if (tabId === "skins") {
+      if (!championLocked && !(isSwiftplayMode && isActuallyInLobby())) return "Waiting for champ lock…";
+      return selectedModId ? String(selectedModId) : "None";
+    }
+    if (tabId === "maps") return selectedMapId ? String(selectedMapId) : "None";
+    if (tabId === "fonts") return selectedFontId ? String(selectedFontId) : "None";
+    if (tabId === "announcers") return selectedAnnouncerId ? String(selectedAnnouncerId) : "None";
+
+    const selected = getSelectedIdsForCategory(tabId);
+    return selected.length ? selected.join(", ") : "None";
+  }
+
+  function cleanModName(raw) {
+    if (!raw || typeof raw !== "string") return raw;
+    let name = raw.replace(/\\/g, "/");
+    const lastSlash = name.lastIndexOf("/");
+    if (lastSlash >= 0) name = name.substring(lastSlash + 1);
+    name = name.replace(/\.(fantome|wad|zip)$/i, "");
+    name = name.replace(/[_\-]/g, " ");
+    name = name.replace(/\b\w/g, (c) => c.toUpperCase());
+    return name.trim() || raw;
+  }
+
+  function getTabLabel(tabId) {
+    return SUMMARY_TABS.find((t) => t.id === tabId)?.label || String(tabId || "");
+  }
+
+  function refreshSummaryValues() {
+    if (!panel || !panel._summaryValuesByTab) return;
+    for (const tab of SUMMARY_TABS) {
+      const el = panel._summaryValuesByTab[tab.id];
+      const raw = getSelectedSummaryForTab(tab.id);
+      if (el) {
+        el.textContent = (raw !== "None" && raw !== "Waiting for champ lock…") ? cleanModName(raw) : raw;
+      }
+      const row = panel._summaryRowsByTab && panel._summaryRowsByTab[tab.id];
+      if (row) {
+        if (raw !== "None" && raw !== "Waiting for champ lock…") {
+          row.classList.add("active");
+        } else {
+          row.classList.remove("active");
+        }
+      }
+    }
+    refreshButtonBadgeFromSelections();
+  }
+
+  function setRightPaneMode(mode) {
+    rightPaneMode = mode;
+    if (!panel) return;
+
+    if (panel._summaryView) {
+      panel._summaryView.style.display = mode === "summary" ? "flex" : "none";
+    }
+    if (panel._pickerView) {
+      if (mode === "picker") panel._pickerView.classList.add("active");
+      else panel._pickerView.classList.remove("active");
+    }
+    if (panel._backBtn) {
+      panel._backBtn.style.display = mode === "picker" ? "inline-block" : "none";
+    }
+    if (panel._rightTitle) {
+      if (mode === "picker") {
+        const icon = SUMMARY_ICONS[activeTab] || "";
+        panel._rightTitle.innerHTML = `<span class="rose-wheel-title-icon">${icon}</span> Choose \u2022 ${escapeHtml(getTabLabel(activeTab))}`;
+      } else {
+        panel._rightTitle.textContent = "Custom Mods";
+      }
+    }
+  }
+
+  let bridge = null;
+
+  function waitForBridge() {
+    return new Promise((resolve, reject) => {
+      const timeout = 10000;
+      const interval = 50;
+      let elapsed = 0;
+      const check = () => {
+        if (window.__roseBridge) return resolve(window.__roseBridge);
+        elapsed += interval;
+        if (elapsed >= timeout) return reject(new Error("Bridge not available"));
+        setTimeout(check, interval);
+      };
+      check();
+    });
+  }
+
+  const CSS_RULES = `
+    .${BUTTON_CLASS} {
+      pointer-events: auto;
+      -webkit-user-select: none;
+      cursor: pointer;
+      box-sizing: border-box;
+      height: 20px;
+      width: 20px;
+      position: absolute !important;
+      display: block !important;
+      z-index: 1;
+      margin: 0;
+      padding: 0;
+    }
+
+    lol-uikit-flat-button.rose-custom-wheel-button,
+    .rose-custom-wheel-button {
+      display: inline-block !important;
+      white-space: nowrap !important;
+      isolation: isolate !important;
+    }
+
+    .rose-custom-wheel-button .count-badge.social-count-badge,
+    lol-uikit-flat-button.rose-custom-wheel-button .count-badge.social-count-badge,
+    .rose-custom-wheel-button > .count-badge.social-count-badge,
+    lol-uikit-flat-button.rose-custom-wheel-button > .count-badge.social-count-badge {
+      position: absolute !important;
+      top: var(--rose-badge-top, -4px) !important;
+      right: var(--rose-badge-right, -17px) !important;
+      left: var(--rose-badge-left, auto) !important;
+      min-width: 18px !important;
+      height: 18px !important;
+      padding: 0 5px !important;
+      background: #c89b3c !important;
+      color: #000 !important;
+      border-radius: 3px !important;
+      font-size: 11px !important;
+      font-weight: 600 !important;
+      display: flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      line-height: 1 !important;
+      box-sizing: border-box !important;
+      pointer-events: none !important;
+      z-index: 1 !important;
+      transform: translate(var(--rose-badge-translate-x, 60%), var(--rose-badge-translate-y, -60%)) !important;
+      margin: 0 !important;
+      bottom: auto !important;
+    }
+
+    .${BUTTON_CLASS}[data-hidden],
+    .${BUTTON_CLASS}[data-hidden] * {
+      pointer-events: none !important;
+      cursor: default !important;
+      visibility: hidden !important;
+    }
+
+    .${BUTTON_CLASS} .button-image {
+      pointer-events: auto;
+      -webkit-user-select: none;
+      cursor: pointer;
+      display: block;
+      width: 100%;
+      height: 100%;
+      background-size: contain;
+      background-position: center;
+      background-repeat: no-repeat;
+      transition: opacity 0.1s ease;
+      position: absolute;
+      top: 0;
+      left: 0;
+      min-width: 20px;
+      min-height: 20px;
+      background-color: transparent !important;
+      border: none !important;
+    }
+    
+    .${BUTTON_CLASS} .button-image.default { background-color: transparent; border: none; border-radius: 2px; opacity: 1; }
+    .${BUTTON_CLASS} .button-image.pressed { opacity: 0; background-color: transparent !important; border: none !important; }
+    .${BUTTON_CLASS}.pressed .button-image.default { opacity: 0; }
+    .${BUTTON_CLASS}.pressed .button-image.pressed { opacity: 1; }
+
+    .chroma.icon { display: none !important; }
+
+    .${PANEL_CLASS} {
+      position: fixed;
+      z-index: 10000;
+      pointer-events: all;
+      -webkit-user-select: none;
+      font-family: "Spiegel", "LoL Body", Arial, sans-serif;
+    }
+
+    .${PANEL_CLASS}[data-no-button] { pointer-events: none; cursor: default !important; }
+
+    .${PANEL_CLASS} .chroma-modal {
+      background: #010a13;
+      border-radius: 2px;
+      box-shadow: 0 0 20px rgba(0, 0, 0, 0.8);
+      display: flex;
+      flex-direction: column;
+      width: 980px;
+      max-width: calc(100vw - 80px);
+      min-width: 720px;
+      position: relative;
+      z-index: 0;
+      padding: 16px;
+      box-sizing: border-box;
+      overflow: hidden;
+      color: #f0e6d2;
+      height: 520px !important;
+      min-height: 420px !important;
+      max-height: calc(100vh - 120px) !important;
+    }
+    
+    .${PANEL_CLASS} .chroma-modal.chroma-view { overflow: hidden; }
+
+    .${PANEL_CLASS} .flyout {
+      position: absolute;
+      overflow: visible;
+      pointer-events: all;
+      -webkit-user-select: none;
+      width: auto !important;
+      filter: drop-shadow(0 0 10px rgba(0,0,0,0.5));
+    }
+    
+    .${PANEL_CLASS} .flyout .caret, .${PANEL_CLASS} .flyout [class*="caret"],
+    .${PANEL_CLASS} lol-uikit-flyout-frame .caret, .${PANEL_CLASS} lol-uikit-flyout-frame [class*="caret"],
+    .${PANEL_CLASS} .flyout .caret::before, .${PANEL_CLASS} .flyout .caret::after,
+    .${PANEL_CLASS} .flyout [class*="caret"]::before, .${PANEL_CLASS} .flyout[class*="caret"]::after,
+    .${PANEL_CLASS} lol-uikit-flyout-frame .caret::before, .${PANEL_CLASS} lol-uikit-flyout-frame .caret::after,
+    .${PANEL_CLASS} lol-uikit-flyout-frame [class*="caret"]::before, .${PANEL_CLASS} lol-uikit-flyout-frame[class*="caret"]::after,
+    .${PANEL_CLASS} .flyout::part(caret), .${PANEL_CLASS} lol-uikit-flyout-frame::part(caret),
+    .${PANEL_CLASS} lol-uikit-flyout-frame::before, .${PANEL_CLASS} lol-uikit-flyout-frame::after,
+    .${PANEL_CLASS} .flyout::before, .${PANEL_CLASS} .flyout::after {
+      display: none !important; visibility: hidden !important; content: none !important;
+    }
+
+    .${PANEL_CLASS} .rose-wheel-right-header {
+      display: flex; align-items: center; justify-content: space-between; gap: 12px;
+      padding-bottom: 10px; border-bottom: 1px solid #3c3c41; margin-bottom: 10px; flex-shrink: 0;
+    }
+
+    .${PANEL_CLASS} .rose-wheel-right-title {
+      font-weight: 700; color: #f0e6d2; font-size: 13px;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      display: flex; align-items: center; gap: 6px;
+    }
+
+    .${PANEL_CLASS} .rose-wheel-right-title .rose-wheel-title-icon { width: 18px; height: 18px; flex-shrink: 0; }
+    .${PANEL_CLASS} .rose-wheel-right-title .rose-wheel-title-icon svg {
+      width: 18px; height: 18px; fill: none; stroke: #c8aa6e; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;
+    }
+
+    .${PANEL_CLASS} .rose-wheel-summary {
+      flex: 1; min-height: 0; display: flex; flex-direction: column; justify-content: flex-start;
+      gap: 6px; padding: 6px 2px; overflow-y: auto;
+    }
+
+    .${PANEL_CLASS} .rose-wheel-summary::-webkit-scrollbar { width: 6px; }
+    .${PANEL_CLASS} .rose-wheel-summary::-webkit-scrollbar-track { background: rgba(0,0,0,0.3); }
+    .${PANEL_CLASS} .rose-wheel-summary::-webkit-scrollbar-thumb { background: #5b5a56; border-radius: 3px; }
+
+    .${PANEL_CLASS} .rose-wheel-summary-row {
+      display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 12px;
+      padding: 8px; border: 1px solid #3c3c41; border-left: 3px solid transparent;
+      background: linear-gradient(to right, rgba(30, 35, 40, 0.8), rgba(30, 35, 40, 0.5)); transition: border-left-color 0.2s ease;
+    }
+
+    .${PANEL_CLASS} .rose-wheel-summary-row.active { border-left: 3px solid #c8aa6e; }
+    .${PANEL_CLASS} .rose-wheel-summary-row:hover .rose-wheel-summary-icon { color: #c8aa6e; }
+
+    .${PANEL_CLASS} .rose-wheel-summary-icon { width: 18px; height: 18px; flex-shrink: 0; color: #5b5a56; transition: color 0.2s ease; }
+    .${PANEL_CLASS} .rose-wheel-summary-icon svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+
+    .${PANEL_CLASS} .rose-wheel-summary-left { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+    .${PANEL_CLASS} .rose-wheel-summary-label { color: #a09b8c; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; }
+    .${PANEL_CLASS} .rose-wheel-summary-value { color: #f0e6d2; font-size: 13px; font-weight: 700; word-break: break-word; }
+
+    .${PANEL_CLASS} .rose-wheel-picker { flex: 1; min-height: 0; display: none; }
+    .${PANEL_CLASS} .rose-wheel-picker.active { display: flex; flex-direction: column; min-height: 0; }
+
+    .${PANEL_CLASS} .tab-content { display: none; width: 100%; background: transparent; }
+    .${PANEL_CLASS} .tab-content.active { display: flex; flex-direction: column; height: 100%; }
+
+    .${PANEL_CLASS} .mod-selection { pointer-events: all; flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding-right: 4px; margin-top: 4px; }
+    .${PANEL_CLASS} .mod-selection::-webkit-scrollbar { width: 6px; }
+    .${PANEL_CLASS} .mod-selection::-webkit-scrollbar-track { background: rgba(0,0,0,0.3); }
+    .${PANEL_CLASS} .mod-selection::-webkit-scrollbar-thumb { background: #5b5a56; border-radius: 3px; }
+
+    .${PANEL_CLASS} .mod-selection ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+
+    .${PANEL_CLASS} .mod-selection li {
+      background: linear-gradient(to right, rgba(30, 35, 40, 0.9), rgba(30, 35, 40, 0.6));
+      border: 1px solid #3c3c41; border-left: 3px solid transparent; padding: 10px; transition: all 0.2s ease;
+      display: flex; flex-direction: column; gap: 4px; border-radius: 0;
+    }
+
+    .${PANEL_CLASS} .mod-selection li:hover {
+      background: linear-gradient(to right, rgba(40, 45, 50, 0.9), rgba(40, 45, 50, 0.7));
+      border-color: #5c5c61; border-left-color: #c8aa6e; transform: translateX(2px);
+    }
+
+    .${PANEL_CLASS} .mod-selection li.selected-row {
+      border-left-color: #c8aa6e; background: linear-gradient(to right, rgba(200, 170, 110, 0.12), rgba(30, 35, 40, 0.6));
+    }
+
+    .${PANEL_CLASS} .mod-selection li .mod-name.none-label { font-style: italic; color: #8b8b8b; }
+    .${PANEL_CLASS} .mod-name-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; }
+    .${PANEL_CLASS} .mod-name { color: #f0e6d2; font-size: 13px; font-weight: 700; letter-spacing: 0.5px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .${PANEL_CLASS} .mod-description { color: #a09b8c; font-size: 11px; font-weight: 400; line-height: 1.4; word-wrap: break-word; }
+    .${PANEL_CLASS} .mod-meta, .${PANEL_CLASS} .mod-injection-note { color: #7a7a7d; font-size: 10px; font-style: italic; }
+    .${PANEL_CLASS} .mod-loading { color: #a09b8c; font-size: 12px; text-align: center; padding: 20px; font-style: italic; }
+
+    .${PANEL_CLASS} .mod-select-button {
+      background: transparent; border: 1px solid #c8aa6e; color: #c8aa6e; padding: 4px 10px; font-size: 11px; font-weight: 700;
+      text-transform: uppercase; cursor: pointer; transition: all 0.2s; flex-shrink: 0; border-radius: 0;
+    }
+
+    .${PANEL_CLASS} .mod-select-button:hover { background: rgba(200, 170, 110, 0.1); box-shadow: 0 0 8px rgba(200, 170, 110, 0.2); }
+    .${PANEL_CLASS} .mod-select-button.selected { background: #c8aa6e; color: #010a13; box-shadow: 0 0 10px rgba(200, 170, 110, 0.4); border-color: #c8aa6e; }
+  `;
+
+  function injectCSS() {
+    const styleId = "rose-custom-wheel-css";
+    if (document.getElementById(styleId)) return;
+    const styleTag = document.createElement("style");
+    styleTag.id = styleId;
+    styleTag.textContent = CSS_RULES;
+    document.head.appendChild(styleTag);
+  }
+
+  function createButton() {
+    if (button) return button;
+    try { button = document.createElement("lol-uikit-flat-button"); }
+    catch (e) { button = document.createElement("div"); }
+    button.className = "lol-uikit-flat-button idle rose-custom-wheel-button";
+    button.textContent = "Custom mods";
+
+    const computedStyle = window.getComputedStyle(button);
+    if (computedStyle.position === "static" || computedStyle.position === "") {
+      button.style.position = "relative";
+    }
+
+    const countBadge = document.createElement("div");
+    countBadge.className = "count-badge social-count-badge";
+    countBadge.textContent = "0";
+    countBadge.style.display = "none"; 
+    countBadge.style.setProperty("--rose-badge-top", "-4px");
+    countBadge.style.setProperty("--rose-badge-right", "-17px");
+    countBadge.style.setProperty("--rose-badge-left", "auto");
+    countBadge.style.setProperty("--rose-badge-translate-x", "60%");
+    countBadge.style.setProperty("--rose-badge-translate-y", "-60%");
+    button.appendChild(countBadge);
+    button._countBadge = countBadge; 
+
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      event.preventDefault();
+      isOpen ? closePanel() : openPanel();
+    });
+
+    return button;
+  }
+
+  function createPanel() {
+    if (panel) return panel;
+
+    const existingPanel = document.getElementById(PANEL_ID);
+    if (existingPanel) existingPanel.remove();
+
+    panel = document.createElement("div");
+    panel.id = PANEL_ID;
+    panel.className = PANEL_CLASS;
+    panel.style.position = "fixed";
+    panel.style.top = "0";
+    panel.style.left = "0";
+    panel.style.width = "100%";
+    panel.style.height = "100%";
+    panel.style.zIndex = "10000";
+    panel.style.pointerEvents = "none";
+    panel.style.display = "none"; 
+
+    let flyoutFrame;
+    try {
+      flyoutFrame = document.createElement("lol-uikit-flyout-frame");
+      flyoutFrame.className = "flyout";
+      flyoutFrame.setAttribute("orientation", "top");
+      flyoutFrame.setAttribute("animated", "false");
+      flyoutFrame.setAttribute("caretless", "true");
+      flyoutFrame.setAttribute("show", "true");
+    } catch (e) {
+      flyoutFrame = document.createElement("div");
+      flyoutFrame.className = "flyout";
+    }
+
+    flyoutFrame.style.position = "absolute";
+    flyoutFrame.style.overflow = "visible";
+    flyoutFrame.style.pointerEvents = "all";
+
+    let flyoutContent;
+    try {
+      flyoutContent = document.createElement("lc-flyout-content");
+    } catch (e) {
+      flyoutContent = document.createElement("div");
+      flyoutContent.className = "lc-flyout-content";
+    }
+
+    const modal = document.createElement("div");
+    modal.className = "champ-select-chroma-modal chroma-modal chroma-view ember-view";
+
+    const isOtherCategoryTab = (tabName) => OTHER_CATEGORY_TABS.some((t) => t.id === tabName);
+
+    const switchTab = (tabName) => {
+      activeTab = tabName;
+      const allContents =[
+        panel._modsContent,
+        panel._mapsContent,
+        panel._fontsContent,
+        panel._announcersContent,
+        ...OTHER_CATEGORY_TABS.map((t) => panel[`_${t.id}Content`]).filter(Boolean),
+      ];
+      allContents.forEach((content) => {
+        if (content && content.dataset && content.dataset.tab === tabName) {
+          content.classList.add("active");
+        } else if (content) {
+          content.classList.remove("active");
+        }
+      });
+      if (tabName === "skins") requestModsForCurrentSkin();
+      else if (tabName === "maps") {
+        if (lastMapsList) updateMapsEntries(lastMapsList);
+        else requestMaps();
+      }
+      else if (tabName === "fonts") {
+        if (lastFontsList) updateFontsEntries(lastFontsList);
+        else requestFonts();
+      }
+      else if (tabName === "announcers") {
+        if (lastAnnouncersList) updateAnnouncersEntries(lastAnnouncersList);
+        else requestAnnouncers();
+      }
+      else if (isOtherCategoryTab(tabName)) {
+        if (lastCategoryModsById[tabName]) updateOtherCategoryEntries(tabName, lastCategoryModsById[tabName]);
+        else requestCategoryMods(tabName);
+      }
+
+      if (panel && panel._rightTitle) {
+        if (rightPaneMode === "picker") {
+          const icon = SUMMARY_ICONS[activeTab] || "";
+          panel._rightTitle.innerHTML = `<span class="rose-wheel-title-icon">${icon}</span> Choose \u2022 ${escapeHtml(getTabLabel(activeTab))}`;
+        } else {
+          panel._rightTitle.textContent = "Custom Mods";
+        }
+      }
+    };
+
+    let scrollable;
+    try {
+      scrollable = document.createElement("lol-uikit-scrollable");
+      scrollable.className = "mod-selection";
+      scrollable.setAttribute("overflow-masks", "enabled");
+    } catch (e) {
+      scrollable = document.createElement("div");
+      scrollable.className = "mod-selection";
+      scrollable.style.overflowY = "auto";
+    }
+
+    const modsContent = document.createElement("div");
+    modsContent.className = "tab-content active";
+    modsContent.dataset.tab = "skins";
+
+    const mapsContent = document.createElement("div");
+    mapsContent.className = "tab-content";
+    mapsContent.dataset.tab = "maps";
+
+    const fontsContent = document.createElement("div");
+    fontsContent.className = "tab-content";
+    fontsContent.dataset.tab = "fonts";
+
+    const announcersContent = document.createElement("div");
+    announcersContent.className = "tab-content";
+    announcersContent.dataset.tab = "announcers";
+
+    const otherContents = OTHER_CATEGORY_TABS.map((t) => {
+      const content = document.createElement("div");
+      content.className = "tab-content";
+      content.dataset.tab = t.id;
+      return content;
+    });
+
+    const modList = document.createElement("ul");
+    modList.style.listStyle = "none"; modList.style.margin = "0"; modList.style.padding = "0";
+    modList.style.display = "flex"; modList.style.flexDirection = "column"; modList.style.width = "100%"; modList.style.gap = "4px";
+
+    const mapsList = document.createElement("ul");
+    mapsList.style.listStyle = "none"; mapsList.style.margin = "0"; mapsList.style.padding = "0";
+    mapsList.style.display = "flex"; mapsList.style.flexDirection = "column"; mapsList.style.width = "100%"; mapsList.style.gap = "4px";
+
+    const fontsList = document.createElement("ul");
+    fontsList.style.listStyle = "none"; fontsList.style.margin = "0"; fontsList.style.padding = "0";
+    fontsList.style.display = "flex"; fontsList.style.flexDirection = "column"; fontsList.style.width = "100%"; fontsList.style.gap = "4px";
+
+    const announcersList = document.createElement("ul");
+    announcersList.style.listStyle = "none"; announcersList.style.margin = "0"; announcersList.style.padding = "0";
+    announcersList.style.display = "flex"; announcersList.style.flexDirection = "column"; announcersList.style.width = "100%"; announcersList.style.gap = "4px";
+
+    const createSimpleList = () => {
+      const ul = document.createElement("ul");
+      ul.style.listStyle = "none"; ul.style.margin = "0"; ul.style.padding = "0";
+      ul.style.display = "flex"; ul.style.flexDirection = "column"; ul.style.width = "100%"; ul.style.gap = "4px";
+      return ul;
+    };
+
+    const otherLists = OTHER_CATEGORY_TABS.reduce((acc, t) => { acc[t.id] = createSimpleList(); return acc; }, {});
+
+    const modsLoading = document.createElement("div");
+    modsLoading.className = "mod-loading"; modsLoading.textContent = "Waiting for mods…"; modsLoading.style.display = "none";
+
+    const mapsLoading = document.createElement("div");
+    mapsLoading.className = "mod-loading"; mapsLoading.textContent = "Loading maps…"; mapsLoading.style.display = "none";
+
+    const fontsLoading = document.createElement("div");
+    fontsLoading.className = "mod-loading"; fontsLoading.textContent = "Loading fonts…"; fontsLoading.style.display = "none";
+
+    const announcersLoading = document.createElement("div");
+    announcersLoading.className = "mod-loading"; announcersLoading.textContent = "Loading announcers…"; announcersLoading.style.display = "none";
+
+    const otherLoadingEls = OTHER_CATEGORY_TABS.reduce((acc, t) => {
+      const el = document.createElement("div"); el.className = "mod-loading"; el.textContent = `Loading ${t.label.toLowerCase()}…`; el.style.display = "none";
+      acc[t.id] = el; return acc;
+    }, {});
+
+    modsContent.appendChild(modsLoading); modsContent.appendChild(modList);
+    mapsContent.appendChild(mapsLoading); mapsContent.appendChild(mapsList);
+    fontsContent.appendChild(fontsLoading); fontsContent.appendChild(fontsList);
+    announcersContent.appendChild(announcersLoading); announcersContent.appendChild(announcersList);
+    otherContents.forEach((content) => {
+      const tabId = content.dataset.tab;
+      content.appendChild(otherLoadingEls[tabId]); content.appendChild(otherLists[tabId]);
+    });
+
+    scrollable.appendChild(modsContent); scrollable.appendChild(mapsContent); scrollable.appendChild(fontsContent); scrollable.appendChild(announcersContent);
+    otherContents.forEach((content) => scrollable.appendChild(content));
+
+    const rightHeader = document.createElement("div");
+    rightHeader.className = "rose-wheel-right-header";
+
+    const rightTitle = document.createElement("div");
+    rightTitle.className = "rose-wheel-right-title";
+    rightTitle.textContent = "Custom Mods";
+
+    const headerButtons = document.createElement("div");
+    headerButtons.style.display = "flex"; 
+    headerButtons.style.gap = "12px"; 
+    headerButtons.style.alignItems = "center";
+
+    const backBtn = document.createElement("button");
+    backBtn.className = "mod-select-button"; 
+    backBtn.textContent = "Back"; 
+    backBtn.style.display = "none";
+
+    const closeBtn = document.createElement("button");
+    closeBtn.innerHTML = "&times;";
+    closeBtn.style.background = "transparent";
+    closeBtn.style.border = "none";
+    closeBtn.style.color = "#a09b8c";
+    closeBtn.style.fontSize = "24px";
+    closeBtn.style.cursor = "pointer";
+    closeBtn.style.lineHeight = "0.5";
+    closeBtn.style.padding = "0";
+    closeBtn.style.margin = "0";
+    closeBtn.style.display = "flex";
+    closeBtn.style.alignItems = "center";
+    closeBtn.style.justifyContent = "center";
+    closeBtn.style.transition = "color 0.2s ease";
+    closeBtn.addEventListener("mouseenter", () => closeBtn.style.color = "#f0e6d2");
+    closeBtn.addEventListener("mouseleave", () => closeBtn.style.color = "#a09b8c");
+    closeBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      closePanel();
+    });
+
+    headerButtons.appendChild(backBtn);
+    headerButtons.appendChild(closeBtn);
+    rightHeader.appendChild(rightTitle); 
+    rightHeader.appendChild(headerButtons);
+
+    const summaryView = document.createElement("div");
+    summaryView.className = "rose-wheel-summary";
+
+    panel._summaryValuesByTab = {};
+    panel._summaryRowsByTab = {};
+
+    SUMMARY_TABS.forEach((tab) => {
+          const row = document.createElement("div"); row.className = "rose-wheel-summary-row";
+          const left = document.createElement("div"); left.className = "rose-wheel-summary-left";
+          const label = document.createElement("div"); label.className = "rose-wheel-summary-label"; label.style.display = "flex"; label.style.alignItems = "center"; label.style.gap = "6px";
+          const iconSpan = document.createElement("span"); iconSpan.className = "rose-wheel-summary-icon"; iconSpan.innerHTML = SUMMARY_ICONS[tab.id] || "";
+          label.appendChild(iconSpan);
+          const labelText = document.createElement("span"); labelText.textContent = tab.label; label.appendChild(labelText);
+          const value = document.createElement("div"); value.className = "rose-wheel-summary-value"; value.textContent = getSelectedSummaryForTab(tab.id);
+          panel._summaryValuesByTab[tab.id] = value;
+          left.appendChild(label); left.appendChild(value);
+    
+          // Контейнер для кнопок действий в строке
+          const btnContainer = document.createElement("div");
+          btnContainer.style.display = "flex";
+          btnContainer.style.gap = "6px";
+    
+          // Кнопка "+" для быстрого добавления мода/открытия папки категории на ПК
+          const addBtn = document.createElement("button");
+          addBtn.className = "mod-select-button";
+          addBtn.textContent = "+";
+          addBtn.style.fontWeight = "bold";
+          addBtn.style.padding = "2px 8px";
+          addBtn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            if (tab.id === "skins") {
+              openChampionSelection();
+            } else {
+              if (bridge) bridge.send({
+                type: "add-custom-mods-category-selected",
+                category: tab.id
+              });
+            }
+          });
+    
+          // Кнопка "Change" для перехода к выбору из уже установленных модов
+          const changeBtn = document.createElement("button");
+          changeBtn.className = "mod-select-button";
+          changeBtn.textContent = "Change";
+          changeBtn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            switchTab(tab.id);
+            setRightPaneMode("picker");
+            refreshSummaryValues();
+          });
+    
+          btnContainer.appendChild(addBtn);
+          btnContainer.appendChild(changeBtn);
+    
+          row.appendChild(left);
+          row.appendChild(btnContainer);
+          panel._summaryRowsByTab[tab.id] = row;
+          summaryView.appendChild(row);
+        });
+
+    const pickerView = document.createElement("div");
+    pickerView.className = "rose-wheel-picker"; pickerView.appendChild(scrollable);
+
+    backBtn.addEventListener("click", (e) => { e.stopPropagation(); setRightPaneMode("summary"); refreshSummaryValues(); });
+
+    panel._summaryView = summaryView; panel._pickerView = pickerView; panel._backBtn = backBtn; panel._rightTitle = rightTitle;
+
+    modal.appendChild(rightHeader); modal.appendChild(summaryView); modal.appendChild(pickerView);
+    flyoutContent.appendChild(modal); flyoutFrame.appendChild(flyoutContent); panel.appendChild(flyoutFrame);
+
+    setTimeout(() => {
+      const carets = flyoutFrame.querySelectorAll('.caret,[class*="caret"]');
+      carets.forEach(caret => { if (caret && caret.parentNode) { caret.style.display = 'none'; caret.style.visibility = 'hidden'; } });
+      if (flyoutFrame.shadowRoot) {
+        const shadowCarets = flyoutFrame.shadowRoot.querySelectorAll('.caret, [class*="caret"]');
+        shadowCarets.forEach(caret => { if (caret) { caret.style.display = 'none'; caret.style.visibility = 'hidden'; } });
+      }
+    }, 100);
+
+    panel._modList = modList; panel._mapsList = mapsList; panel._fontsList = fontsList; panel._announcersList = announcersList;
+    OTHER_CATEGORY_TABS.forEach((t) => {
+      panel[`_${t.id}List`] = otherLists[t.id]; panel[`_${t.id}Loading`] = otherLoadingEls[t.id]; panel[`_${t.id}Content`] = otherContents.find((c) => c.dataset.tab === t.id);
+    });
+    panel._modsLoading = modsLoading; panel._mapsLoading = mapsLoading; panel._fontsLoading = fontsLoading; panel._announcersLoading = announcersLoading;
+    panel._modsContent = modsContent; panel._mapsContent = mapsContent; panel._fontsContent = fontsContent; panel._announcersContent = announcersContent;
+    panel._loadingEl = modsLoading; 
+
+    setRightPaneMode("summary");
+    refreshSummaryValues();
+
+    return panel;
+  }
+
+  function attachToChampionSelect() {
+    if (!button) createButton();
+    if (!panel) createPanel();
+
+    const inCS = !!document.querySelector(".champion-select");
+    const inLobby = isActuallyInLobby();
+
+    if (inCS) {
+      const targetContainer = document.querySelector(".bottom-right-buttons");
+      if (targetContainer) {
+        if (button.parentNode !== targetContainer) {
+          targetContainer.appendChild(button);
+        }
+        const containerStyles = window.getComputedStyle(targetContainer);
+        if (containerStyles.position === "static" || containerStyles.position === "") {
+          targetContainer.style.position = "relative";
+        }
+        button.style.position = "absolute";
+        button.style.right = "0";
+        button.style.bottom = "100%";
+        button.style.marginBottom = "10px";
+        button.style.left = "";
+        button.style.top = "";
+        button.style.zIndex = "";
+        button._container = targetContainer;
+      }
+    } else if (inLobby && isSwiftplayMode) {
+      if (button.parentNode !== document.body) {
+        document.body.appendChild(button);
+      }
+      button.style.position = "fixed";
+      button.style.bottom = "210px"; 
+      button.style.right = "225px";
+      button.style.left = "auto";
+      button.style.top = "auto";
+      button.style.marginBottom = "0";
+      button.style.zIndex = "0";
+      button._container = document.body;
+    }
+
+    if (button && button._countBadge) {
+      const badge = button._countBadge;
+      badge.style.position = "absolute";
+      badge.style.top = "0";
+      badge.style.left = "0";
+      badge.style.transform = "translate(-170%, -70%)";
+      badge.style.zIndex = "10";
+    }
+
+    if (panel && panel.parentNode !== document.body) {
+      document.body.appendChild(panel);
+    }
+  }
+
+  function detachFromChampionSelect() {
+    if (button && button.parentNode) {
+      button.parentNode.removeChild(button);
+    }
+    closePanel();
+  }
+
+  function updateChampionSelectTarget() {
+    const target = document.querySelector(".champion-select");
+    const inLobby = isActuallyInLobby();
+    
+    if (!target && !inLobby) {
+       if (championSelectRoot) {
+          championSelectRoot = null;
+          // refreshUIVisibility() has its own checks
+       }
+       return;
+    }
+
+    if (target) {
+        if (target !== championSelectRoot) {
+           lastChampionSelectSession = target;
+           isFirstOpenInSession = true;
+           championSelectRoot = target;
+        }
+    } else if (inLobby && isSwiftplayMode) {
+        if (championSelectRoot !== "swiftplay_lobby") {
+           isFirstOpenInSession = true;
+           championSelectRoot = "swiftplay_lobby";
+        }
+    }
+  }
+
+  function observeChampionSelect() {
+    if (championSelectObserver || !document.body) {
+      return;
+    }
+    championSelectObserver = new MutationObserver(() => {
+      updateChampionSelectTarget();
+    });
+    championSelectObserver.observe(document.body, {
+      childList: true,
+      subtree: true,
+    });
+  }
+
+  function openPanel() {
+    const inCS = !!document.querySelector(".champion-select");
+    const inLobby = isActuallyInLobby();
+
+    if (!inCS && !(inLobby && isSwiftplayMode)) {
+      return;
+    }
+
+    attachToChampionSelect();
+
+    if (!panel || !button) {
+      return;
+    }
+
+    if (!panel.parentNode) {
+      document.body.appendChild(panel);
+    }
+
+    panel.style.display = "block";
+    panel.style.pointerEvents = "none"; 
+
+    if (isFirstOpenInSession) {
+      activeTab = "skins";
+      isFirstOpenInSession = false;
+    }
+
+    setRightPaneMode("summary");
+    refreshSummaryValues();
+
+    panel.querySelectorAll(".tab-content").forEach((content) => {
+      if (content && content.dataset && content.dataset.tab === activeTab) {
+        content.classList.add("active");
+      } else if (content) {
+        content.classList.remove("active");
+      }
+    });
+
+    if (activeTab === "skins") requestModsForCurrentSkin();
+    else if (activeTab === "maps") {
+      if (lastMapsList) updateMapsEntries(lastMapsList);
+      else requestMaps();
+    }
+    else if (activeTab === "fonts") {
+      if (lastFontsList) updateFontsEntries(lastFontsList);
+      else requestFonts();
+    }
+    else if (activeTab === "announcers") {
+      if (lastAnnouncersList) updateAnnouncersEntries(lastAnnouncersList);
+      else requestAnnouncers();
+    }
+    else if (OTHER_CATEGORY_TABS.some((t) => t.id === activeTab)) {
+      if (lastCategoryModsById[activeTab]) updateOtherCategoryEntries(activeTab, lastCategoryModsById[activeTab]);
+      else requestCategoryMods(activeTab);
+    }
+
+    positionPanel(panel, button);
+
+    panel.offsetHeight;
+
+    setTimeout(() => {
+      positionPanel(panel, button);
+    }, 0);
+
+    isOpen = true;
+
+    if (button) button.classList.add("pressed");
+
+    requestModsForCurrentSkin();
+    requestMaps();
+    requestFonts();
+    requestAnnouncers();
+    for (const t of OTHER_CATEGORY_TABS) {
+      requestCategoryMods(t.id);
+    }
+
+    const closeHandler = (e) => {
+      if (panel && panel.parentNode && !panel.contains(e.target) && !button.contains(e.target)) {
+        closePanel();
+        document.removeEventListener("click", closeHandler);
+      }
+    };
+    setTimeout(() => {
+      document.addEventListener("click", closeHandler);
+    }, 100);
+  }
+
+  function closePanel() {
+      if (!panel) {
+        isOpen = false;
+        isGlobalMode = false;
+        if (button) button.classList.remove("pressed");
+        return;
+      }
+      if (panel.parentNode) {
+        panel.style.display = "none";
+        panel.style.pointerEvents = "none";
+      }
+      isOpen = false;
+      isGlobalMode = false;
+      if (button) button.classList.remove("pressed");
+    }
+
+  function requestModsForCurrentSkin() {
+    const state = window.__roseSkinState || {};
+    const championId = Number(state.championId);
+    const skinId = Number(state.skinId);
+
+    const inLobby = isActuallyInLobby();
+
+    if (!championLocked && !(isSwiftplayMode && inLobby)) {
+      if (panel && panel._modsLoading) {
+        panel._modsLoading.textContent = "Waiting for champ lock…";
+        panel._modsLoading.style.display = "block";
+      }
+      return;
+    }
+
+    if (selectedModId && selectedModSkinId != null && Number(selectedModSkinId) !== skinId) {
+      selectedModId = null;
+      selectedModSkinId = null;
+      if (bridge) bridge.send({ type: "select-skin-mod", championId, skinId, modId: null });
+    }
+
+    if (!championId || !skinId) {
+      if (panel && panel._modsLoading) {
+        panel._modsLoading.textContent = "Hover a skin…";
+        panel._modsLoading.style.display = "block";
+      }
+      return;
+    }
+
+    if (bridge) bridge.send({ type: REQUEST_TYPE, championId, skinId });
+
+    if (panel && panel._modsLoading) {
+      panel._modsLoading.textContent = "Checking for mods…";
+      panel._modsLoading.style.display = "block";
+    }
+  }
+
+  function requestMaps() {
+    if (bridge) bridge.send({ type: "request-maps" });
+    if (panel && panel._mapsLoading) {
+      panel._mapsLoading.textContent = "Loading maps…";
+      panel._mapsLoading.style.display = "block";
+    }
+  }
+
+  function requestFonts() {
+    if (bridge) bridge.send({ type: "request-fonts" });
+    if (panel && panel._fontsLoading) {
+      panel._fontsLoading.textContent = "Loading fonts…";
+      panel._fontsLoading.style.display = "block";
+    }
+  }
+
+  function requestAnnouncers() {
+    if (bridge) bridge.send({ type: "request-announcers" });
+    if (panel && panel._announcersLoading) {
+      panel._announcersLoading.textContent = "Loading announcers…";
+      panel._announcersLoading.style.display = "block";
+    }
+  }
+
+  function requestCategoryMods(categoryId) {
+    if (!categoryId) return;
+    if (bridge) bridge.send({ type: "request-category-mods", category: categoryId });
+    if (!panel) return;
+
+    const loadingEl = panel[`_${categoryId}Loading`] || panel._othersLoading;
+    if (loadingEl) {
+      const label = OTHER_CATEGORY_TABS.find((t) => t.id === categoryId)?.label || "mods";
+      loadingEl.textContent = `Loading ${label.toLowerCase()}…`;
+      loadingEl.style.display = "block";
+    }
+  }
+
+  function handleSkinState(event) {
+    requestModsForCurrentSkin();
+  }
+
+  function updateButtonBadge(count) {
+    if (!button || !button._countBadge) return;
+    const badge = button._countBadge;
+    badge.style.position = "absolute";
+    badge.style.top = "0";
+    badge.style.left = "0";
+    badge.style.transform = "translate(-170%, -70%)";
+    badge.style.zIndex = "10";
+
+    if (count > 0) {
+      badge.textContent = String(count);
+      badge.style.display = "flex"; 
+    } else {
+      badge.textContent = "0"; 
+      badge.style.display = "none";
+    }
+  }
+
+  function getSelectedModsCount() {
+    let count = 0;
+    const inLobby = isActuallyInLobby();
+    if ((championLocked || (isSwiftplayMode && inLobby)) && selectedModId) count += 1;
+    if (selectedMapId) count += 1;
+    if (selectedFontId) count += 1;
+    if (selectedAnnouncerId) count += 1;
+    for (const t of OTHER_CATEGORY_TABS) {
+      const ids = getSelectedIdsForCategory(t.id);
+      if (Array.isArray(ids) && ids.length) {
+        count += new Set(ids).size;
+      }
+    }
+    return count;
+  }
+
+  function refreshButtonBadgeFromSelections() {
+    updateButtonBadge(getSelectedModsCount());
+  }
+
+  function updateNoneRow(listEl, isNoneActive) {
+    const noneLi = listEl?.querySelector('[data-mod-id="__none__"],[data-map-id="__none__"], [data-font-id="__none__"],[data-announcer-id="__none__"], [data-other-id="__none__"]');
+    if (!noneLi) return;
+    const noneBtn = noneLi.querySelector(".mod-select-button");
+    if (isNoneActive) {
+      noneLi.classList.add("selected-row");
+      if (noneBtn) { noneBtn.textContent = "Selected"; noneBtn.classList.add("selected"); }
+    } else {
+      noneLi.classList.remove("selected-row");
+      if (noneBtn) { noneBtn.textContent = "Select"; noneBtn.classList.remove("selected"); }
+    }
+  }
+
+  function handleModSelect(modId, buttonElement, modData) {
+    const parentLi = buttonElement.closest("li");
+    if (selectedModId === modId) {
+      selectedModId = null;
+      selectedModSkinId = null;
+      buttonElement.textContent = "Select";
+      buttonElement.classList.remove("selected");
+      if (parentLi) parentLi.classList.remove("selected-row");
+
+      const state = window.__roseSkinState || {};
+      const championId = Number(state.championId);
+      const skinId = Number(state.skinId);
+
+      if (championId && skinId) {
+        if (bridge) bridge.send({
+          type: "select-skin-mod",
+          championId,
+          skinId,
+          modId: null, 
+          modData: null,
+        });
+      }
+    } else {
+      if (selectedModId) {
+        const prevLi = panel?._modList?.querySelector(`[data-mod-id="${selectedModId}"]`);
+        if (prevLi) {
+          const previousButton = prevLi.querySelector(".mod-select-button");
+          if (previousButton) {
+            previousButton.textContent = "Select";
+            previousButton.classList.remove("selected");
+          }
+          prevLi.classList.remove("selected-row");
+        }
+      }
+
+      selectedModId = modId;
+      const modTargetSkinId = modData?.skinId ? Number(modData.skinId) : null;
+      const state = window.__roseSkinState || {};
+      selectedModSkinId = modTargetSkinId || Number(state.skinId);
+
+      buttonElement.textContent = "Selected";
+      buttonElement.classList.add("selected");
+      if (parentLi) parentLi.classList.add("selected-row");
+
+      const championId = Number(state.championId);
+      const emitSkinId = selectedModSkinId;
+
+      if (championId && emitSkinId) {
+        if (bridge) bridge.send({ type: "select-skin-mod", championId, skinId: emitSkinId, modId, modData });
+      }
+    }
+
+    updateNoneRow(panel?._modList, !selectedModId);
+    refreshSummaryValues();
+    refreshButtonBadgeFromSelections();
+  }
+
+  function updateModEntries(mods) {
+    if (!panel || !panel._modList || !panel._loadingEl) return;
+
+    const modList = panel._modList;
+    const loadingEl = panel._loadingEl;
+    const previousSelectedModId = selectedModId;
+
+    modList.innerHTML = "";
+
+    if (!mods || mods.length === 0) {
+      loadingEl.textContent = "No skins found";
+      loadingEl.style.display = "block";
+      return;
+    }
+
+    loadingEl.style.display = "none";
+
+    {
+      const noneItem = document.createElement("li");
+      noneItem.setAttribute("data-mod-id", "__none__");
+      const noneRow = document.createElement("div"); noneRow.className = "mod-name-row";
+      const noneName = document.createElement("div"); noneName.className = "mod-name none-label"; noneName.textContent = "None";
+      noneRow.appendChild(noneName);
+      const noneBtn = document.createElement("button"); noneBtn.className = "mod-select-button";
+      const nothingSelected = !selectedModId;
+      noneBtn.textContent = nothingSelected ? "Selected" : "Select";
+      if (nothingSelected) { noneBtn.classList.add("selected"); noneItem.classList.add("selected-row"); }
+      noneBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        if (selectedModId) {
+          const prevLi = modList.querySelector(`[data-mod-id="${selectedModId}"]`);
+          if (prevLi) {
+            const prevBtn = prevLi.querySelector(".mod-select-button");
+            if (prevBtn) { prevBtn.textContent = "Select"; prevBtn.classList.remove("selected"); }
+            prevLi.classList.remove("selected-row");
+          }
+          const state = window.__roseSkinState || {};
+          const championId = Number(state.championId);
+          const skinId = Number(state.skinId);
+          selectedModId = null;
+          selectedModSkinId = null;
+          if (championId && skinId) {
+            if (bridge) bridge.send({ type: "select-skin-mod", championId, skinId, modId: null, modData: null });
+          }
+        }
+        noneBtn.textContent = "Selected"; noneBtn.classList.add("selected"); noneItem.classList.add("selected-row");
+        refreshSummaryValues(); refreshButtonBadgeFromSelections();
+      });
+      noneRow.appendChild(noneBtn); noneItem.appendChild(noneRow); modList.appendChild(noneItem);
+    }
+
+    mods.forEach((mod) => {
+      const listItem = document.createElement("li");
+      const modId = mod.relativePath || mod.modName || `mod-${Date.now()}-${Math.random()}`;
+
+      const modNameRow = document.createElement("div"); modNameRow.className = "mod-name-row";
+      const modName = document.createElement("div"); modName.className = "mod-name"; modName.textContent = cleanModName(mod.modName) || "Unnamed mod";
+      modNameRow.appendChild(modName);
+
+      const selectButton = document.createElement("button"); selectButton.className = "mod-select-button";
+      const isSelected = (selectedModId === modId || previousSelectedModId === modId);
+
+      if (previousSelectedModId === modId && selectedModId !== modId) {
+        selectedModId = modId;
+      }
+
+      selectButton.textContent = isSelected ? "Selected" : "Select";
+      if (isSelected) { selectButton.classList.add("selected"); listItem.classList.add("selected-row"); }
+      selectButton.addEventListener("click", (e) => { e.stopPropagation(); handleModSelect(modId, selectButton, mod); });
+
+      modNameRow.appendChild(selectButton); listItem.appendChild(modNameRow);
+      listItem.setAttribute("data-mod-id", modId);
+
+      if (mod.description) {
+        const modDesc = document.createElement("div"); modDesc.className = "mod-description"; modDesc.textContent = mod.description;
+        listItem.appendChild(modDesc);
+      }
+
+      modList.appendChild(listItem);
+    });
+  }
+
+  function handleModsResponse(event) {
+    const detail = event?.detail;
+    if (!detail || detail.type !== "skin-mods-response") return;
+
+    const championId = Number(detail?.championId);
+    const skinId = Number(detail?.skinId);
+    if (!championId || !skinId) {
+      refreshButtonBadgeFromSelections();
+      return;
+    }
+
+    currentSkinData = { championId, skinId };
+    const liveSkinId = Number((window.__roseSkinState || {}).skinId) || skinId;
+
+    if (selectedModId && selectedModSkinId != null && Number(selectedModSkinId) !== liveSkinId) {
+      selectedModId = null;
+      selectedModSkinId = null;
+      if (bridge) bridge.send({ type: "select-skin-mod", championId, skinId: liveSkinId, modId: null });
+    }
+
+    const mods = Array.isArray(detail.mods) ? detail.mods :[];
+    const historicMod = detail.historicMod;
+    let didAutoSelect = false;
+    
+    if (historicMod && !selectedModId) {
+      const historicModEntry = mods.find(mod => {
+        const modPath = mod.relativePath || "";
+        return modPath.replace(/\\/g, "/") === historicMod.replace(/\\/g, "/");
+      });
+
+      if (historicModEntry) {
+        const modTargetSkinId = historicModEntry.skinId ? Number(historicModEntry.skinId) : null;
+        if (modTargetSkinId && modTargetSkinId === liveSkinId) {
+          const modId = historicModEntry.relativePath || historicModEntry.modName || `mod-${Date.now()}-${Math.random()}`;
+          selectedModId = modId;
+          selectedModSkinId = modTargetSkinId;
+          didAutoSelect = true;
+        }
+      }
+    }
+
+    if (didAutoSelect) {
+      const autoMod = mods.find(mod => {
+        const modPath = mod.relativePath || mod.modName || "";
+        return modPath === selectedModId || mod.relativePath === selectedModId;
+      });
+      if (autoMod) {
+        const emitSkinId = autoMod.skinId ? Number(autoMod.skinId) : skinId;
+        if (bridge) bridge.send({ type: "select-skin-mod", championId, skinId: emitSkinId, modId: selectedModId, modData: autoMod });
+      }
+    }
+
+    refreshSummaryValues();
+    refreshButtonBadgeFromSelections();
+
+    if (!isOpen || rightPaneMode !== "picker" || activeTab !== "skins") return;
+
+    updateModEntries(mods);
+
+    if (didAutoSelect && selectedModId) {
+      const button = panel?._modList?.querySelector(`[data-mod-id="${selectedModId}"] .mod-select-button`);
+      if (button) {
+        button.textContent = "Selected";
+        button.classList.add("selected");
+      }
+    }
+  }
+
+  function handleMapSelect(mapId, buttonElement, mapData) {
+    const parentLi = buttonElement.closest("li");
+    if (selectedMapId === mapId) {
+      selectedMapId = null;
+      buttonElement.textContent = "Select";
+      buttonElement.classList.remove("selected");
+      if (parentLi) parentLi.classList.remove("selected-row");
+      if (bridge) bridge.send({ type: "select-map", mapId: null });
+    } else {
+      if (selectedMapId) {
+        const prevLi = panel?._mapsList?.querySelector(`[data-map-id="${selectedMapId}"]`);
+        if (prevLi) {
+          const previousButton = prevLi.querySelector(".mod-select-button");
+          if (previousButton) { previousButton.textContent = "Select"; previousButton.classList.remove("selected"); }
+          prevLi.classList.remove("selected-row");
+        }
+      }
+      selectedMapId = mapId;
+      buttonElement.textContent = "Selected";
+      buttonElement.classList.add("selected");
+      if (parentLi) parentLi.classList.add("selected-row");
+      if (bridge) bridge.send({ type: "select-map", mapId, mapData });
+    }
+
+    updateNoneRow(panel?._mapsList, !selectedMapId);
+    refreshSummaryValues();
+    refreshButtonBadgeFromSelections();
+  }
+
+  function updateMapsEntries(mapsList) {
+    if (!panel || !panel._mapsList || !panel._mapsLoading) return;
+
+    const mapsListEl = panel._mapsList;
+    const loadingEl = panel._mapsLoading;
+
+    mapsListEl.innerHTML = "";
+
+    if (!mapsList || mapsList.length === 0) {
+      loadingEl.textContent = "No maps found";
+      loadingEl.style.display = "block";
+      return;
+    }
+
+    loadingEl.style.display = "none";
+
+    {
+      const noneItem = document.createElement("li"); noneItem.setAttribute("data-map-id", "__none__");
+      const noneRow = document.createElement("div"); noneRow.className = "mod-name-row";
+      const noneName = document.createElement("div"); noneName.className = "mod-name none-label"; noneName.textContent = "None";
+      noneRow.appendChild(noneName);
+      const noneBtn = document.createElement("button"); noneBtn.className = "mod-select-button";
+      const nothingSelected = !selectedMapId;
+      noneBtn.textContent = nothingSelected ? "Selected" : "Select";
+      if (nothingSelected) { noneBtn.classList.add("selected"); noneItem.classList.add("selected-row"); }
+      noneBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        if (selectedMapId) {
+          const prevLi = mapsListEl.querySelector(`[data-map-id="${selectedMapId}"]`);
+          if (prevLi) {
+            const prevBtn = prevLi.querySelector(".mod-select-button");
+            if (prevBtn) { prevBtn.textContent = "Select"; prevBtn.classList.remove("selected"); }
+            prevLi.classList.remove("selected-row");
+          }
+          selectedMapId = null;
+          if (bridge) bridge.send({ type: "select-map", mapId: null });
+        }
+        noneBtn.textContent = "Selected"; noneBtn.classList.add("selected"); noneItem.classList.add("selected-row");
+        refreshSummaryValues(); refreshButtonBadgeFromSelections();
+      });
+      noneRow.appendChild(noneBtn); noneItem.appendChild(noneRow); mapsListEl.appendChild(noneItem);
+    }
+
+    mapsList.forEach((map) => {
+      const listItem = document.createElement("li");
+      const mapId = map.id || map.name || `map-${Date.now()}-${Math.random()}`;
+
+      const mapNameRow = document.createElement("div"); mapNameRow.className = "mod-name-row";
+      const mapName = document.createElement("div"); mapName.className = "mod-name"; mapName.textContent = cleanModName(map.name) || "Unnamed map";
+      mapNameRow.appendChild(mapName);
+
+      const selectButton = document.createElement("button"); selectButton.className = "mod-select-button";
+      listItem.setAttribute("data-map-id", mapId);
+
+      if (selectedMapId === mapId) {
+        selectButton.textContent = "Selected"; selectButton.classList.add("selected"); listItem.classList.add("selected-row");
+      } else { selectButton.textContent = "Select"; }
+
+      selectButton.addEventListener("click", (e) => { e.stopPropagation(); handleMapSelect(mapId, selectButton, map); });
+
+      mapNameRow.appendChild(selectButton); listItem.appendChild(mapNameRow);
+
+      if (map.description) {
+        const mapDesc = document.createElement("div"); mapDesc.className = "mod-description"; mapDesc.textContent = map.description;
+        listItem.appendChild(mapDesc);
+      }
+
+      mapsListEl.appendChild(listItem);
+    });
+  }
+
+  function handleMapsResponse(event) {
+    const detail = event?.detail;
+    if (!detail || detail.type !== "maps-response") return;
+
+    const mapsList = Array.isArray(detail.maps) ? detail.maps :[];
+    lastMapsList = mapsList; // CACHE IT
+
+    const historicMod = detail.historicMod;
+    if (historicMod && !selectedMapId) {
+      const historicMap = mapsList.find(map => {
+        const mapId = map.id || "";
+        return mapId.replace(/\\/g, "/") === String(historicMod).replace(/\\/g, "/");
+      });
+
+      if (historicMap) {
+        const mapId = historicMap.id || historicMap.name || `map-${Date.now()}-${Math.random()}`;
+        selectedMapId = mapId;
+      }
+    }
+
+    refreshSummaryValues();
+    refreshButtonBadgeFromSelections();
+
+    if (isOpen && rightPaneMode === "picker" && activeTab === "maps") {
+      updateMapsEntries(mapsList);
+    }
+
+    if (historicMod && selectedMapId) {
+      const historicMap = mapsList.find(map => {
+        const mapId = map.id || map.name || `map-${Date.now()}-${Math.random()}`;
+        return mapId === selectedMapId;
+      });
+      if (historicMap) {
+        const button = panel?._mapsList?.querySelector(`[data-map-id="${selectedMapId}"] .mod-select-button`);
+        if (button) { button.textContent = "Selected"; button.classList.add("selected"); }
+        if (bridge) bridge.send({ type: "select-map", mapId: selectedMapId, mapData: historicMap });
+      }
+    }
+  }
+
+  function handleFontSelect(fontId, buttonElement, fontData) {
+    const parentLi = buttonElement.closest("li");
+    if (selectedFontId === fontId) {
+      selectedFontId = null;
+      buttonElement.textContent = "Select"; buttonElement.classList.remove("selected");
+      if (parentLi) parentLi.classList.remove("selected-row");
+      if (bridge) bridge.send({ type: "select-font", fontId: null });
+    } else {
+      if (selectedFontId) {
+        const prevLi = panel?._fontsList?.querySelector(`[data-font-id="${selectedFontId}"]`);
+        if (prevLi) {
+          const previousButton = prevLi.querySelector(".mod-select-button");
+          if (previousButton) { previousButton.textContent = "Select"; previousButton.classList.remove("selected"); }
+          prevLi.classList.remove("selected-row");
+        }
+      }
+      selectedFontId = fontId;
+      buttonElement.textContent = "Selected"; buttonElement.classList.add("selected");
+      if (parentLi) parentLi.classList.add("selected-row");
+      if (bridge) bridge.send({ type: "select-font", fontId, fontData });
+    }
+
+    updateNoneRow(panel?._fontsList, !selectedFontId);
+    refreshSummaryValues(); refreshButtonBadgeFromSelections();
+  }
+
+  function updateFontsEntries(fontsList) {
+    if (!panel || !panel._fontsList || !panel._fontsLoading) return;
+
+    const fontsListEl = panel._fontsList;
+    const loadingEl = panel._fontsLoading;
+
+    fontsListEl.innerHTML = "";
+
+    if (!fontsList || fontsList.length === 0) {
+      loadingEl.textContent = "No fonts found";
+      loadingEl.style.display = "block";
+      return;
+    }
+
+    loadingEl.style.display = "none";
+
+    {
+      const noneItem = document.createElement("li"); noneItem.setAttribute("data-font-id", "__none__");
+      const noneRow = document.createElement("div"); noneRow.className = "mod-name-row";
+      const noneName = document.createElement("div"); noneName.className = "mod-name none-label"; noneName.textContent = "None";
+      noneRow.appendChild(noneName);
+      const noneBtn = document.createElement("button"); noneBtn.className = "mod-select-button";
+      const nothingSelected = !selectedFontId;
+      noneBtn.textContent = nothingSelected ? "Selected" : "Select";
+      if (nothingSelected) { noneBtn.classList.add("selected"); noneItem.classList.add("selected-row"); }
+      noneBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        if (selectedFontId) {
+          const prevLi = fontsListEl.querySelector(`[data-font-id="${selectedFontId}"]`);
+          if (prevLi) {
+            const prevBtn = prevLi.querySelector(".mod-select-button");
+            if (prevBtn) { prevBtn.textContent = "Select"; prevBtn.classList.remove("selected"); }
+            prevLi.classList.remove("selected-row");
+          }
+          selectedFontId = null;
+          if (bridge) bridge.send({ type: "select-font", fontId: null });
+        }
+        noneBtn.textContent = "Selected"; noneBtn.classList.add("selected"); noneItem.classList.add("selected-row");
+        refreshSummaryValues(); refreshButtonBadgeFromSelections();
+      });
+      noneRow.appendChild(noneBtn); noneItem.appendChild(noneRow); fontsListEl.appendChild(noneItem);
+    }
+
+    fontsList.forEach((font) => {
+      const listItem = document.createElement("li");
+      const fontId = font.id || font.name || `font-${Date.now()}-${Math.random()}`;
+
+      const fontNameRow = document.createElement("div"); fontNameRow.className = "mod-name-row";
+      const fontName = document.createElement("div"); fontName.className = "mod-name"; fontName.textContent = cleanModName(font.name) || "Unnamed font";
+      fontNameRow.appendChild(fontName);
+
+      const selectButton = document.createElement("button"); selectButton.className = "mod-select-button";
+      listItem.setAttribute("data-font-id", fontId);
+
+      if (selectedFontId === fontId) {
+        selectButton.textContent = "Selected"; selectButton.classList.add("selected"); listItem.classList.add("selected-row");
+      } else { selectButton.textContent = "Select"; }
+
+      selectButton.addEventListener("click", (e) => { e.stopPropagation(); handleFontSelect(fontId, selectButton, font); });
+
+      fontNameRow.appendChild(selectButton); listItem.appendChild(fontNameRow);
+
+      if (font.description) {
+        const fontDesc = document.createElement("div"); fontDesc.className = "mod-description"; fontDesc.textContent = font.description;
+        listItem.appendChild(fontDesc);
+      }
+
+      fontsListEl.appendChild(listItem);
+    });
+  }
+
+  function handleFontsResponse(event) {
+    const detail = event?.detail;
+    if (!detail || detail.type !== "fonts-response") return;
+
+    const fontsList = Array.isArray(detail.fonts) ? detail.fonts :[];
+    lastFontsList = fontsList; // CACHE IT
+
+    const historicMod = detail.historicMod;
+    if (historicMod && !selectedFontId) {
+      const historicFont = fontsList.find(font => {
+        const fontId = font.id || "";
+        return fontId.replace(/\\/g, "/") === String(historicMod).replace(/\\/g, "/");
+      });
+
+      if (historicFont) {
+        const fontId = historicFont.id || historicFont.name || `font-${Date.now()}-${Math.random()}`;
+        selectedFontId = fontId;
+      }
+    }
+
+    refreshSummaryValues();
+    refreshButtonBadgeFromSelections();
+
+    if (isOpen && rightPaneMode === "picker" && activeTab === "fonts") {
+      updateFontsEntries(fontsList);
+    }
+
+    if (historicMod && selectedFontId) {
+      const historicFont = fontsList.find(font => {
+        const fontId = font.id || font.name || `font-${Date.now()}-${Math.random()}`;
+        return fontId === selectedFontId;
+      });
+      if (historicFont) {
+        const button = panel?._fontsList?.querySelector(`[data-font-id="${selectedFontId}"] .mod-select-button`);
+        if (button) { button.textContent = "Selected"; button.classList.add("selected"); }
+        if (bridge) bridge.send({ type: "select-font", fontId: selectedFontId, fontData: historicFont });
+      }
+    }
+  }
+
+  function handleAnnouncerSelect(announcerId, buttonElement, announcerData) {
+    const parentLi = buttonElement.closest("li");
+    if (selectedAnnouncerId === announcerId) {
+      selectedAnnouncerId = null;
+      buttonElement.textContent = "Select"; buttonElement.classList.remove("selected");
+      if (parentLi) parentLi.classList.remove("selected-row");
+      if (bridge) bridge.send({ type: "select-announcer", announcerId: null });
+    } else {
+      if (selectedAnnouncerId) {
+        const prevLi = panel?._announcersList?.querySelector(`[data-announcer-id="${selectedAnnouncerId}"]`);
+        if (prevLi) {
+          const previousButton = prevLi.querySelector(".mod-select-button");
+          if (previousButton) { previousButton.textContent = "Select"; previousButton.classList.remove("selected"); }
+          prevLi.classList.remove("selected-row");
+        }
+      }
+      selectedAnnouncerId = announcerId;
+      buttonElement.textContent = "Selected"; buttonElement.classList.add("selected");
+      if (parentLi) parentLi.classList.add("selected-row");
+      if (bridge) bridge.send({ type: "select-announcer", announcerId, announcerData });
+    }
+
+    updateNoneRow(panel?._announcersList, !selectedAnnouncerId);
+    refreshSummaryValues(); refreshButtonBadgeFromSelections();
+  }
+
+  function updateAnnouncersEntries(announcersList) {
+    if (!panel || !panel._announcersList || !panel._announcersLoading) return;
+
+    const announcersListEl = panel._announcersList;
+    const loadingEl = panel._announcersLoading;
+
+    announcersListEl.innerHTML = "";
+
+    if (!announcersList || announcersList.length === 0) {
+      loadingEl.textContent = "No announcers found";
+      loadingEl.style.display = "block";
+      return;
+    }
+
+    loadingEl.style.display = "none";
+
+    {
+      const noneItem = document.createElement("li"); noneItem.setAttribute("data-announcer-id", "__none__");
+      const noneRow = document.createElement("div"); noneRow.className = "mod-name-row";
+      const noneName = document.createElement("div"); noneName.className = "mod-name none-label"; noneName.textContent = "None";
+      noneRow.appendChild(noneName);
+      const noneBtn = document.createElement("button"); noneBtn.className = "mod-select-button";
+      const nothingSelected = !selectedAnnouncerId;
+      noneBtn.textContent = nothingSelected ? "Selected" : "Select";
+      if (nothingSelected) { noneBtn.classList.add("selected"); noneItem.classList.add("selected-row"); }
+      noneBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        if (selectedAnnouncerId) {
+          const prevLi = announcersListEl.querySelector(`[data-announcer-id="${selectedAnnouncerId}"]`);
+          if (prevLi) {
+            const prevBtn = prevLi.querySelector(".mod-select-button");
+            if (prevBtn) { prevBtn.textContent = "Select"; prevBtn.classList.remove("selected"); }
+            prevLi.classList.remove("selected-row");
+          }
+          selectedAnnouncerId = null;
+          if (bridge) bridge.send({ type: "select-announcer", announcerId: null });
+        }
+        noneBtn.textContent = "Selected"; noneBtn.classList.add("selected"); noneItem.classList.add("selected-row");
+        refreshSummaryValues(); refreshButtonBadgeFromSelections();
+      });
+      noneRow.appendChild(noneBtn); noneItem.appendChild(noneRow); announcersListEl.appendChild(noneItem);
+    }
+
+    announcersList.forEach((announcer) => {
+      const listItem = document.createElement("li");
+      const announcerId = announcer.id || announcer.name || `announcer-${Date.now()}-${Math.random()}`;
+
+      const announcerNameRow = document.createElement("div"); announcerNameRow.className = "mod-name-row";
+      const announcerName = document.createElement("div"); announcerName.className = "mod-name"; announcerName.textContent = cleanModName(announcer.name) || "Unnamed announcer";
+      announcerNameRow.appendChild(announcerName);
+
+      const selectButton = document.createElement("button"); selectButton.className = "mod-select-button";
+      listItem.setAttribute("data-announcer-id", announcerId);
+
+      if (selectedAnnouncerId === announcerId) {
+        selectButton.textContent = "Selected"; selectButton.classList.add("selected"); listItem.classList.add("selected-row");
+      } else { selectButton.textContent = "Select"; }
+
+      selectButton.addEventListener("click", (e) => { e.stopPropagation(); handleAnnouncerSelect(announcerId, selectButton, announcer); });
+
+      announcerNameRow.appendChild(selectButton); listItem.appendChild(announcerNameRow);
+
+      if (announcer.description) {
+        const announcerDesc = document.createElement("div"); announcerDesc.className = "mod-description"; announcerDesc.textContent = announcer.description;
+        listItem.appendChild(announcerDesc);
+      }
+
+      announcersListEl.appendChild(listItem);
+    });
+  }
+
+  function handleAnnouncersResponse(event) {
+    const detail = event?.detail;
+    if (!detail || detail.type !== "maps-response") return;
+
+    const mapsList = Array.isArray(detail.maps) ? detail.maps :[];
+    lastMapsList = mapsList; // CACHE IT
+
+    const historicMod = detail.historicMod;
+    if (historicMod && !selectedMapId) {
+      const historicMap = mapsList.find(map => {
+        const mapId = map.id || "";
+        // ДОБАВЛЕНО .toLowerCase() для игнорирования регистра
+        return mapId.replace(/\\/g, "/").toLowerCase() === String(historicMod).replace(/\\/g, "/").toLowerCase();
+      });
+
+      if (historicMap) {
+        const mapId = historicMap.id || historicMap.name || `map-${Date.now()}-${Math.random()}`;
+        selectedMapId = mapId;
+      }
+    }
+
+    refreshSummaryValues();
+    refreshButtonBadgeFromSelections();
+
+    if (isOpen && rightPaneMode === "picker" && activeTab === "maps") {
+      updateMapsEntries(mapsList);
+    }
+
+    if (historicMod && selectedMapId) {
+      const historicMap = mapsList.find(map => {
+        const mapId = map.id || map.name || `map-${Date.now()}-${Math.random()}`;
+        return mapId === selectedMapId;
+      });
+      if (historicMap) {
+        const button = panel?._mapsList?.querySelector(`[data-map-id="${selectedMapId}"] .mod-select-button`);
+        if (button) { button.textContent = "Selected"; button.classList.add("selected"); }
+        if (bridge) bridge.send({ type: "select-map", mapId: selectedMapId, mapData: historicMap });
+      }
+    }
+  }
+
+  function handleCategoryModSelect(categoryId, otherId, buttonElement, otherData) {
+    const parentLi = buttonElement.closest("li");
+    const selectedIds = getSelectedIdsForCategory(categoryId);
+    const index = selectedIds.indexOf(otherId);
+    if (index !== -1) {
+      // Deselect
+      selectedIds.splice(index, 1);
+      buttonElement.textContent = "Select";
+      buttonElement.classList.remove("selected");
+      if (parentLi) parentLi.classList.remove("selected-row");
+      if (bridge) bridge.send({ type: "select-other", category: categoryId, otherId, otherData, action: "deselect" });
+    } else {
+      // Select
+      selectedIds.push(otherId);
+      buttonElement.textContent = "Selected";
+      buttonElement.classList.add("selected");
+      if (parentLi) parentLi.classList.add("selected-row");
+      if (bridge) bridge.send({ type: "select-other", category: categoryId, otherId, otherData, action: "select" });
+    }
+
+    const listEl = panel?.[`_${categoryId}List`];
+    updateNoneRow(listEl, selectedIds.length === 0);
+    refreshSummaryValues();
+    refreshButtonBadgeFromSelections();
+  }
+
+  function updateOtherCategoryEntries(categoryId, items) {
+    if (!panel) return;
+    const listEl = panel[`_${categoryId}List`];
+    const loadingEl = panel[`_${categoryId}Loading`];
+    if (!listEl || !loadingEl) return;
+
+    listEl.innerHTML = "";
+    const selectedIds = getSelectedIdsForCategory(categoryId);
+
+    if (!items || items.length === 0) {
+      const label = OTHER_CATEGORY_TABS.find((t) => t.id === categoryId)?.label || "mods";
+      loadingEl.textContent = `No ${label.toLowerCase()} found`;
+      loadingEl.style.display = "block";
+      return;
+    }
+
+    loadingEl.style.display = "none";
+
+    {
+      const noneItem = document.createElement("li"); noneItem.setAttribute("data-other-id", "__none__");
+      const noneRow = document.createElement("div"); noneRow.className = "mod-name-row";
+      const noneName = document.createElement("div"); noneName.className = "mod-name none-label"; noneName.textContent = "None";
+      noneRow.appendChild(noneName);
+      const noneBtn = document.createElement("button"); noneBtn.className = "mod-select-button";
+      const nothingSelected = selectedIds.length === 0;
+      noneBtn.textContent = nothingSelected ? "Selected" : "Select";
+      if (nothingSelected) { noneBtn.classList.add("selected"); noneItem.classList.add("selected-row"); }
+      noneBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const allSelectedLis = listEl.querySelectorAll("li.selected-row");
+        allSelectedLis.forEach((li) => {
+          if (li === noneItem) return;
+          const btn = li.querySelector(".mod-select-button");
+          if (btn) { btn.textContent = "Select"; btn.classList.remove("selected"); }
+          li.classList.remove("selected-row");
+        });
+        const ids = getSelectedIdsForCategory(categoryId);
+        for (const id of [...ids]) {
+          if (bridge) bridge.send({ type: "select-other", category: categoryId, otherId: id, otherData: null, action: "deselect" });
+        }
+        ids.length = 0; 
+        noneBtn.textContent = "Selected"; noneBtn.classList.add("selected"); noneItem.classList.add("selected-row");
+        refreshSummaryValues(); refreshButtonBadgeFromSelections();
+      });
+      noneRow.appendChild(noneBtn); noneItem.appendChild(noneRow); listEl.appendChild(noneItem);
+    }
+
+    items.forEach((other) => {
+      const listItem = document.createElement("li");
+      const otherId = other.id || other.name || `other-${Date.now()}-${Math.random()}`;
+
+      const otherNameRow = document.createElement("div"); otherNameRow.className = "mod-name-row";
+      const otherName = document.createElement("div"); otherName.className = "mod-name"; otherName.textContent = cleanModName(other.name || other.modName) || "Unnamed mod";
+      otherNameRow.appendChild(otherName);
+
+      const selectButton = document.createElement("button"); selectButton.className = "mod-select-button";
+      listItem.setAttribute("data-other-id", otherId);
+
+      if (selectedIds.includes(otherId)) {
+        selectButton.textContent = "Selected"; selectButton.classList.add("selected"); listItem.classList.add("selected-row");
+      } else { selectButton.textContent = "Select"; }
+
+      selectButton.addEventListener("click", (e) => { e.stopPropagation(); handleCategoryModSelect(categoryId, otherId, selectButton, other); });
+
+      otherNameRow.appendChild(selectButton); listItem.appendChild(otherNameRow);
+
+      if (other.description) {
+        const otherDesc = document.createElement("div"); otherDesc.className = "mod-description"; otherDesc.textContent = other.description;
+        listItem.appendChild(otherDesc);
+      }
+
+      listEl.appendChild(listItem);
+    });
+  }
+
+  function handleCategoryModsResponse(event) {
+    const detail = event?.detail;
+    if (!detail || detail.type !== "category-mods-response") return;
+
+    const category = String(detail.category || "").trim();
+    if (!OTHER_CATEGORY_TABS.some((t) => t.id === category)) return;
+
+    const modsList = Array.isArray(detail.mods) ? detail.mods :[];
+    lastCategoryModsById[category] = modsList;
+
+    const historicMod = detail.historicMod;
+    const historicMods = Array.isArray(historicMod) ? historicMod : (historicMod ? [historicMod] :[]);
+    if (historicMods.length > 0) {
+      for (const historicPath of historicMods) {
+        const match = modsList.find((m) => {
+          const id = (m?.id || "").replace(/\\/g, "/");
+          return id === String(historicPath).replace(/\\/g, "/");
+        });
+        if (!match) continue;
+        const otherId = match.id || match.name || `other-${Date.now()}-${Math.random()}`;
+        const selectedIds = getSelectedIdsForCategory(category);
+        if (!selectedIds.includes(otherId)) {
+          selectedIds.push(otherId);
+        }
+        const key = `${category}:${otherId}`;
+        if (!emittedHistoricSelectionKeys.has(key)) {
+          emittedHistoricSelectionKeys.add(key);
+          if (bridge) bridge.send({ type: "select-other", category, otherId, otherData: match, action: "select" });
+        }
+      }
+    }
+
+    refreshSummaryValues();
+    refreshButtonBadgeFromSelections();
+
+    if (!isOpen || rightPaneMode !== "picker" || activeTab !== category) return;
+
+    updateOtherCategoryEntries(category, modsList);
+
+    const listEl = panel?.[`_${category}List`];
+    if (listEl) {
+      for (const otherId of getSelectedIdsForCategory(category)) {
+        const btn = listEl.querySelector(`[data-other-id="${otherId}"] .mod-select-button`);
+        if (btn) {
+          btn.textContent = "Selected";
+          btn.classList.add("selected");
+        }
+      }
+    }
+  }
+
+  function handleOthersResponse(event) {
+    const detail = event?.detail;
+    if (!detail || detail.type !== "others-response") return;
+
+    const othersList = Array.isArray(detail.others) ? detail.others : [];
+    lastCategoryModsById["others"] = othersList;
+
+    const historicMod = detail.historicMod;
+    const historicMods = Array.isArray(historicMod) ? historicMod : (historicMod ?[historicMod] :[]);
+    
+    const selectedIds = getSelectedIdsForCategory("others");
+    if (historicMods.length > 0 && selectedIds.length === 0) {
+      const historicOthers =[];
+      for (const historicPath of historicMods) {
+        const historicOther = othersList.find(other => {
+          const otherId = other.id || "";
+          return otherId.replace(/\\/g, "/") === String(historicPath).replace(/\\/g, "/");
+        });
+        if (historicOther) historicOthers.push(historicOther);
+      }
+
+      for (const historicOther of historicOthers) {
+        const otherId = historicOther.id || historicOther.name || `other-${Date.now()}-${Math.random()}`;
+        if (!selectedIds.includes(otherId)) selectedIds.push(otherId);
+      }
+    }
+
+    refreshSummaryValues();
+    refreshButtonBadgeFromSelections();
+
+    if (!isOpen || rightPaneMode !== "picker" || !OTHER_CATEGORY_TABS.some((t) => t.id === activeTab)) return;
+
+    updateOtherCategoryEntries("others", othersList);
+
+    if (historicMods.length > 0 && selectedIds.length > 0) {
+      for (const historicPath of historicMods) {
+        const historicOther = othersList.find(other => {
+          const otherId = other.id || "";
+          return otherId.replace(/\\/g, "/") === String(historicPath).replace(/\\/g, "/");
+        });
+        if (historicOther) {
+          const otherId = historicOther.id || historicOther.name || `other-${Date.now()}-${Math.random()}`;
+          const button = OTHER_CATEGORY_TABS.map((t) => panel?.[`_${t.id}List`])
+            .filter(Boolean)
+            .map((listEl) => listEl.querySelector(`[data-other-id="${otherId}"] .mod-select-button`))
+            .find(Boolean);
+          if (button) {
+            button.textContent = "Selected";
+            button.classList.add("selected");
+          }
+          if (bridge) bridge.send({ type: "select-other", category: "others", otherId, otherData: historicOther, action: "select" });
+        }
+      }
+    }
+  }
+
+  function handleChampionLocked(event) {
+    const locked = Boolean(event?.detail?.locked);
+    if (locked === championLocked) return;
+
+    if (locked && !championLocked) {
+      selectedModId = null;
+      selectedModSkinId = null;
+      lastChampionSelectSession = championSelectRoot;
+      isFirstOpenInSession = true;
+    }
+
+    championLocked = locked;
+    refreshSummaryValues();
+    refreshButtonBadgeFromSelections();
+  }
+
+  function positionPanel(panelElement, buttonElement) {
+      if (!panelElement || !buttonElement) return;
+  
+      const flyoutFrame = panelElement.querySelector(".flyout");
+      if (!flyoutFrame) return;
+  
+      const rect = buttonElement.getBoundingClientRect();
+      let flyoutRect = flyoutFrame.getBoundingClientRect();
+  
+      if (flyoutRect.width === 0) {
+        const modal = flyoutFrame.querySelector(".chroma-modal");
+        if (modal) {
+          const modalRect = modal.getBoundingClientRect();
+          if (modalRect.width > 0) flyoutRect = { width: modalRect.width, height: flyoutRect.height || 400 };
+          else flyoutRect = { width: rect.width + 32, height: 400 };
+        } else {
+          flyoutRect = { width: rect.width + 32, height: 400 };
+        }
+      }
+  
+      // Всегда центрируем панель по центру экрана через фиксированное позиционирование,
+      // чтобы избежать обрезания из-за скрытых границ (overflow: hidden) лобби.
+      const centerX = (window.innerWidth - flyoutRect.width) / 2;
+      const centerY = (window.innerHeight - flyoutRect.height) / 2;
+  
+      flyoutFrame.style.position = "fixed";
+      flyoutFrame.style.overflow = "visible";
+      flyoutFrame.style.top = `${centerY}px`;
+      flyoutFrame.style.left = `${centerX}px`;
+      flyoutFrame.style.right = ""; 
+      flyoutFrame.style.bottom = "";
+      flyoutFrame.style.transform = ""; 
+  
+      panelElement.style.position = "fixed";
+      panelElement.style.top = "0";
+      panelElement.style.left = "0";
+      panelElement.style.width = "100%";
+      panelElement.style.height = "100%";
+      panelElement.style.pointerEvents = "none";
+      flyoutFrame.style.pointerEvents = "all";
+    }
+
+  function whenReady(cb) {
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", cb, { once: true });
+      return;
+    }
+    cb();
+  }
+
+  whenReady(async () => {
+    try {
+      bridge = await waitForBridge();
+      console.log(`${LOG_PREFIX} Bridge connected`);
+    } catch (e) {
+      console.error(`${LOG_PREFIX} Failed to connect to bridge:`, e);
+    }
+
+    injectCSS();
+    createButton();
+    createPanel();
+
+    window.addEventListener(EVENT_SKIN_STATE, handleSkinState, { passive: true });
+
+    if (bridge) {
+      bridge.subscribe("champions-list-response", (data) => handleChampionsListResponse(data));
+      bridge.subscribe("champion-skins-response", (data) => handleChampionSkinsResponse(data));
+      bridge.subscribe("skin-mods-response", (data) => handleModsResponse({ detail: data }));
+      bridge.subscribe("maps-response", (data) => handleMapsResponse({ detail: data }));
+      bridge.subscribe("fonts-response", (data) => handleFontsResponse({ detail: data }));
+      bridge.subscribe("announcers-response", (data) => handleAnnouncersResponse({ detail: data }));
+      bridge.subscribe("category-mods-response", (data) => handleCategoryModsResponse({ detail: data }));
+      bridge.subscribe("others-response", (data) => handleOthersResponse({ detail: data }));
+      bridge.subscribe("champion-locked", (data) => handleChampionLocked({ detail: data }));
+      bridge.subscribe("custom-mod-state", (data) => {
+        if (!data.active && selectedModId) {
+          selectedModId = null;
+          selectedModSkinId = null;
+          if (panel && panel._modList) {
+            panel._modList.querySelectorAll("li.selected-row").forEach((li) => {
+              li.classList.remove("selected-row");
+              const btn = li.querySelector(".mod-select-button");
+              if (btn) { btn.textContent = "Select"; btn.classList.remove("selected"); }
+            });
+            updateNoneRow(panel._modList, true);
+          }
+          refreshSummaryValues();
+          refreshButtonBadgeFromSelections();
+        }
+      });
+
+      bridge.subscribe("swiftplay-state", (data) => {
+        isSwiftplayMode = data.active;
+      });
+
+      bridge.subscribe("phase-change", (data) => {
+        if (bridgeSocket && bridgeReady) {
+            bridge.send({type: "request-swiftplay-state"});
+        }
+        if (data.phase !== "Lobby" && data.phase !== "ChampSelect" && data.phase !== "FINALIZATION") {
+            if (isOpen && !isGlobalMode) closePanel();
+        }
+      });
+
+      bridge.onReady(() => {
+        requestMaps();
+        requestFonts();
+        requestAnnouncers();
+        for (const t of OTHER_CATEGORY_TABS) {
+          requestCategoryMods(t.id);
+        }
+        bridge.send({type: "request-swiftplay-state"});
+      });
+    }
+
+    const repositionButton = () => {
+      if (isOpen && panel && button && !isGlobalMode) {
+        positionPanel(panel, button);
+      }
+    };
+
+    window.addEventListener("resize", repositionButton);
+    window.addEventListener("scroll", repositionButton);
+
+    // ГЛОБАЛЬНЫЙ СЛУШАТЕЛЬ ДЛЯ ОТКРЫТИЯ ИЗ SETTINGSPANEL
+    window.addEventListener("rose-open-custom-wheel", () => {
+      isGlobalMode = true;
+      if (!panel) createPanel();
+      if (!panel.parentNode) document.body.appendChild(panel);
+      
+      panel.style.display = "block";
+      panel.style.pointerEvents = "none"; 
+
+      if (isFirstOpenInSession) {
+        activeTab = "skins";
+        isFirstOpenInSession = false;
+      }
+
+      setRightPaneMode("summary");
+      refreshSummaryValues();
+
+      panel.querySelectorAll(".tab-content").forEach((content) => {
+        if (content && content.dataset && content.dataset.tab === activeTab) {
+          content.classList.add("active");
+        } else if (content) {
+          content.classList.remove("active");
+        }
+      });
+
+      requestModsForCurrentSkin();
+      requestMaps();
+      requestFonts();
+      requestAnnouncers();
+      for (const t of OTHER_CATEGORY_TABS) {
+        requestCategoryMods(t.id);
+      }
+
+      const flyoutFrame = panel.querySelector(".flyout");
+      if (flyoutFrame) {
+        flyoutFrame.style.position = "fixed";
+        flyoutFrame.style.top = "50%";
+        flyoutFrame.style.left = "50%";
+        flyoutFrame.style.transform = "translate(-50%, -50%)";
+        flyoutFrame.style.right = ""; 
+        flyoutFrame.style.bottom = "";
+      }
+
+      isOpen = true;
+
+      const closeHandler = (e) => {
+        if (panel && panel.parentNode && !panel.contains(e.target)) {
+          closePanel();
+          document.removeEventListener("click", closeHandler);
+        }
+      };
+      setTimeout(() => document.addEventListener("click", closeHandler), 100);
+    });
+
+    // Smart Visibility Controller
+    setInterval(() => {
+      if (!button) return;
+      
+      const inCS = !!document.querySelector(".champion-select");
+      const inLobby = isActuallyInLobby();
+      const overlayActive = isOverlayOpen();
+      
+      const shouldBeVisible = (inCS || (inLobby && isSwiftplayMode)) && !overlayActive;
+
+      if (shouldBeVisible) {
+        attachToChampionSelect();
+        button.style.setProperty("display", "block", "important");
+        button.style.setProperty("visibility", "visible", "important");
+        button.removeAttribute("data-hidden");
+      } else {
+        button.style.setProperty("display", "none", "important");
+        button.style.setProperty("visibility", "hidden", "important");
+        button.setAttribute("data-hidden", "true");
+        if (isOpen && !isGlobalMode) closePanel();
+      }
+    }, 150);
+  });
+
+  function openChampionSelection() {
+      const existingDialog = document.getElementById("champion-selection-dialog");
+      if (existingDialog) {
+        existingDialog.remove();
+      }
+  
+      const dialog = document.createElement("div");
+      dialog.id = "champion-selection-dialog";
+      dialog.addEventListener("click", (e) => {
+        if (e.target === dialog) {
+          closeChampionSelection();
+        }
+      });
+      document.body.appendChild(dialog);
+  
+      const flyoutFrame = document.createElement("div");
+      flyoutFrame.id = "champion-selection-flyout";
+      flyoutFrame.className = "flyout";
+      flyoutFrame.style.maxHeight = "75vh";
+      flyoutFrame.style.width = "700px";
+      flyoutFrame.style.overflowY = "hidden";
+      flyoutFrame.style.overflowX = "hidden";
+      flyoutFrame.addEventListener("click", (e) => e.stopPropagation());
+  
+      const flyoutContent = document.createElement("div");
+      flyoutContent.className = "lc-flyout-content";
+  
+      const header = document.createElement("div");
+      header.className = "dialog-header";
+  
+      const backButton = document.createElement("button");
+      backButton.className = "back-button";
+      backButton.innerHTML = '<svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"></polyline></svg>';
+      backButton.setAttribute("aria-label", "Go back");
+      backButton.addEventListener("click", () => {
+        closeChampionSelection();
+      });
+      header.appendChild(backButton);
+  
+      const titleWrapper = document.createElement("div");
+      titleWrapper.className = "dialog-title-wrapper";
+      titleWrapper.textContent = "Select Champion";
+      header.appendChild(titleWrapper);
+  
+      flyoutContent.appendChild(header);
+  
+      const searchContainer = document.createElement("div");
+      searchContainer.className = "settings-section";
+  
+      let flatInput;
+      try {
+        flatInput = document.createElement("lol-uikit-flat-input");
+      } catch (e) {
+        flatInput = document.createElement("div");
+        flatInput.className = "lol-uikit-flat-input";
+      }
+      flatInput.className = "champion-search-input";
+      flyoutContent.style.width = "700px";
+  
+      const searchInput = document.createElement("input");
+      searchInput.type = "search";
+      searchInput.name = "champion_search";
+      searchInput.id = "champion-search-input";
+      searchInput.placeholder = "Search champions...";
+      searchInput.autocomplete = "off";
+      searchInput.autocorrect = "off";
+      searchInput.autocapitalize = "off";
+      searchInput.spellcheck = "false";
+  
+      flatInput.appendChild(searchInput);
+      searchContainer.appendChild(flatInput);
+      flyoutContent.appendChild(searchContainer);
+  
+      const loadingIndicator = document.createElement("div");
+      loadingIndicator.id = "champion-loading";
+      loadingIndicator.textContent = "Loading champions...";
+      loadingIndicator.style.color = "#cdbe91";
+      loadingIndicator.style.textAlign = "center";
+      loadingIndicator.style.padding = "20px";
+      loadingIndicator.style.fontFamily = '"Beaufort for LOL", serif';
+      flyoutContent.appendChild(loadingIndicator);
+  
+      const championsGridWrapper = document.createElement("div");
+      championsGridWrapper.id = "champions-grid-wrapper";
+      championsGridWrapper.style.overflowY = "auto";
+      championsGridWrapper.style.overflowX = "hidden";
+      championsGridWrapper.style.maxHeight = "45vh";
+      championsGridWrapper.style.marginTop = "12px";
+  
+      const championsGrid = document.createElement("div");
+      championsGrid.id = "champions-grid";
+      championsGridWrapper.appendChild(championsGrid);
+      flyoutContent.appendChild(championsGridWrapper);
+  
+      flyoutFrame.appendChild(flyoutContent);
+      dialog.appendChild(flyoutFrame);
+  
+      if (bridge) bridge.send({
+        type: "add-custom-mods-champion-selected",
+        action: "list",
+      });
+  
+      searchInput.addEventListener("input", (e) => {
+        const searchTerm = e.target.value.toLowerCase().trim();
+        const allChampions = window.__roseAllChampions || [];
+        const filtered = allChampions.filter((champ) =>
+          champ.name.toLowerCase().includes(searchTerm)
+        );
+        renderChampionsGrid(filtered);
+      });
+  
+      window.__roseChampionRenderer = renderChampionsGrid;
+    }
+  
+    function closeChampionSelection() {
+      const dialog = document.getElementById("champion-selection-dialog");
+      if (dialog) {
+        dialog.remove();
+      }
+      delete window.__roseChampionRenderer;
+      delete window.__roseAllChampions;
+    }
+  
+    function renderChampionsGrid(champions) {
+      const championsGrid = document.getElementById("champions-grid");
+      if (!championsGrid) return;
+  
+      championsGrid.innerHTML = "";
+  
+      if (champions.length === 0) {
+        championsGrid.innerHTML = '<div style="grid-column: 1 / -1; color: #cdbe91; text-align: center; padding: 20px; font-family: \'Beaufort for LOL\', serif;">No champions found matching your search.</div>';
+        return;
+      }
+  
+      champions.forEach((champion) => {
+        const card = document.createElement("div");
+        card.className = "champion-card";
+  
+        const img = document.createElement("img");
+        img.src = `/lol-game-data/assets/v1/champion-icons/${champion.id}.png`;
+        img.alt = champion.name;
+        img.loading = "lazy";
+        img.onerror = function () { this.style.display = "none"; };
+        card.appendChild(img);
+  
+        const name = document.createElement("div");
+        name.className = "champion-name";
+        name.textContent = champion.name;
+        card.appendChild(name);
+  
+        card.addEventListener("click", () => handleChampionSelection(champion.id));
+        championsGrid.appendChild(card);
+      });
+    }
+  
+    function handleChampionSelection(championId) {
+      closeChampionSelection();
+      openSkinSelection(championId);
+    }
+  
+    function openSkinSelection(championId) {
+      const existingDialog = document.getElementById("skin-selection-dialog");
+      if (existingDialog) {
+        existingDialog.remove();
+      }
+  
+      const dialog = document.createElement("div");
+      dialog.id = "skin-selection-dialog";
+      dialog.addEventListener("click", (e) => {
+        if (e.target === dialog) {
+          closeSkinSelection();
+        }
+      });
+      document.body.appendChild(dialog);
+  
+      const flyoutFrame = document.createElement("div");
+      flyoutFrame.id = "skin-selection-flyout";
+      flyoutFrame.className = "flyout";
+      flyoutFrame.style.maxHeight = "75vh";
+      flyoutFrame.style.width = "700px";
+      flyoutFrame.style.overflowY = "hidden";
+      flyoutFrame.style.overflowX = "hidden";
+      flyoutFrame.addEventListener("click", (e) => e.stopPropagation());
+  
+      const flyoutContent = document.createElement("div");
+      flyoutContent.className = "lc-flyout-content";
+  
+      const header = document.createElement("div");
+      header.className = "dialog-header";
+      header.id = "skin-selection-header";
+  
+      const backButton = document.createElement("button");
+      backButton.className = "back-button";
+      backButton.innerHTML = '<svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"></polyline></svg>';
+      backButton.setAttribute("aria-label", "Go back");
+      backButton.addEventListener("click", (e) => {
+        e.stopPropagation();
+        closeSkinSelection();
+        openChampionSelection();
+      });
+      header.appendChild(backButton);
+  
+      const titleWrapper = document.createElement("div");
+      titleWrapper.className = "dialog-title-wrapper";
+      titleWrapper.textContent = "Select Skin";
+      header.appendChild(titleWrapper);
+  
+      flyoutContent.appendChild(header);
+  
+      const loadingIndicator = document.createElement("div");
+      loadingIndicator.id = "skin-loading";
+      loadingIndicator.textContent = "Loading skins...";
+      loadingIndicator.style.color = "#cdbe91";
+      loadingIndicator.style.textAlign = "center";
+      loadingIndicator.style.padding = "20px";
+      loadingIndicator.style.fontFamily = '"Beaufort for LOL", serif';
+      flyoutContent.appendChild(loadingIndicator);
+  
+      const skinsList = document.createElement("div");
+      skinsList.style.overflowY = "auto";
+      skinsList.style.overflowX = "hidden";
+      skinsList.id = "skins-list";
+  
+      const skinsListContainer = document.createElement("div");
+      skinsListContainer.className = "skins-list-container";
+      skinsList.appendChild(skinsListContainer);
+  
+      flyoutContent.appendChild(skinsList);
+  
+      flyoutFrame.appendChild(flyoutContent);
+      dialog.appendChild(flyoutFrame);
+  
+      if (bridge) bridge.send({
+        type: "add-custom-mods-skin-selected",
+        action: "list",
+        championId: championId,
+      });
+  
+      window.__roseSelectedChampionId = championId;
+    }
+  
+    function closeSkinSelection() {
+      const dialog = document.getElementById("skin-selection-dialog");
+      if (dialog) {
+        dialog.remove();
+      }
+      delete window.__roseSelectedChampionId;
+    }
+  
+    function handleSkinSelection(championId, skinId) {
+      closeSkinSelection();
+  
+      if (bridge) bridge.send({
+        type: "add-custom-mods-skin-selected",
+        action: "create",
+        championId: championId,
+        skinId: skinId,
+      });
+      log("info", `Skin selected: champion=${championId}, skin=${skinId}`);
+    }
+  
+    function handleChampionsListResponse(payload) {
+      const loadingIndicator = document.getElementById("champion-loading");
+      if (loadingIndicator) {
+        loadingIndicator.style.display = "none";
+      }
+  
+      const championsGrid = document.getElementById("champions-grid");
+      if (!championsGrid) return;
+  
+      if (payload.error) {
+        championsGrid.innerHTML = `<div style="color: #ff6b6b; text-align: center; padding: 20px; font-family: 'Beaufort for LOL', serif;">${escapeHtml(payload.error)}</div>`;
+        return;
+      }
+  
+      const champions = payload.champions || [];
+      if (champions.length === 0) {
+        championsGrid.innerHTML = `<div style="color: #cdbe91; text-align: center; padding: 20px; font-family: 'Beaufort for LOL', serif;">No champions found. Please ensure League of Legends client is running.</div>`;
+        return;
+      }
+  
+      window.__roseAllChampions = champions;
+  
+      if (window.__roseChampionRenderer) {
+        window.__roseChampionRenderer(champions);
+      } else {
+        renderChampionsGrid(champions);
+      }
+    }
+  
+    function handleChampionSkinsResponse(payload) {
+      const loadingIndicator = document.getElementById("skin-loading");
+      if (loadingIndicator) {
+        loadingIndicator.style.display = "none";
+      }
+  
+      const skinsList = document.getElementById("skins-list");
+      if (!skinsList) return;
+  
+      if (payload.error) {
+        let skinsListContainer = skinsList.querySelector(".skins-list-container");
+        if (!skinsListContainer) {
+          skinsListContainer = document.createElement("div");
+          skinsListContainer.className = "skins-list-container";
+          skinsList.innerHTML = "";
+          skinsList.appendChild(skinsListContainer);
+        } else {
+          skinsListContainer.innerHTML = "";
+        }
+        skinsListContainer.innerHTML = `<div style="color: #ff6b6b; text-align: center; padding: 20px; font-family: 'Beaufort for LOL', serif;">${escapeHtml(payload.error)}</div>`;
+        return;
+      }
+  
+      const skins = payload.skins || [];
+      const championId = payload.championId;
+  
+      const header = document.getElementById("skin-selection-header");
+      if (header && payload.championName) {
+        const titleWrapper = header.querySelector(".dialog-title-wrapper");
+        if (titleWrapper) {
+          titleWrapper.textContent = `Select Skin - ${payload.championName}`;
+        }
+      }
+  
+      let skinsListContainer = skinsList.querySelector(".skins-list-container");
+      if (!skinsListContainer) {
+        skinsListContainer = document.createElement("div");
+        skinsListContainer.className = "skins-list-container";
+        skinsList.innerHTML = "";
+        skinsList.appendChild(skinsListContainer);
+      } else {
+        skinsListContainer.innerHTML = "";
+      }
+  
+      if (skins.length === 0) {
+        skinsListContainer.innerHTML = `<div style="color: #cdbe91; text-align: center; padding: 20px; font-family: 'Beaufort for LOL', serif;">No skins found for this champion.</div>`;
+        return;
+      }
+  
+      skins.forEach((skin) => {
+        const card = document.createElement("div");
+        card.className = "skin-card";
+  
+        const img = document.createElement("img");
+        const skinId = skin.skinId || skin.id;
+        img.src = skin.tilePath || `/lol-game-data/assets/v1/champion-tiles/${skinId}.jpg`;
+        img.alt = skin.name || `Skin ${skinId}`;
+        img.loading = "lazy";
+        img.onerror = function () { this.style.display = "none"; };
+        card.appendChild(img);
+  
+        const nameEl = document.createElement("div");
+        nameEl.className = "skin-name";
+        nameEl.textContent = skin.name || `Skin ${skinId}`;
+        card.appendChild(nameEl);
+  
+        card.addEventListener("click", () => handleSkinSelection(championId, skinId));
+        skinsListContainer.appendChild(card);
+      });
+    }
+})();

@@ -7,9 +7,12 @@
 (function createCustomWheel() {
   const LOG_PREFIX = "[ROSE-CustomWheel]";
   console.log(`${LOG_PREFIX} JS Loaded`);
-  const BUTTON_CLASS = "lu-chroma-button";
+  // Keep the custom wheel fully namespaced. The official chroma wheel uses
+  // the lu-chroma-* selectors, and sharing them makes the two panels style
+  // and interfere with one another.
+  const BUTTON_CLASS = "rose-custom-wheel-button";
   const BUTTON_SELECTOR = `.${BUTTON_CLASS}`;
-  const PANEL_CLASS = "lu-chroma-panel";
+  const PANEL_CLASS = "rose-custom-wheel-panel";
   const PANEL_ID = "rose-custom-wheel-panel-container";
   const REQUEST_TYPE = "request-skin-mods";
   const EVENT_SKIN_STATE = "lu-skin-monitor-state";
@@ -26,6 +29,8 @@
   let pythonChromaState = null;
   let currentPhase = null;
   let selectionRequestCounter = 0;
+  let skinModsRequestCounter = 0;
+  let latestSkinModsRequestId = null;
   let pendingSelectionRequest = null;
   let currentSkinMods = [];
   let activeTab = "skins"; 
@@ -260,6 +265,7 @@
     selectedModId = null;
     selectedModSkinId = null;
     pendingSelectionRequest = null;
+    latestSkinModsRequestId = null;
     currentSkinMods = [];
   }
 
@@ -305,11 +311,11 @@
       -webkit-user-select: none;
       cursor: pointer;
       box-sizing: border-box;
-      height: 20px;
-      width: 20px;
+      height: auto !important;
+      width: auto !important;
       position: absolute !important;
       display: block !important;
-      z-index: 1;
+      z-index: 10 !important;
       margin: 0;
       padding: 0;
     }
@@ -381,7 +387,6 @@
     .${BUTTON_CLASS}.pressed .button-image.default { opacity: 0; }
     .${BUTTON_CLASS}.pressed .button-image.pressed { opacity: 1; }
 
-    .chroma.icon { display: none !important; }
 
     .${PANEL_CLASS} {
       position: fixed;
@@ -413,7 +418,10 @@
       max-height: calc(100vh - 120px) !important;
     }
     
-    .${PANEL_CLASS} .chroma-modal.chroma-view { overflow: hidden; }
+    .${PANEL_CLASS} .chroma-modal.rose-custom-wheel-modal {
+      /* Height handled in base class to ensure consistency */
+      overflow: hidden;
+    }
 
     .${PANEL_CLASS} .flyout {
       position: absolute;
@@ -710,7 +718,7 @@
     }
 
     const modal = document.createElement("div");
-    modal.className = "champ-select-chroma-modal chroma-modal chroma-view ember-view";
+    modal.className = "rose-custom-wheel-modal chroma-modal";
 
     const isOtherCategoryTab = (tabName) => OTHER_CATEGORY_TABS.some((t) => t.id === tabName);
 
@@ -1025,7 +1033,7 @@
           targetContainer.style.position = "relative";
         }
         button.style.position = "absolute";
-        button.style.right = "0";
+        button.style.right = "15px"; // Было "0", смещаем чуть левее от края
         button.style.bottom = "100%";
         button.style.marginBottom = "10px";
         button.style.left = "";
@@ -1248,7 +1256,11 @@
       return;
     }
 
-    if (bridge) bridge.send({ type: REQUEST_TYPE, championId, skinId });
+    if (bridge) {
+      const requestId = `${LOG_PREFIX}-mods-${Date.now()}-${++skinModsRequestCounter}`;
+      latestSkinModsRequestId = requestId;
+      bridge.send({ type: REQUEST_TYPE, championId, skinId, requestId });
+    }
 
     if (panel && panel._modsLoading) {
       panel._modsLoading.textContent = "Checking for mods…";
@@ -1404,6 +1416,13 @@
     if (!mods || mods.length === 0) {
       loadingEl.textContent = "No skins found";
       loadingEl.style.display = "block";
+      return;
+    }
+    const responseRequestId = detail?.requestId;
+    if (
+      responseRequestId &&
+      String(responseRequestId) !== String(latestSkinModsRequestId)
+    ) {
       return;
     }
 
@@ -2096,6 +2115,12 @@
 
   function handleChampionLocked(event) {
     const locked = Boolean(event?.detail?.locked);
+    if (!locked) {
+      // A dodge/unlock starts a new champ-select lifecycle. Do not let the
+      // previous lobby's chroma selection or mod response affect the next lobby.
+      pythonChromaState = null;
+      latestSkinModsRequestId = null;
+    }
     if (locked === championLocked) {
       if (locked && championSelectRoot && (!button || !button.parentNode)) {
         refreshUIVisibility();
@@ -2104,6 +2129,8 @@
     }
 
     if (locked && !championLocked) {
+      pythonChromaState = null;
+      latestSkinModsRequestId = null;
       selectedModId = null;
       selectedModSkinId = null;
       lastChampionSelectSession = championSelectRoot;

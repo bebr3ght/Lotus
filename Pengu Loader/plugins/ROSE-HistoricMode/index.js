@@ -59,13 +59,56 @@
   let historicModeActive = false;
   let customModPopupActive = false;
   let currentRewardsElement = null;
-  let historicFlagImageUrl = null;
-  const pendingHistoricFlagRequest = new Map();
-  let isInChampSelect = false;
+  let historicFlagImageUrl = null; // HTTP URL from Python
+  const pendingHistoricFlagRequest = new Map(); // Track pending requests
+  let isInChampSelect = false; // Track if we're in ChampSelect phase
+  let pythonChromaState = null;
   let championLocked = false;
-
+  let customModTargetSkinId = null;
+  let customModAffectedSkinIds = new Set();
+  let historicEntryAvailable = false;
+  let historicBaseSkinId = null;
   let currentLabelChampionId = null;
   let currentViewType = null;
+
+  function getCurrentEffectiveSkinId() {
+    const skinState = window.__roseSkinState || {};
+    const baseSkinId = Number(skinState.skinId);
+    const chromaState = pythonChromaState || {};
+    const selectedChromaId = Number(chromaState.selectedChromaId);
+    const chromaBaseSkinId = Number(chromaState.currentSkinId);
+
+    if (
+      Number.isFinite(selectedChromaId) &&
+      selectedChromaId > 0 &&
+      (!Number.isFinite(chromaBaseSkinId) ||
+        !Number.isFinite(baseSkinId) ||
+        chromaBaseSkinId === baseSkinId)
+    ) {
+      return selectedChromaId;
+    }
+
+    return Number.isFinite(baseSkinId) && baseSkinId > 0 ? baseSkinId : null;
+  }
+
+  function customModAppliesToSkin(skinId) {
+    const numericSkinId = Number(skinId);
+    if (!Number.isFinite(numericSkinId) || numericSkinId <= 0) return false;
+    return (
+      customModTargetSkinId === numericSkinId ||
+      customModAffectedSkinIds.has(numericSkinId)
+    );
+  }
+
+
+  function isHistoricHistoryMarkerActive() {
+    if (!historicEntryAvailable || !Number.isFinite(historicBaseSkinId)) {
+      return false;
+    }
+
+    const currentBaseSkinId = Number((window.__roseSkinState || {}).skinId);
+    return currentBaseSkinId === historicBaseSkinId;
+  }
 
   const CSS_RULES = `
     .skin-selection-item-information.loyalty-reward-icon--rewards.lu-historic-flag-active {
@@ -142,10 +185,26 @@
     isInChampSelect = data.phase === "ChampSelect" || data.phase === "FINALIZATION";
 
     if (isInChampSelect && !wasInChampSelect) {
-      if (historicModeActive) setTimeout(updateHistoricFlag, 100);
+      customModPopupActive = false;
+      customModTargetSkinId = null;
+      customModAffectedSkinIds = new Set();
+      historicModeActive = false;
+      historicEntryAvailable = false;
+      historicBaseSkinId = null;
+      log("debug", "Entered ChampSelect phase - enabling plugin");
+      // Try to update flag when entering ChampSelect
+      if (historicModeActive) {
+        setTimeout(() => {
+          updateHistoricFlag();
+        }, 100);
+      }
     } else if (!isInChampSelect && wasInChampSelect) {
       customModPopupActive = false;
-      championLocked = false;
+      customModTargetSkinId = null;
+      customModAffectedSkinIds = new Set();
+      historicModeActive = false;
+      historicEntryAvailable = false;
+      historicBaseSkinId = null;
       removeHistoricSkinName();
       if (currentRewardsElement) {
         hideFlagOnElement(currentRewardsElement);
@@ -643,28 +702,39 @@
 
     if (data.active && data.modName) {
       customModTargetSkinId = data.skinId ? Number(data.skinId) : null;
+      customModAffectedSkinIds = new Set(
+        (Array.isArray(data.affectedSkinIds) ? data.affectedSkinIds : [])
+          .map((value) => Number(value))
+          .filter((value) => Number.isFinite(value) && value > 0)
+      );
+      if (customModTargetSkinId) {
+        customModAffectedSkinIds.add(customModTargetSkinId);
+      }
       customModPopupActive = true;
       showSkinName(data.modName);
       log("info", "Displayed custom mod popup", {
         modName: data.modName,
         skinId: customModTargetSkinId,
+        affectedSkinIds: [...customModAffectedSkinIds],
       });
     } else {
       customModPopupActive = false;
       customModTargetSkinId = null;
+      customModAffectedSkinIds = new Set();
       removeHistoricSkinName();
     }
   }
+
 
   function handleChromaStateUpdate(data) {
     pythonChromaState = data || null;
     if (
       customModPopupActive &&
-      customModTargetSkinId &&
-      getCurrentEffectiveSkinId() !== customModTargetSkinId
+      !customModAppliesToSkin(getCurrentEffectiveSkinId())
     ) {
       customModPopupActive = false;
       customModTargetSkinId = null;
+      customModAffectedSkinIds = new Set();
       removeHistoricSkinName();
     }
   }
@@ -674,10 +744,9 @@
       const nextSkinId = Number(data?.skinId);
       const currentEffectiveSkinId = getCurrentEffectiveSkinId();
       if (
-        customModTargetSkinId &&
         (
-          customModTargetSkinId === currentEffectiveSkinId ||
-          customModTargetSkinId === nextSkinId
+          customModAppliesToSkin(currentEffectiveSkinId) ||
+          customModAppliesToSkin(nextSkinId)
         )
       ) {
         return;
@@ -685,6 +754,7 @@
 
       customModPopupActive = false;
       customModTargetSkinId = null;
+      customModAffectedSkinIds = new Set();
       removeHistoricSkinName();
     }
 
