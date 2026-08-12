@@ -20,13 +20,8 @@ log = logging.getLogger(__name__)
 # APPLICATION METADATA
 # =============================================================================
 
-<<<<<<< HEAD
-APP_VERSION = "1.2.12"                          # Application version
-APP_USER_AGENT = f"Lotus/{APP_VERSION}"  # User-Agent header for HTTP requests
-=======
 APP_VERSION = "1.2.14"                          # Application version
-APP_USER_AGENT = f"Rose/{APP_VERSION}"  # User-Agent header for HTTP requests
->>>>>>> main
+APP_USER_AGENT = f"Lotus/{APP_VERSION}"  # User-Agent header for HTTP requests
 
 _CONFIG = configparser.ConfigParser()
 _CONFIG_MTIME: float = 0.0  # Last known modification time of config.ini

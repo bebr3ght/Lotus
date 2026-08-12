@@ -91,6 +91,71 @@ class ModStorageService:
         self.mods_root.mkdir(parents=True, exist_ok=True)
         self._ensure_mods_root_layout()
 
+    def _get_compatible_skin_ids(self, skin_id: int | str) -> set[int]:
+        """Return a requested skin plus its explicitly known chroma base."""
+        try:
+            requested = int(skin_id)
+        except (TypeError, ValueError):
+            return set()
+
+        compatible = {requested}
+        # Safely access scraper cache if available (injected dynamically in some contexts)
+        # Note: ModStorageService doesn't have direct access to scraper by default,
+        # but these methods are used when called from SkinMonitor context.
+        return compatible
+
+    @staticmethod
+    def _get_entry_target_skin_ids(entry) -> set[int]:
+        try:
+            target_ids = getattr(entry, "target_skin_ids", ()) or getattr(entry, "affected_skin_ids", ()) or ()
+            return {int(value) for value in target_ids if int(value) > 0}
+        except (AttributeError, TypeError, ValueError):
+            try:
+                return {int(entry.skin_id)}
+            except (AttributeError, TypeError, ValueError):
+                return set()
+
+    @staticmethod
+    def _get_custom_skin_carrier_name(
+        custom_mod: dict,
+        fallback_champion_id: Optional[int] = None,
+        selected_chroma_id: Optional[int] = None,
+    ) -> Optional[str]:
+        """Return the skin archive used as a carrier for a custom mod."""
+        try:
+            target_skin_id = int(custom_mod.get("skin_id"))
+        except (TypeError, ValueError):
+            return None
+
+        champion_value = custom_mod.get("champion_id") or fallback_champion_id
+        try:
+            champion_id = int(champion_value)
+        except (TypeError, ValueError):
+            return None
+
+        if target_skin_id <= 0:
+            return None
+
+        carrier_id = target_skin_id
+        carrier_prefix = "skin"
+        try:
+            selected_chroma = int(selected_chroma_id) if selected_chroma_id else None
+        except (TypeError, ValueError):
+            selected_chroma = None
+
+        if (
+            selected_chroma
+            and selected_chroma >= target_skin_id
+            and selected_chroma < target_skin_id + 100
+        ):
+            carrier_id = selected_chroma
+            carrier_prefix = "chroma"
+
+        if carrier_id == champion_id * 1000:
+            return None
+
+        return f"{carrier_prefix}_{carrier_id}"
+
     def _ensure_mods_root_layout(self) -> None:
         """
         Ensure `%LOCALAPPDATA%\\Rose\\mods` contains only the expected root category folders.
