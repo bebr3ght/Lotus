@@ -31,6 +31,8 @@
   let selectionRequestCounter = 0;
   let skinModsRequestCounter = 0;
   let latestSkinModsRequestId = null;
+  let lastSkinModsRequestKey = null;
+  let lastSkinModsRequestAt = 0;
   let pendingSelectionRequest = null;
   let currentSkinMods = [];
   let activeTab = "skins"; 
@@ -236,6 +238,15 @@
     return { championId, skinId };
   }
 
+  function isSelectedModForSkin(skinId = getCurrentSkinContext().skinId) {
+    const selectedSkinId = Number(selectedModSkinId);
+    const currentSkinId = Number(skinId);
+    return Boolean(selectedModId) &&
+      Number.isFinite(selectedSkinId) &&
+      Number.isFinite(currentSkinId) &&
+      selectedSkinId === currentSkinId;
+  }
+
   function handleChromaStateUpdate(data) {
     pythonChromaState = data && typeof data === "object" ? data : null;
     requestModsForCurrentSkin();
@@ -288,6 +299,153 @@
     }
   }
 
+<<<<<<< HEAD
+=======
+  const OTHER_CATEGORY_TABS = [
+    { id: "ui", label: "UI", prefixes: ["ui/"] },
+    { id: "voiceover", label: "Voiceover", prefixes: ["voiceover/", "vo/"] },
+    { id: "loading_screen", label: "Loading Screen", prefixes: ["loading_screen/", "loading-screen/", "loading screen/"] },
+    { id: "vfx", label: "VFX", prefixes: ["vfx/"] },
+    { id: "sfx", label: "SFX", prefixes: ["sfx/"] },
+    { id: "others", label: "Others", prefixes: [] }, // fallback bucket
+  ];
+
+  /**
+   * Escape HTML special characters to prevent XSS (CWE-79)
+   * @param {string} str - String to escape
+   * @returns {string} Escaped string safe for innerHTML
+   */
+  function escapeHtml(str) {
+    if (typeof str !== 'string') return String(str);
+    return str
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
+  }
+
+  const SUMMARY_TABS = [
+    { id: "skins", label: "Skins" },
+    { id: "maps", label: "Maps" },
+    { id: "fonts", label: "Fonts" },
+    { id: "announcers", label: "Announcers" },
+    ...OTHER_CATEGORY_TABS.map((t) => ({ id: t.id, label: t.label })),
+  ];
+
+  const SUMMARY_ICONS = {
+    skins: '<svg viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>',
+    maps: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>',
+    fonts: '<svg viewBox="0 0 24 24"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></svg>',
+    announcers: '<svg viewBox="0 0 24 24"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>',
+    ui: '<svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>',
+    voiceover: '<svg viewBox="0 0 24 24"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>',
+    loading_screen: '<svg viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>',
+    vfx: '<svg viewBox="0 0 24 24"><path d="M12 3l1.5 4.5L18 9l-4.5 1.5L12 15l-1.5-4.5L6 9l4.5-1.5L12 3z"/><path d="M19 13l.75 2.25L22 16l-2.25.75L19 19l-.75-2.25L16 16l2.25-.75L19 13z"/><path d="M5 17l.75 2.25L8 20l-2.25.75L5 23l-.75-2.25L2 20l2.25-.75L5 17z"/></svg>',
+    sfx: '<svg viewBox="0 0 24 24"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>',
+    others: '<svg viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>',
+  };
+
+  function normalizePathLike(value) {
+    return String(value || "").replace(/\\/g, "/").trim().toLowerCase();
+  }
+
+  function getSelectedIdsForCategory(categoryId) {
+    const key = String(categoryId || "").trim();
+    if (!key) return [];
+    if (!Array.isArray(selectedCategoryIds[key])) {
+      selectedCategoryIds[key] = [];
+    }
+    return selectedCategoryIds[key];
+  }
+
+  function clearAllCategorySelections() {
+    for (const t of OTHER_CATEGORY_TABS) {
+      selectedCategoryIds[t.id] = [];
+    }
+  }
+
+  function getSelectedSummaryForTab(tabId) {
+    if (tabId === "skins") {
+      if (!championLocked) return "Waiting for champ lock…";
+      return isSelectedModForSkin() ? String(selectedModId) : "None";
+    }
+    if (tabId === "maps") return selectedMapId ? String(selectedMapId) : "None";
+    if (tabId === "fonts") return selectedFontId ? String(selectedFontId) : "None";
+    if (tabId === "announcers") return selectedAnnouncerId ? String(selectedAnnouncerId) : "None";
+
+    // UI / Voiceover / Loading Screen / VFX / SFX / Others are their own categories.
+    const selected = getSelectedIdsForCategory(tabId);
+    return selected.length ? selected.join(", ") : "None";
+  }
+
+  function cleanModName(raw) {
+    if (!raw || typeof raw !== "string") return raw;
+    let name = raw.replace(/\\/g, "/");
+    // Strip directory prefixes (everything before last /)
+    const lastSlash = name.lastIndexOf("/");
+    if (lastSlash >= 0) name = name.substring(lastSlash + 1);
+    // Strip common file extensions
+    name = name.replace(/\.(fantome|wad|zip)$/i, "");
+    // Replace _ and - with spaces
+    name = name.replace(/[_\-]/g, " ");
+    // Title-case
+    name = name.replace(/\b\w/g, (c) => c.toUpperCase());
+    return name.trim() || raw;
+  }
+
+  function getTabLabel(tabId) {
+    return SUMMARY_TABS.find((t) => t.id === tabId)?.label || String(tabId || "");
+  }
+
+  function refreshSummaryValues() {
+    if (!panel || !panel._summaryValuesByTab) return;
+    for (const tab of SUMMARY_TABS) {
+      const el = panel._summaryValuesByTab[tab.id];
+      const raw = getSelectedSummaryForTab(tab.id);
+      if (el) {
+        el.textContent = (raw !== "None" && raw !== "Waiting for champ lock…") ? cleanModName(raw) : raw;
+      }
+      // Toggle active class on the row
+      const row = panel._summaryRowsByTab && panel._summaryRowsByTab[tab.id];
+      if (row) {
+        if (raw !== "None" && raw !== "Waiting for champ lock…") {
+          row.classList.add("active");
+        } else {
+          row.classList.remove("active");
+        }
+      }
+    }
+    // Keep the button badge in sync even when the panel is closed.
+    refreshButtonBadgeFromSelections();
+  }
+
+  function setRightPaneMode(mode) {
+    rightPaneMode = mode;
+    if (!panel) return;
+
+    if (panel._summaryView) {
+      panel._summaryView.style.display = mode === "summary" ? "flex" : "none";
+    }
+    if (panel._pickerView) {
+      if (mode === "picker") panel._pickerView.classList.add("active");
+      else panel._pickerView.classList.remove("active");
+    }
+    if (panel._backBtn) {
+      panel._backBtn.style.display = mode === "picker" ? "inline-block" : "none";
+    }
+    if (panel._rightTitle) {
+      if (mode === "picker") {
+        const icon = SUMMARY_ICONS[activeTab] || "";
+        panel._rightTitle.innerHTML = `<span class="rose-wheel-title-icon">${icon}</span> Choose \u2022 ${escapeHtml(getTabLabel(activeTab))}`;
+      } else {
+        panel._rightTitle.textContent = "Custom Mods";
+      }
+    }
+  }
+
+  // Shared bridge API (provided by ROSE-SkinMonitor)
+>>>>>>> main
   let bridge = null;
 
   function waitForBridge() {
@@ -1015,6 +1173,620 @@
     return panel;
   }
 
+<<<<<<< HEAD
+=======
+  function positionPanel(panelElement, buttonElement) {
+    if (!panelElement || !buttonElement) {
+      return;
+    }
+
+    const flyoutFrame = panelElement.querySelector(".flyout");
+    if (!flyoutFrame) {
+      return;
+    }
+
+    const rect = buttonElement.getBoundingClientRect();
+    let flyoutRect = flyoutFrame.getBoundingClientRect();
+
+    if (flyoutRect.width === 0) {
+      // Try to get width from the modal element
+      const modal = flyoutFrame.querySelector(".chroma-modal");
+      if (modal) {
+        const modalRect = modal.getBoundingClientRect();
+        if (modalRect.width > 0) {
+          flyoutRect = { width: modalRect.width, height: flyoutRect.height || 400 };
+        } else {
+          // Fallback: use button width + estimated padding
+          flyoutRect = { width: rect.width + 32, height: 400 };
+        }
+      } else {
+        // Fallback: use button width + estimated padding
+        flyoutRect = { width: rect.width + 32, height: 400 };
+      }
+    }
+
+    // Center panel in the middle of the screen
+    const centerX = (window.innerWidth - flyoutRect.width) / 2;
+    const centerY = (window.innerHeight - flyoutRect.height) / 2;
+
+    flyoutFrame.style.position = "fixed";
+    flyoutFrame.style.overflow = "visible";
+    flyoutFrame.style.top = `${centerY}px`;
+    flyoutFrame.style.left = `${centerX}px`;
+    flyoutFrame.style.right = ""; // Clear right when using left
+    flyoutFrame.style.transform = ""; // Remove transform to avoid blur
+
+    panelElement.style.position = "fixed";
+    panelElement.style.top = "0";
+    panelElement.style.left = "0";
+    panelElement.style.width = "100%";
+    panelElement.style.height = "100%";
+    panelElement.style.pointerEvents = "none";
+    flyoutFrame.style.pointerEvents = "all";
+  }
+
+  function updateNoneRow(listEl, isNoneActive) {
+    const noneLi = listEl?.querySelector('[data-mod-id="__none__"], [data-map-id="__none__"], [data-font-id="__none__"], [data-announcer-id="__none__"], [data-other-id="__none__"]');
+    if (!noneLi) return;
+    if (isNoneActive) {
+      noneLi.classList.add("selected-row");
+    } else {
+      noneLi.classList.remove("selected-row");
+    }
+  }
+
+  function handleModSelect(modId, listItem, modData) {
+    const { championId, skinId } = getCurrentSkinContext();
+
+    if (selectedModId === modId && isSelectedModForSkin(skinId)) {
+      sendSkinModSelection({
+        championId,
+        skinId,
+        modId: null,
+        expectedModId: selectedModId,
+      });
+    } else {
+      console.log(`[ROSE-CustomWheel] Sending mod selection:`, { championId, skinId, modId, modData });
+      sendSkinModSelection({ championId, skinId, modId, modData });
+    }
+  }
+
+  function updateModEntries(mods) {
+    currentSkinMods = Array.isArray(mods) ? mods : [];
+    if (!panel || !panel._modList || !panel._loadingEl) {
+      return;
+    }
+
+    const modList = panel._modList;
+    const loadingEl = panel._loadingEl;
+
+    // Store current selectedModId before clearing the list
+    const previousSelectedModId = selectedModId;
+    const previousSelectedModSkinId = selectedModSkinId;
+    const currentSkinId = getCurrentSkinContext().skinId;
+
+    modList.innerHTML = "";
+
+    // Don't reset selection - restore it if it still exists in the mod list
+
+    if (!mods || mods.length === 0) {
+      loadingEl.textContent = "No skins found";
+      loadingEl.style.display = "block";
+      return;
+    }
+
+    loadingEl.style.display = "none";
+
+    // "None" deselect option
+    {
+      const noneItem = document.createElement("li");
+      noneItem.setAttribute("data-mod-id", "__none__");
+      const noneRow = document.createElement("div");
+      noneRow.className = "mod-name-row";
+      const noneName = document.createElement("div");
+      noneName.className = "mod-name none-label";
+      noneName.textContent = "None";
+      noneRow.appendChild(noneName);
+      const nothingSelected = !isSelectedModForSkin(currentSkinId);
+      if (nothingSelected) {
+        noneItem.classList.add("selected-row");
+      }
+      noneItem.addEventListener("click", () => {
+        if (selectedModId) {
+          const { championId, skinId } = getCurrentSkinContext();
+          sendSkinModSelection({
+            championId,
+            skinId,
+            modId: null,
+            expectedModId: selectedModId,
+          });
+        }
+      });
+      noneItem.appendChild(noneRow);
+      modList.appendChild(noneItem);
+    }
+
+    mods.forEach((mod) => {
+      const listItem = document.createElement("li");
+      // Use relativePath as the unique identifier, fallback to modName
+      const modId = mod.relativePath || mod.modName || `mod-${Date.now()}-${Math.random()}`;
+
+      // Create a row container for name and button
+      const modNameRow = document.createElement("div");
+      modNameRow.className = "mod-name-row";
+
+      const modName = document.createElement("div");
+      modName.className = "mod-name";
+      modName.textContent = cleanModName(mod.modName) || "Unnamed mod";
+      modNameRow.appendChild(modName);
+
+      const isSelected = (
+        (selectedModId === modId && isSelectedModForSkin(currentSkinId)) ||
+        (previousSelectedModId === modId && Number(previousSelectedModSkinId) === Number(currentSkinId))
+      );
+
+      if (
+        previousSelectedModId === modId &&
+        Number(previousSelectedModSkinId) === Number(currentSkinId) &&
+        !isSelectedModForSkin(currentSkinId)
+      ) {
+        selectedModId = modId;
+        selectedModSkinId = previousSelectedModSkinId;
+      }
+
+      if (isSelected) {
+        listItem.classList.add("selected-row");
+      }
+      listItem.addEventListener("click", () => {
+        handleModSelect(modId, listItem, mod);
+      });
+
+      listItem.appendChild(modNameRow);
+
+      // Store mod ID on list item for easy reference
+      listItem.setAttribute("data-mod-id", modId);
+
+      if (mod.description) {
+        const modDesc = document.createElement("div");
+        modDesc.className = "mod-description";
+        modDesc.textContent = mod.description;
+        listItem.appendChild(modDesc);
+      }
+
+      modList.appendChild(listItem);
+    });
+  }
+
+  function updateMapsEntries(mapsList) {
+    if (!panel || !panel._mapsList || !panel._mapsLoading) {
+      return;
+    }
+
+    const mapsListEl = panel._mapsList;
+    const loadingEl = panel._mapsLoading;
+
+    mapsListEl.innerHTML = "";
+
+    if (!mapsList || mapsList.length === 0) {
+      loadingEl.textContent = "No maps found";
+      loadingEl.style.display = "block";
+      return;
+    }
+
+    loadingEl.style.display = "none";
+
+    // "None" deselect option
+    {
+      const noneItem = document.createElement("li");
+      noneItem.setAttribute("data-map-id", "__none__");
+      const noneRow = document.createElement("div");
+      noneRow.className = "mod-name-row";
+      const noneName = document.createElement("div");
+      noneName.className = "mod-name none-label";
+      noneName.textContent = "None";
+      noneRow.appendChild(noneName);
+      const nothingSelected = !selectedMapId;
+      if (nothingSelected) { noneItem.classList.add("selected-row"); }
+      noneItem.addEventListener("click", () => {
+        if (selectedMapId) {
+          const prevLi = mapsListEl.querySelector(`[data-map-id="${selectedMapId}"]`);
+          if (prevLi) {
+            prevLi.classList.remove("selected-row");
+          }
+          selectedMapId = null;
+          if (bridge) bridge.send({ type: "select-map", mapId: null });
+        }
+        noneItem.classList.add("selected-row");
+        refreshSummaryValues(); refreshButtonBadgeFromSelections();
+      });
+      noneItem.appendChild(noneRow);
+      mapsListEl.appendChild(noneItem);
+    }
+
+    mapsList.forEach((map) => {
+      const listItem = document.createElement("li");
+      const mapId = map.id || map.name || `map-${Date.now()}-${Math.random()}`;
+
+      // Create a row container for name and button
+      const mapNameRow = document.createElement("div");
+      mapNameRow.className = "mod-name-row";
+
+      const mapName = document.createElement("div");
+      mapName.className = "mod-name";
+      mapName.textContent = cleanModName(map.name) || "Unnamed map";
+      mapNameRow.appendChild(mapName);
+
+      listItem.setAttribute("data-map-id", mapId);
+
+      if (selectedMapId === mapId) {
+        listItem.classList.add("selected-row");
+      }
+
+      listItem.addEventListener("click", () => {
+        handleMapSelect(mapId, listItem, map);
+      });
+
+      listItem.appendChild(mapNameRow);
+
+      if (map.description) {
+        const mapDesc = document.createElement("div");
+        mapDesc.className = "mod-description";
+        mapDesc.textContent = map.description;
+        listItem.appendChild(mapDesc);
+      }
+
+      mapsListEl.appendChild(listItem);
+    });
+  }
+
+  function updateFontsEntries(fontsList) {
+    if (!panel || !panel._fontsList || !panel._fontsLoading) {
+      return;
+    }
+
+    const fontsListEl = panel._fontsList;
+    const loadingEl = panel._fontsLoading;
+
+    fontsListEl.innerHTML = "";
+
+    if (!fontsList || fontsList.length === 0) {
+      loadingEl.textContent = "No fonts found";
+      loadingEl.style.display = "block";
+      return;
+    }
+
+    loadingEl.style.display = "none";
+
+    // "None" deselect option
+    {
+      const noneItem = document.createElement("li");
+      noneItem.setAttribute("data-font-id", "__none__");
+      const noneRow = document.createElement("div");
+      noneRow.className = "mod-name-row";
+      const noneName = document.createElement("div");
+      noneName.className = "mod-name none-label";
+      noneName.textContent = "None";
+      noneRow.appendChild(noneName);
+      const nothingSelected = !selectedFontId;
+      if (nothingSelected) { noneItem.classList.add("selected-row"); }
+      noneItem.addEventListener("click", () => {
+        if (selectedFontId) {
+          const prevLi = fontsListEl.querySelector(`[data-font-id="${selectedFontId}"]`);
+          if (prevLi) {
+            prevLi.classList.remove("selected-row");
+          }
+          selectedFontId = null;
+          if (bridge) bridge.send({ type: "select-font", fontId: null });
+        }
+        noneItem.classList.add("selected-row");
+        refreshSummaryValues(); refreshButtonBadgeFromSelections();
+      });
+      noneItem.appendChild(noneRow);
+      fontsListEl.appendChild(noneItem);
+    }
+
+    fontsList.forEach((font) => {
+      const listItem = document.createElement("li");
+      const fontId = font.id || font.name || `font-${Date.now()}-${Math.random()}`;
+
+      // Create a row container for name and button
+      const fontNameRow = document.createElement("div");
+      fontNameRow.className = "mod-name-row";
+
+      const fontName = document.createElement("div");
+      fontName.className = "mod-name";
+      fontName.textContent = cleanModName(font.name) || "Unnamed font";
+      fontNameRow.appendChild(fontName);
+
+      listItem.setAttribute("data-font-id", fontId);
+
+      if (selectedFontId === fontId) {
+        listItem.classList.add("selected-row");
+      }
+
+      listItem.addEventListener("click", () => {
+        handleFontSelect(fontId, listItem, font);
+      });
+
+      listItem.appendChild(fontNameRow);
+
+      if (font.description) {
+        const fontDesc = document.createElement("div");
+        fontDesc.className = "mod-description";
+        fontDesc.textContent = font.description;
+        listItem.appendChild(fontDesc);
+      }
+
+      fontsListEl.appendChild(listItem);
+    });
+  }
+
+  function updateAnnouncersEntries(announcersList) {
+    if (!panel || !panel._announcersList || !panel._announcersLoading) {
+      return;
+    }
+
+    const announcersListEl = panel._announcersList;
+    const loadingEl = panel._announcersLoading;
+
+    announcersListEl.innerHTML = "";
+
+    if (!announcersList || announcersList.length === 0) {
+      loadingEl.textContent = "No announcers found";
+      loadingEl.style.display = "block";
+      return;
+    }
+
+    loadingEl.style.display = "none";
+
+    // "None" deselect option
+    {
+      const noneItem = document.createElement("li");
+      noneItem.setAttribute("data-announcer-id", "__none__");
+      const noneRow = document.createElement("div");
+      noneRow.className = "mod-name-row";
+      const noneName = document.createElement("div");
+      noneName.className = "mod-name none-label";
+      noneName.textContent = "None";
+      noneRow.appendChild(noneName);
+      const nothingSelected = !selectedAnnouncerId;
+      if (nothingSelected) { noneItem.classList.add("selected-row"); }
+      noneItem.addEventListener("click", () => {
+        if (selectedAnnouncerId) {
+          const prevLi = announcersListEl.querySelector(`[data-announcer-id="${selectedAnnouncerId}"]`);
+          if (prevLi) {
+            prevLi.classList.remove("selected-row");
+          }
+          selectedAnnouncerId = null;
+          if (bridge) bridge.send({ type: "select-announcer", announcerId: null });
+        }
+        noneItem.classList.add("selected-row");
+        refreshSummaryValues(); refreshButtonBadgeFromSelections();
+      });
+      noneItem.appendChild(noneRow);
+      announcersListEl.appendChild(noneItem);
+    }
+
+    announcersList.forEach((announcer) => {
+      const listItem = document.createElement("li");
+      const announcerId = announcer.id || announcer.name || `announcer-${Date.now()}-${Math.random()}`;
+
+      // Create a row container for name and button
+      const announcerNameRow = document.createElement("div");
+      announcerNameRow.className = "mod-name-row";
+
+      const announcerName = document.createElement("div");
+      announcerName.className = "mod-name";
+      announcerName.textContent = cleanModName(announcer.name) || "Unnamed announcer";
+      announcerNameRow.appendChild(announcerName);
+
+      listItem.setAttribute("data-announcer-id", announcerId);
+
+      if (selectedAnnouncerId === announcerId) {
+        listItem.classList.add("selected-row");
+      }
+
+      listItem.addEventListener("click", () => {
+        handleAnnouncerSelect(announcerId, listItem, announcer);
+      });
+
+      listItem.appendChild(announcerNameRow);
+
+      if (announcer.description) {
+        const announcerDesc = document.createElement("div");
+        announcerDesc.className = "mod-description";
+        announcerDesc.textContent = announcer.description;
+        listItem.appendChild(announcerDesc);
+      }
+
+      announcersListEl.appendChild(listItem);
+    });
+  }
+
+  function updateOtherCategoryEntries(categoryId, items) {
+    if (!panel) {
+      return;
+    }
+    const listEl = panel[`_${categoryId}List`];
+    const loadingEl = panel[`_${categoryId}Loading`];
+    if (!listEl || !loadingEl) {
+      return;
+    }
+
+    listEl.innerHTML = "";
+    const selectedIds = getSelectedIdsForCategory(categoryId);
+
+    if (!items || items.length === 0) {
+      const label = OTHER_CATEGORY_TABS.find((t) => t.id === categoryId)?.label || "mods";
+      loadingEl.textContent = `No ${label.toLowerCase()} found`;
+      loadingEl.style.display = "block";
+      return;
+    }
+
+    loadingEl.style.display = "none";
+
+    // "None" deselect option (clears all selections for this category)
+    {
+      const noneItem = document.createElement("li");
+      noneItem.setAttribute("data-other-id", "__none__");
+      const noneRow = document.createElement("div");
+      noneRow.className = "mod-name-row";
+      const noneName = document.createElement("div");
+      noneName.className = "mod-name none-label";
+      noneName.textContent = "None";
+      noneRow.appendChild(noneName);
+      const nothingSelected = selectedIds.length === 0;
+      if (nothingSelected) { noneItem.classList.add("selected-row"); }
+      noneItem.addEventListener("click", () => {
+        const allSelectedLis = listEl.querySelectorAll("li.selected-row");
+        allSelectedLis.forEach((li) => {
+          if (li === noneItem) return;
+          li.classList.remove("selected-row");
+        });
+        const ids = getSelectedIdsForCategory(categoryId);
+        for (const id of [...ids]) {
+          if (bridge) bridge.send({ type: "select-other", category: categoryId, otherId: id, otherData: null, action: "deselect" });
+        }
+        ids.length = 0;
+        noneItem.classList.add("selected-row");
+        refreshSummaryValues(); refreshButtonBadgeFromSelections();
+      });
+      noneItem.appendChild(noneRow);
+      listEl.appendChild(noneItem);
+    }
+
+    items.forEach((other) => {
+      const listItem = document.createElement("li");
+      const otherId = other.id || other.name || `other-${Date.now()}-${Math.random()}`;
+
+      const otherNameRow = document.createElement("div");
+      otherNameRow.className = "mod-name-row";
+
+      const otherName = document.createElement("div");
+      otherName.className = "mod-name";
+      otherName.textContent = cleanModName(other.name || other.modName) || "Unnamed mod";
+      otherNameRow.appendChild(otherName);
+
+      listItem.setAttribute("data-other-id", otherId);
+
+      if (selectedIds.includes(otherId)) {
+        listItem.classList.add("selected-row");
+      }
+
+      listItem.addEventListener("click", () => {
+        handleCategoryModSelect(categoryId, otherId, listItem, other);
+      });
+
+      listItem.appendChild(otherNameRow);
+
+      if (other.description) {
+        const otherDesc = document.createElement("div");
+        otherDesc.className = "mod-description";
+        otherDesc.textContent = other.description;
+        listItem.appendChild(otherDesc);
+      }
+
+      listEl.appendChild(listItem);
+    });
+  }
+
+  function handleMapSelect(mapId, listItem, mapData) {
+    if (selectedMapId === mapId) {
+      selectedMapId = null;
+      listItem.classList.remove("selected-row");
+      if (bridge) bridge.send({ type: "select-map", mapId: null });
+    } else {
+      if (selectedMapId) {
+        const prevLi = panel?._mapsList?.querySelector(
+          `[data-map-id="${selectedMapId}"]`
+        );
+        if (prevLi) {
+          prevLi.classList.remove("selected-row");
+        }
+      }
+      selectedMapId = mapId;
+      listItem.classList.add("selected-row");
+      if (bridge) bridge.send({ type: "select-map", mapId, mapData });
+    }
+
+    updateNoneRow(panel?._mapsList, !selectedMapId);
+    refreshSummaryValues();
+    refreshButtonBadgeFromSelections();
+  }
+
+  function handleFontSelect(fontId, listItem, fontData) {
+    if (selectedFontId === fontId) {
+      selectedFontId = null;
+      listItem.classList.remove("selected-row");
+      if (bridge) bridge.send({ type: "select-font", fontId: null });
+    } else {
+      if (selectedFontId) {
+        const prevLi = panel?._fontsList?.querySelector(
+          `[data-font-id="${selectedFontId}"]`
+        );
+        if (prevLi) {
+          prevLi.classList.remove("selected-row");
+        }
+      }
+      selectedFontId = fontId;
+      listItem.classList.add("selected-row");
+      if (bridge) bridge.send({ type: "select-font", fontId, fontData });
+    }
+
+    updateNoneRow(panel?._fontsList, !selectedFontId);
+    refreshSummaryValues();
+    refreshButtonBadgeFromSelections();
+  }
+
+  function handleAnnouncerSelect(announcerId, listItem, announcerData) {
+    if (selectedAnnouncerId === announcerId) {
+      selectedAnnouncerId = null;
+      listItem.classList.remove("selected-row");
+      if (bridge) bridge.send({ type: "select-announcer", announcerId: null });
+    } else {
+      if (selectedAnnouncerId) {
+        const prevLi = panel?._announcersList?.querySelector(
+          `[data-announcer-id="${selectedAnnouncerId}"]`
+        );
+        if (prevLi) {
+          prevLi.classList.remove("selected-row");
+        }
+      }
+      selectedAnnouncerId = announcerId;
+      listItem.classList.add("selected-row");
+      if (bridge) bridge.send({ type: "select-announcer", announcerId, announcerData });
+    }
+
+    updateNoneRow(panel?._announcersList, !selectedAnnouncerId);
+    refreshSummaryValues();
+    refreshButtonBadgeFromSelections();
+  }
+
+  function handleCategoryModSelect(categoryId, otherId, listItem, otherData) {
+    const selectedIds = getSelectedIdsForCategory(categoryId);
+    const index = selectedIds.indexOf(otherId);
+    if (index !== -1) {
+      selectedIds.splice(index, 1);
+      listItem.classList.remove("selected-row");
+      if (bridge) bridge.send({ type: "select-other", category: categoryId, otherId, otherData, action: "deselect" });
+    } else {
+      selectedIds.push(otherId);
+      listItem.classList.add("selected-row");
+      if (bridge) bridge.send({ type: "select-other", category: categoryId, otherId, otherData, action: "select" });
+    }
+
+    const listEl = panel?.[`_${categoryId}List`];
+    updateNoneRow(listEl, selectedIds.length === 0);
+    refreshSummaryValues();
+    refreshButtonBadgeFromSelections();
+  }
+
+  function findButtonContainer() {
+    // Find the bottom-right-buttons container to position the button above it
+    return document.querySelector(".bottom-right-buttons");
+  }
+
+>>>>>>> main
   function attachToChampionSelect() {
     if (!button) createButton();
     if (!panel) createPanel();
@@ -1256,6 +2028,17 @@
       return;
     }
 
+    const requestKey = `${championId}:${skinId}`;
+    const now = Date.now();
+    if (
+      requestKey === lastSkinModsRequestKey &&
+      now - lastSkinModsRequestAt < 750
+    ) {
+      return;
+    }
+    lastSkinModsRequestKey = requestKey;
+    lastSkinModsRequestAt = now;
+
     if (bridge) {
       const requestId = `${LOG_PREFIX}-mods-${Date.now()}-${++skinModsRequestCounter}`;
       latestSkinModsRequestId = requestId;
@@ -1329,8 +2112,13 @@
 
   function getSelectedModsCount() {
     let count = 0;
+<<<<<<< HEAD
     const inLobby = isActuallyInLobby();
     if ((championLocked || (isSwiftplayMode && inLobby)) && selectedModId) count += 1;
+=======
+    // Skins are only meaningful after champ lock.
+    if (championLocked && isSelectedModForSkin()) count += 1;
+>>>>>>> main
     if (selectedMapId) count += 1;
     if (selectedFontId) count += 1;
     if (selectedAnnouncerId) count += 1;
@@ -1508,7 +2296,33 @@
       if (bridge) bridge.send({ type: "select-skin-mod", championId, skinId: liveSkinId, modId: null });
     }
 
+<<<<<<< HEAD
     const mods = Array.isArray(detail.mods) ? detail.mods :[];
+=======
+    // Clear selection when the currently hovered skin differs from the mod's target skin.
+    let mods = (Array.isArray(detail.mods) ? detail.mods : []).filter((mod) => (
+      mod?.availableForRequestedSkin === true ||
+      (mod?.availableForRequestedSkin == null && Number(mod?.skinId) === liveSkinId)
+    ));
+    currentSkinMods = mods;
+
+    if (selectedModId && !pendingSelectionRequest) {
+      const selectedEntry = mods.find((mod) => (
+        String(mod?.relativePath || mod?.modName || "") === String(selectedModId)
+      ));
+      if (!selectedEntry) {
+        // Notify backend so it clears selected_custom_mod and the popup.
+        sendSkinModSelection({
+          championId,
+          skinId: liveSkinId,
+          modId: null,
+          expectedModId: selectedModId,
+        });
+      }
+    }
+
+    // Auto-select the historic mod when the user is hovering the skin it targets.
+>>>>>>> main
     const historicMod = detail.historicMod;
     let didAutoSelect = false;
     
