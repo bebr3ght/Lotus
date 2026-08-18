@@ -148,6 +148,10 @@
   // which provides a simple interface for adding custom observers for bridge and socket instead of duplicating this kind
   // of code over all the plugins; this will do for now though
   function interceptChampSelectWebsocket() {
+    if (!window.rcp || typeof window.rcp.postInit !== 'function') {
+      setTimeout(interceptChampSelectWebsocket, 500);
+      return;
+    }
     window.rcp.postInit("rcp-fe-lol-champ-select", (api) => {
       try {
         const ws = api.champSelectBinding.socket._websocket;
@@ -159,31 +163,14 @@
             if (payload[1] == "OnJsonApiEvent") {
               const eventData = payload[2];
               if (eventData["uri"] == "/lol-champ-select/v1/skin-selector-info") {
-                // // **Bridge-less implementation** (don't use: bridge implementation is more reliable)
-                //
-                // const data = eventData["data"];
-                // 
-                // data is null in event type DELETE
-                // check if base skin
-                // if (data?.["selectedSkinId"] % 1000 == 0) {
-                //   log.info("skipping base skin");
-                //   // skip delegation
-                //   return;
-                // }
-
-                // Not a DELETE event
                 if (eventData["data"]?.["selectedSkinId"] != 0) {
                   if (Date.now() - lastBaseSkinSkipRequest < BASE_SKIN_SKIP_REQUEST_TIME_WINDOW_MS) {
                     log.info("skipping base skin");
-                    // skip delegation
                     return;
-                  } else {
-                    log.info("not skipping base skin: no request received from rose (in time)");
                   }
                 }
               }
             }
-
             return parentOnMessage.call(this, event);
           } catch(e) {
             log.error("Error during WebSocket response parse: ", e);
@@ -829,16 +816,10 @@
   }
 
   function setupNavObserver() {
-    // Try to inject immediately
-    if (injectGoldenRoseNavItem()) {
-      return;
-    }
+    if (injectGoldenRoseNavItem()) return;
 
-    // If not found, observe for nav menu creation
     const observer = new MutationObserver(() => {
-      if (injectGoldenRoseNavItem()) {
-        observer.disconnect();
-      }
+      if (injectGoldenRoseNavItem()) observer.disconnect();
     });
 
     observer.observe(document.body, {
@@ -846,19 +827,12 @@
       subtree: true,
     });
 
-    // Also check periodically as a safety net
     const intervalId = setInterval(() => {
       if (injectGoldenRoseNavItem()) {
         clearInterval(intervalId);
         observer.disconnect();
       }
     }, 500);
-
-    // Cleanup after a reasonable time
-    setTimeout(() => {
-      observer.disconnect();
-      clearInterval(intervalId);
-    }, 30000);
   }
 
   let _initializing = false;
