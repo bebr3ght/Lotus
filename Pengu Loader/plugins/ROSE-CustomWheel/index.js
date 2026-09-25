@@ -7,9 +7,7 @@
 (function createCustomWheel() {
   const LOG_PREFIX = "[ROSE-CustomWheel]";
   console.log(`${LOG_PREFIX} JS Loaded`);
-  // Keep the custom wheel fully namespaced. The official chroma wheel uses
-  // the lu-chroma-* selectors, and sharing them makes the two panels style
-  // and interfere with one another.
+
   const BUTTON_CLASS = "rose-custom-wheel-button";
   const BUTTON_SELECTOR = `.${BUTTON_CLASS}`;
   const PANEL_CLASS = "rose-custom-wheel-panel";
@@ -24,8 +22,12 @@
   let championSelectObserver = null;
   let championLocked = false;
   let currentSkinData = null;
-  let selectedModId = null; 
-  let selectedModSkinId = null; 
+
+  // --- Трекинг выбранных модов (апстрим) ---
+  let selectedModId = null; // Track which mod is currently selected
+  let selectedModSkinId = null; // Track which skin the selected mod belongs to
+  // -----------------------------------------
+
   let pythonChromaState = null;
   let currentPhase = null;
   let selectionRequestCounter = 0;
@@ -41,11 +43,11 @@
   let selectedAnnouncerId = null;
   let isGlobalMode = false;
 
+  let hideEmptyCategories = false;
   let selectedCategoryIds = Object.create(null);
-  let lastChampionSelectSession = null; 
   let isFirstOpenInSession = true; 
   
-  // Caches for instant loading
+  // Кэши данных
   let lastCategoryModsById = {}; 
   let lastMapsList = null;
   let lastFontsList = null;
@@ -54,7 +56,7 @@
   let emittedHistoricSelectionKeys = new Set(); 
   let rightPaneMode = "summary"; 
 
-  // --- SWIFTPLAY & OVERLAY LOGIC ---
+  let bridge = null;
   let isSwiftplayMode = false;
 
   function isActuallyInLobby() {
@@ -63,45 +65,30 @@
   }
 
   function isOverlayOpen() {
-    const overlays =[
+    if (isGlobalMode) return false;
+    const overlays = [
       'lol-perks-v2-editor',           
       'lol-perks-v2-main-view',        
       '.perks-editor-modal',           
-      'lol-uikit-full-page-modal',     
-      '.champion-customization-flyout',
-      'lol-uikit-dialog-frame',        
-      '.modal-root'                    
+      'lol-uikit-full-page-modal'
     ];
     for (const selector of overlays) {
       const el = document.querySelector(selector);
       if (el && (el.offsetWidth > 0 || el.offsetHeight > 0)) return true;
     }
-    const backdrop = document.querySelector('.lol-uikit-layer-manager-wrapper');
-    if (backdrop && backdrop.children.length > 1) return true;
     return false;
   }
-  // ---------------------------------
 
-  const OTHER_CATEGORY_TABS =[
+  const OTHER_CATEGORY_TABS = [
     { id: "ui", label: "UI", prefixes: ["ui/"] },
-    { id: "voiceover", label: "Voiceover", prefixes:["voiceover/", "vo/"] },
+    { id: "voiceover", label: "Voiceover", prefixes: ["voiceover/", "vo/"] },
     { id: "loading_screen", label: "Loading Screen", prefixes: ["loading_screen/", "loading-screen/", "loading screen/"] },
     { id: "vfx", label: "VFX", prefixes: ["vfx/"] },
     { id: "sfx", label: "SFX", prefixes: ["sfx/"] },
-    { id: "others", label: "Others", prefixes:[] }, 
+    { id: "others", label: "Others", prefixes: [] },
   ];
 
-  function escapeHtml(str) {
-    if (typeof str !== 'string') return String(str);
-    return str
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#039;');
-  }
-
-  const SUMMARY_TABS =[
+  const SUMMARY_TABS = [
     { id: "skins", label: "Skins" },
     { id: "maps", label: "Maps" },
     { id: "fonts", label: "Fonts" },
@@ -122,8 +109,24 @@
     others: '<svg viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>',
   };
 
-  function normalizePathLike(value) {
-    return String(value || "").replace(/\\/g, "/").trim().toLowerCase();
+  function waitForBridge() {
+    return new Promise((resolve, reject) => {
+      const timeout = 10000;
+      const interval = 50;
+      let elapsed = 0;
+      const check = () => {
+        if (window.__roseBridge) return resolve(window.__roseBridge);
+        elapsed += interval;
+        if (elapsed >= timeout) return reject(new Error("Bridge not available"));
+        setTimeout(check, interval);
+      };
+      check();
+    });
+  }
+
+  function escapeHtml(str) {
+    if (typeof str !== 'string') return String(str);
+    return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
   }
 
   function getSelectedIdsForCategory(categoryId) {
@@ -135,23 +138,20 @@
     return selectedCategoryIds[key];
   }
 
-  function clearAllCategorySelections() {
-    for (const t of OTHER_CATEGORY_TABS) {
-      selectedCategoryIds[t.id] = [];
-    }
-  }
-
   function getSelectedSummaryForTab(tabId) {
     if (tabId === "skins") {
       if (!championLocked && !(isSwiftplayMode && isActuallyInLobby())) return "Waiting for champ lock…";
-      return selectedModId ? String(selectedModId) : "None";
+      if (!isSelectedModForSkin()) return "None";
+      return visibleNameForId(currentSkinMods, selectedModId, ["relativePath", "modName"]);
     }
-    if (tabId === "maps") return selectedMapId ? String(selectedMapId) : "None";
-    if (tabId === "fonts") return selectedFontId ? String(selectedFontId) : "None";
-    if (tabId === "announcers") return selectedAnnouncerId ? String(selectedAnnouncerId) : "None";
+    if (tabId === "maps") return selectedMapId ? visibleNameForId(lastMapsList, selectedMapId, ["id", "name"]) : "None";
+    if (tabId === "fonts") return selectedFontId ? visibleNameForId(lastFontsList, selectedFontId, ["id", "name"]) : "None";
+    if (tabId === "announcers") return selectedAnnouncerId ? visibleNameForId(lastAnnouncersList, selectedAnnouncerId, ["id", "name"]) : "None";
 
     const selected = getSelectedIdsForCategory(tabId);
-    return selected.length ? selected.join(", ") : "None";
+    if (!selected.length) return "None";
+    const items = lastCategoryModsById[tabId] || [];
+    return selected.map((id) => visibleNameForId(items, id, ["id", "name", "modName"])).join(", ");
   }
 
   function cleanModName(raw) {
@@ -165,8 +165,79 @@
     return name.trim() || raw;
   }
 
+  function visibleModName(mod, fallback = "Unnamed mod") {
+    const alias = typeof mod?.displayName === "string" ? mod.displayName.trim() : "";
+    if (alias) return alias;
+    return cleanModName(mod?.modName || mod?.name) || fallback;
+  }
+
+  function visibleNameForId(items, id, keys) {
+    const wanted = String(id || "").replace(/\\/g, "/");
+    const match = (items || []).find((item) =>
+      keys.some((key) => String(item?.[key] || "").replace(/\\/g, "/") === wanted)
+    );
+    if (match) return visibleModName(match, cleanModName(wanted) || wanted);
+    return cleanModName(wanted) || wanted;
+  }
+
   function getTabLabel(tabId) {
     return SUMMARY_TABS.find((t) => t.id === tabId)?.label || String(tabId || "");
+  }
+
+  function tabHasInstalledMods(tabId) {
+    if (tabId === "skins") return true;
+    if (tabId === "maps") return Array.isArray(lastMapsList) && lastMapsList.length > 0;
+    if (tabId === "fonts") return Array.isArray(lastFontsList) && lastFontsList.length > 0;
+    if (tabId === "announcers") return Array.isArray(lastAnnouncersList) && lastAnnouncersList.length > 0;
+
+    if (OTHER_CATEGORY_TABS.some((t) => t.id === tabId)) {
+      if (!Object.prototype.hasOwnProperty.call(lastCategoryModsById, tabId)) return false;
+      const mods = lastCategoryModsById[tabId];
+      return Array.isArray(mods) && mods.length > 0;
+    }
+    return true;
+  }
+
+  function getVisibleSummaryTabs() {
+    if (!hideEmptyCategories) return SUMMARY_TABS;
+    return SUMMARY_TABS.filter((tab) => tab.id === "skins" || tabHasInstalledMods(tab.id));
+  }
+
+  function isSummaryTabVisible(tabId) {
+    return getVisibleSummaryTabs().some((tab) => tab.id === tabId);
+  }
+
+  function ensureActiveTabVisible() {
+    if (!isSummaryTabVisible(activeTab)) activeTab = "skins";
+  }
+
+  function syncActiveTabContent() {
+    if (!panel) return;
+    panel.querySelectorAll(".tab-content").forEach((content) => {
+      if (content && content.dataset && content.dataset.tab === activeTab) {
+        content.classList.add("active");
+      } else if (content) {
+        content.classList.remove("active");
+      }
+    });
+  }
+
+  function syncSummaryRowVisibility() {
+    if (!panel || !panel._summaryRowsByTab) return;
+    const visibleIds = new Set(getVisibleSummaryTabs().map((tab) => tab.id));
+    for (const tab of SUMMARY_TABS) {
+      const row = panel._summaryRowsByTab[tab.id];
+      if (row) row.style.display = visibleIds.has(tab.id) ? "" : "none";
+    }
+  }
+
+  function applyVisibleCategoryState() {
+    syncSummaryRowVisibility();
+    if (rightPaneMode === "picker" && !isSummaryTabVisible(activeTab)) {
+      ensureActiveTabVisible();
+      syncActiveTabContent();
+      setRightPaneMode("picker");
+    }
   }
 
   function refreshSummaryValues() {
@@ -174,35 +245,33 @@
     for (const tab of SUMMARY_TABS) {
       const el = panel._summaryValuesByTab[tab.id];
       const raw = getSelectedSummaryForTab(tab.id);
-      if (el) {
-        el.textContent = (raw !== "None" && raw !== "Waiting for champ lock…") ? cleanModName(raw) : raw;
-      }
+      if (el) el.textContent = raw;
+      
       const row = panel._summaryRowsByTab && panel._summaryRowsByTab[tab.id];
       if (row) {
-        if (raw !== "None" && raw !== "Waiting for champ lock…") {
-          row.classList.add("active");
-        } else {
-          row.classList.remove("active");
-        }
+        if (raw !== "None" && raw !== "Waiting for champ lock…") row.classList.add("active");
+        else row.classList.remove("active");
       }
     }
+    syncSummaryRowVisibility();
     refreshButtonBadgeFromSelections();
   }
 
   function setRightPaneMode(mode) {
+    if (mode === "picker") {
+      ensureActiveTabVisible();
+      syncActiveTabContent();
+    }
     rightPaneMode = mode;
     if (!panel) return;
 
-    if (panel._summaryView) {
-      panel._summaryView.style.display = mode === "summary" ? "flex" : "none";
-    }
+    if (panel._summaryView) panel._summaryView.style.display = mode === "summary" ? "flex" : "none";
     if (panel._pickerView) {
       if (mode === "picker") panel._pickerView.classList.add("active");
       else panel._pickerView.classList.remove("active");
     }
-    if (panel._backBtn) {
-      panel._backBtn.style.display = mode === "picker" ? "inline-block" : "none";
-    }
+    if (panel._backBtn) panel._backBtn.style.display = mode === "picker" ? "inline-block" : "none";
+    
     if (panel._rightTitle) {
       if (mode === "picker") {
         const icon = SUMMARY_ICONS[activeTab] || "";
@@ -221,14 +290,12 @@
     const currentSkinId = Number(pythonChromaState?.currentSkinId);
 
     const chromaBelongsToChampion =
-      Number.isFinite(selectedChromaId) &&
-      selectedChromaId > 0 &&
-      Number.isFinite(championId) &&
-      championId > 0 &&
+      Number.isFinite(selectedChromaId) && selectedChromaId > 0 &&
+      Number.isFinite(championId) && championId > 0 &&
       Math.floor(selectedChromaId / 1000) === championId;
+      
     const chromaContextMatches =
-      !Number.isFinite(currentSkinId) ||
-      currentSkinId <= 0 ||
+      !Number.isFinite(currentSkinId) || currentSkinId <= 0 ||
       Math.floor(currentSkinId / 1000) === championId;
 
     if (chromaBelongsToChampion && chromaContextMatches) {
@@ -250,23 +317,17 @@
   function handleChromaStateUpdate(data) {
     pythonChromaState = data && typeof data === "object" ? data : null;
     requestModsForCurrentSkin();
-    if (isOpen && activeTab === "skins") {
-      refreshSummaryValues();
-    }
+    if (isOpen && activeTab === "skins") refreshSummaryValues();
   }
 
   function resetStaleChromaStateForSkin(skinId) {
     if (!pythonChromaState) return;
-
     const incomingSkinId = Number(skinId);
     const selectedChromaId = Number(pythonChromaState.selectedChromaId);
     const currentSkinId = Number(pythonChromaState.currentSkinId);
     if (!Number.isFinite(incomingSkinId) || incomingSkinId <= 0) return;
 
-    const belongsToPreviousChromaContext =
-      incomingSkinId === selectedChromaId ||
-      incomingSkinId === currentSkinId;
-    if (!belongsToPreviousChromaContext) {
+    if (incomingSkinId !== selectedChromaId && incomingSkinId !== currentSkinId) {
       pythonChromaState = null;
     }
   }
@@ -285,1939 +346,449 @@
     const previousPhase = currentPhase;
     currentPhase = phase;
 
-    if (
-      phase === "ChampSelect" &&
-      previousPhase &&
-      previousPhase !== "ChampSelect"
-    ) {
+    if (phase === "ChampSelect" && previousPhase !== "ChampSelect") {
       resetCustomSkinSessionState();
-    } else if (
-      phase !== "ChampSelect" &&
-      previousPhase === "ChampSelect"
-    ) {
+    } else if (phase !== "ChampSelect" && previousPhase === "ChampSelect") {
       resetCustomSkinSessionState();
     }
   }
 
-  let bridge = null;
-
-  function waitForBridge() {
-    return new Promise((resolve, reject) => {
-      const timeout = 10000;
-      const interval = 50;
-      let elapsed = 0;
-      const check = () => {
-        if (window.__roseBridge) return resolve(window.__roseBridge);
-        elapsed += interval;
-        if (elapsed >= timeout) return reject(new Error("Bridge not available"));
-        setTimeout(check, interval);
-      };
-      check();
-    });
+  function createSelectionRequestId() {
+    selectionRequestCounter += 1;
+    return `${LOG_PREFIX}-${Date.now()}-${selectionRequestCounter}`;
   }
 
-  const CSS_RULES = `
-    .${BUTTON_CLASS} {
-      pointer-events: auto;
-      -webkit-user-select: none;
-      cursor: pointer;
-      box-sizing: border-box;
-      height: auto !important;
-      width: auto !important;
-      position: absolute !important;
-      display: block !important;
-      z-index: 10 !important;
-      margin: 0;
-      padding: 0;
-    }
+  // ==== Стилизация ====
+  function getPluginCSS() {
+    const btn = BUTTON_CLASS;
+    const pnl = PANEL_CLASS;
+    return `
+.${btn} {
+  position: absolute !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  white-space: nowrap !important;
+  min-width: 130px !important;
+  height: 30px !important;
+  font-size: 12px !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.05em !important;
+  text-transform: uppercase !important;
+  background: #1e2328 !important;
+  color: #cdbe91 !important;
+  border: 1px solid #c8aa6e !important;
+  transition: background 0.2s, color 0.2s !important;
+  cursor: pointer !important;
+  pointer-events: auto !important;
+  font-family: "Beaufort for LOL", serif !important;
+  box-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
+  box-sizing: border-box;
+  padding: 0 12px !important;
+  z-index: 50 !important;
+}
+.${btn}:hover {
+  background: #463714 !important;
+  color: #f0e6d2 !important;
+}
+.${btn}:active {
+  background: #1e2328 !important;
+}
+.${btn} .count-badge {
+  position: absolute !important;
+  top: -6px !important;
+  right: -6px !important;
+  left: auto !important;
+  bottom: auto !important;
+  transform: none !important;
+  min-width: 18px !important;
+  height: 18px !important;
+  padding: 0 4px !important;
+  background: #c89b3c !important;
+  color: #010a13 !important;
+  border: 1px solid #f0e6d2 !important;
+  border-radius: 9px !important;
+  font-size: 11px !important;
+  font-weight: bold !important;
+  display: none;
+  align-items: center !important;
+  justify-content: center !important;
+  line-height: 1 !important;
+  box-sizing: border-box !important;
+  box-shadow: 0 2px 5px rgba(0,0,0,0.7) !important;
+  z-index: 51 !important;
+  pointer-events: none !important;
+}
 
-    lol-uikit-flat-button.rose-custom-wheel-button,
-    .rose-custom-wheel-button {
-      display: inline-block !important;
-      white-space: nowrap !important;
-      isolation: isolate !important;
-    }
+.${btn}[data-hidden], .${btn}[data-hidden] * {
+  pointer-events: none !important; cursor: default !important; visibility: hidden !important;
+}
 
-    .rose-custom-wheel-button .count-badge.social-count-badge,
-    lol-uikit-flat-button.rose-custom-wheel-button .count-badge.social-count-badge,
-    .rose-custom-wheel-button > .count-badge.social-count-badge,
-    lol-uikit-flat-button.rose-custom-wheel-button > .count-badge.social-count-badge {
-      position: absolute !important;
-      top: var(--rose-badge-top, -4px) !important;
-      right: var(--rose-badge-right, -17px) !important;
-      left: var(--rose-badge-left, auto) !important;
-      min-width: 18px !important;
-      height: 18px !important;
-      padding: 0 5px !important;
-      background: #c89b3c !important;
-      color: #000 !important;
-      border-radius: 3px !important;
-      font-size: 11px !important;
-      font-weight: 600 !important;
-      display: flex !important;
-      align-items: center !important;
-      justify-content: center !important;
-      line-height: 1 !important;
-      box-sizing: border-box !important;
-      pointer-events: none !important;
-      z-index: 1 !important;
-      transform: translate(var(--rose-badge-translate-x, 60%), var(--rose-badge-translate-y, -60%)) !important;
-      margin: 0 !important;
-      bottom: auto !important;
-    }
+.${pnl} { position: fixed; z-index: 10000; pointer-events: none; -webkit-user-select: none; font-family: "Spiegel", "LoL Body", Arial, sans-serif; }
+.${pnl}[data-no-button] { pointer-events: none; cursor: default !important; }
+.${pnl}[data-no-button] * { pointer-events: none !important; cursor: default !important; }
+.${pnl} .flyout { position: fixed; overflow: visible; pointer-events: all; -webkit-user-select: none; width: auto !important; filter: drop-shadow(0 0 10px rgba(0,0,0,0.5)); }
 
-    .${BUTTON_CLASS}[data-hidden],
-    .${BUTTON_CLASS}[data-hidden] * {
-      pointer-events: none !important;
-      cursor: default !important;
-      visibility: hidden !important;
-    }
+.${pnl} .flyout .caret, .${pnl} .flyout [class*="caret"],
+.${pnl} lol-uikit-flyout-frame .caret, .${pnl} lol-uikit-flyout-frame [class*="caret"],
+.${pnl} .flyout::part(caret), .${pnl} lol-uikit-flyout-frame::part(caret) {
+  display: none !important; visibility: hidden !important; content: none !important;
+}
 
-    .${BUTTON_CLASS} .button-image {
-      pointer-events: auto;
-      -webkit-user-select: none;
-      cursor: pointer;
-      display: block;
-      width: 100%;
-      height: 100%;
-      background-size: contain;
-      background-position: center;
-      background-repeat: no-repeat;
-      transition: opacity 0.1s ease;
-      position: absolute;
-      top: 0;
-      left: 0;
-      min-width: 20px;
-      min-height: 20px;
-      background-color: transparent !important;
-      border: none !important;
-    }
-    
-    .${BUTTON_CLASS} .button-image.default { background-color: transparent; border: none; border-radius: 2px; opacity: 1; }
-    .${BUTTON_CLASS} .button-image.pressed { opacity: 0; background-color: transparent !important; border: none !important; }
-    .${BUTTON_CLASS}.pressed .button-image.default { opacity: 0; }
-    .${BUTTON_CLASS}.pressed .button-image.pressed { opacity: 1; }
+.${pnl} .chroma-modal {
+  background: #010a13; border-radius: 2px; box-shadow: 0 0 20px rgba(0, 0, 0, 0.8);
+  display: flex; flex-direction: column; width: 980px; max-width: calc(100vw - 80px); min-width: 720px;
+  position: relative; z-index: 0; padding: 16px; box-sizing: border-box; overflow: hidden;
+  color: #f0e6d2; height: 520px !important; min-height: 420px !important; max-height: calc(100vh - 120px) !important;
+}
 
+.${pnl} .rose-wheel-right-header {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding-bottom: 10px; border-bottom: 1px solid #3c3c41; margin-bottom: 10px; flex-shrink: 0;
+}
+.${pnl} .rose-wheel-right-title { font-weight: 700; color: #f0e6d2; font-size: 13px; display: flex; align-items: center; gap: 6px; }
+.${pnl} .rose-wheel-right-title .rose-wheel-title-icon { width: 18px; height: 18px; flex-shrink: 0; }
+.${pnl} .rose-wheel-right-title .rose-wheel-title-icon svg { width: 18px; height: 18px; fill: none; stroke: #c8aa6e; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 
-    .${PANEL_CLASS} {
-      position: fixed;
-      z-index: 10000;
-      pointer-events: all;
-      -webkit-user-select: none;
-      font-family: "Spiegel", "LoL Body", Arial, sans-serif;
-    }
+.${pnl} .rose-wheel-summary { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 6px; padding: 6px 2px; overflow-y: auto; }
+.${pnl} .rose-wheel-summary::-webkit-scrollbar { width: 6px; }
+.${pnl} .rose-wheel-summary::-webkit-scrollbar-track { background: rgba(0,0,0,0.3); }
+.${pnl} .rose-wheel-summary::-webkit-scrollbar-thumb { background: #5b5a56; border-radius: 3px; }
 
-    .${PANEL_CLASS}[data-no-button] { pointer-events: none; cursor: default !important; }
+.${pnl} .rose-wheel-summary-row {
+  display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 12px; padding: 8px;
+  border: 1px solid #3c3c41; border-left: 3px solid transparent;
+  background: linear-gradient(to right, rgba(30, 35, 40, 0.8), rgba(30, 35, 40, 0.5)); cursor: pointer; transition: all 0.2s ease;
+}
+.${pnl} .rose-wheel-summary-row:hover { background: linear-gradient(to right, rgba(40, 45, 50, 0.9), rgba(40, 45, 50, 0.7)); border-color: #5c5c61; border-left-color: #c8aa6e; transform: translateX(2px); }
+.${pnl} .rose-wheel-summary-row.active { border-left: 3px solid #c8aa6e; }
 
-    .${PANEL_CLASS} .chroma-modal {
-      background: #010a13;
-      border-radius: 2px;
-      box-shadow: 0 0 20px rgba(0, 0, 0, 0.8);
-      display: flex;
-      flex-direction: column;
-      width: 980px;
-      max-width: calc(100vw - 80px);
-      min-width: 720px;
-      position: relative;
-      z-index: 0;
-      padding: 16px;
-      box-sizing: border-box;
-      overflow: hidden;
-      color: #f0e6d2;
-      height: 520px !important;
-      min-height: 420px !important;
-      max-height: calc(100vh - 120px) !important;
-    }
-    
-    .${PANEL_CLASS} .chroma-modal.rose-custom-wheel-modal {
-      /* Height handled in base class to ensure consistency */
-      overflow: hidden;
-    }
+.${pnl} .rose-wheel-summary-icon { width: 18px; height: 18px; flex-shrink: 0; color: #5b5a56; transition: color 0.2s ease; }
+.${pnl} .rose-wheel-summary-icon svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.${pnl} .rose-wheel-summary-left { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.${pnl} .rose-wheel-summary-label { color: #a09b8c; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; }
+.${pnl} .rose-wheel-summary-value { color: #f0e6d2; font-size: 13px; font-weight: 700; word-break: break-word; }
 
-    .${PANEL_CLASS} .flyout {
-      position: absolute;
-      overflow: visible;
-      pointer-events: all;
-      -webkit-user-select: none;
-      width: auto !important;
-      filter: drop-shadow(0 0 10px rgba(0,0,0,0.5));
-    }
-    
-    .${PANEL_CLASS} .flyout .caret, .${PANEL_CLASS} .flyout [class*="caret"],
-    .${PANEL_CLASS} lol-uikit-flyout-frame .caret, .${PANEL_CLASS} lol-uikit-flyout-frame [class*="caret"],
-    .${PANEL_CLASS} .flyout .caret::before, .${PANEL_CLASS} .flyout .caret::after,
-    .${PANEL_CLASS} .flyout [class*="caret"]::before, .${PANEL_CLASS} .flyout[class*="caret"]::after,
-    .${PANEL_CLASS} lol-uikit-flyout-frame .caret::before, .${PANEL_CLASS} lol-uikit-flyout-frame .caret::after,
-    .${PANEL_CLASS} lol-uikit-flyout-frame [class*="caret"]::before, .${PANEL_CLASS} lol-uikit-flyout-frame[class*="caret"]::after,
-    .${PANEL_CLASS} .flyout::part(caret), .${PANEL_CLASS} lol-uikit-flyout-frame::part(caret),
-    .${PANEL_CLASS} lol-uikit-flyout-frame::before, .${PANEL_CLASS} lol-uikit-flyout-frame::after,
-    .${PANEL_CLASS} .flyout::before, .${PANEL_CLASS} .flyout::after {
-      display: none !important; visibility: hidden !important; content: none !important;
-    }
+.${pnl} .rose-wheel-picker { flex: 1; min-height: 0; display: none; }
+.${pnl} .rose-wheel-picker.active { display: flex; flex-direction: column; min-height: 0; }
+.${pnl} .tab-content { display: none; width: 100%; background: transparent; }
+.${pnl} .tab-content.active { display: flex; flex-direction: column; height: 100%; }
 
-    .${PANEL_CLASS} .rose-wheel-right-header {
-      display: flex; align-items: center; justify-content: space-between; gap: 12px;
-      padding-bottom: 10px; border-bottom: 1px solid #3c3c41; margin-bottom: 10px; flex-shrink: 0;
-    }
+.${pnl} .mod-selection { pointer-events: all; flex: 1; min-height: 0; overflow-y: auto; padding-right: 4px; margin-top: 4px; }
+.${pnl} .mod-selection::-webkit-scrollbar { width: 6px; }
+.${pnl} .mod-selection::-webkit-scrollbar-track { background: rgba(0,0,0,0.3); }
+.${pnl} .mod-selection::-webkit-scrollbar-thumb { background: #5b5a56; border-radius: 3px; }
 
-    .${PANEL_CLASS} .rose-wheel-right-title {
-      font-weight: 700; color: #f0e6d2; font-size: 13px;
-      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-      display: flex; align-items: center; gap: 6px;
-    }
+.${pnl} .mod-selection ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.${pnl} .mod-selection li {
+  background: linear-gradient(to right, rgba(30, 35, 40, 0.9), rgba(30, 35, 40, 0.6));
+  border: 1px solid #3c3c41; border-left: 3px solid transparent; padding: 10px; transition: all 0.2s ease;
+  display: flex; flex-direction: column; gap: 4px; cursor: pointer;
+}
+.${pnl} .mod-selection li:hover { background: linear-gradient(to right, rgba(40, 45, 50, 0.9), rgba(40, 45, 50, 0.7)); border-color: #5c5c61; border-left-color: #c8aa6e; transform: translateX(2px); }
+.${pnl} .mod-selection li.selected-row { border-left-color: #c8aa6e; background: linear-gradient(to right, rgba(200, 170, 110, 0.12), rgba(30, 35, 40, 0.6)); }
 
-    .${PANEL_CLASS} .rose-wheel-right-title .rose-wheel-title-icon { width: 18px; height: 18px; flex-shrink: 0; }
-    .${PANEL_CLASS} .rose-wheel-right-title .rose-wheel-title-icon svg {
-      width: 18px; height: 18px; fill: none; stroke: #c8aa6e; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;
-    }
+.${pnl} .mod-name-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; }
+.${pnl} .mod-name { color: #f0e6d2; font-size: 13px; font-weight: 700; letter-spacing: 0.5px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.${pnl} .mod-name.none-label { font-style: italic; color: #8b8b8b; }
+.${pnl} .mod-description { color: #a09b8c; font-size: 11px; font-weight: 400; line-height: 1.4; word-wrap: break-word; }
 
-    .${PANEL_CLASS} .rose-wheel-summary {
-      flex: 1; min-height: 0; display: flex; flex-direction: column; justify-content: flex-start;
-      gap: 6px; padding: 6px 2px; overflow-y: auto;
-    }
-
-    .${PANEL_CLASS} .rose-wheel-summary::-webkit-scrollbar { width: 6px; }
-    .${PANEL_CLASS} .rose-wheel-summary::-webkit-scrollbar-track { background: rgba(0,0,0,0.3); }
-    .${PANEL_CLASS} .rose-wheel-summary::-webkit-scrollbar-thumb { background: #5b5a56; border-radius: 3px; }
-
-    .${PANEL_CLASS} .rose-wheel-summary-row {
-      display: grid;
-      grid-template-columns: 1fr auto;
-      align-items: center;
-      gap: 12px;
-      padding: 8px;
-      border: 1px solid #3c3c41;
-      border-left: 3px solid transparent;
-      background: linear-gradient(to right, rgba(30, 35, 40, 0.8), rgba(30, 35, 40, 0.5));
-      cursor: pointer;
-      transition: all 0.2s ease;
-    }
-
-    .${PANEL_CLASS} .rose-wheel-summary-row:hover {
-      background: linear-gradient(to right, rgba(40, 45, 50, 0.9), rgba(40, 45, 50, 0.7));
-      border-color: #5c5c61;
-      border-left-color: #c8aa6e;
-      transform: translateX(2px);
-    }
-
-    .${PANEL_CLASS} .rose-wheel-summary-row:active {
-      transform: scale(0.98);
-      transition: transform 0.1s ease;
-    }
-
-    .${PANEL_CLASS} .rose-wheel-summary-row.active { border-left: 3px solid #c8aa6e; }
-    .${PANEL_CLASS} .rose-wheel-summary-row:hover .rose-wheel-summary-icon { color: #c8aa6e; }
-
-    .${PANEL_CLASS} .rose-wheel-summary-icon { width: 18px; height: 18px; flex-shrink: 0; color: #5b5a56; transition: color 0.2s ease; }
-    .${PANEL_CLASS} .rose-wheel-summary-icon svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
-
-    .${PANEL_CLASS} .rose-wheel-summary-left { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
-    .${PANEL_CLASS} .rose-wheel-summary-label { color: #a09b8c; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; }
-    .${PANEL_CLASS} .rose-wheel-summary-value { color: #f0e6d2; font-size: 13px; font-weight: 700; word-break: break-word; }
-
-    .${PANEL_CLASS} .rose-wheel-picker { flex: 1; min-height: 0; display: none; }
-    .${PANEL_CLASS} .rose-wheel-picker.active { display: flex; flex-direction: column; min-height: 0; }
-
-    .${PANEL_CLASS} .tab-content { display: none; width: 100%; background: transparent; }
-    .${PANEL_CLASS} .tab-content.active { display: flex; flex-direction: column; height: 100%; }
-
-    .${PANEL_CLASS} .mod-selection { pointer-events: all; flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding-right: 4px; margin-top: 4px; }
-    .${PANEL_CLASS} .mod-selection::-webkit-scrollbar { width: 6px; }
-    .${PANEL_CLASS} .mod-selection::-webkit-scrollbar-track { background: rgba(0,0,0,0.3); }
-    .${PANEL_CLASS} .mod-selection::-webkit-scrollbar-thumb { background: #5b5a56; border-radius: 3px; }
-
-    .${PANEL_CLASS} .mod-selection ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
-
-    .${PANEL_CLASS} .mod-selection li {
-      background: linear-gradient(to right, rgba(30, 35, 40, 0.9), rgba(30, 35, 40, 0.6));
-      border: 1px solid #3c3c41;
-      border-left: 3px solid transparent;
-      padding: 10px;
-      transition: all 0.2s ease;
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
-      border-radius: 0;
-      cursor: pointer;
-    }
-
-    .${PANEL_CLASS} .mod-selection li:hover {
-      background: linear-gradient(to right, rgba(40, 45, 50, 0.9), rgba(40, 45, 50, 0.7));
-      border-color: #5c5c61;
-      border-left-color: #c8aa6e;
-      transform: translateX(2px);
-    }
-
-    .${PANEL_CLASS} .mod-selection li.selected-row {
-      border-left-color: #c8aa6e;
-      background: linear-gradient(to right, rgba(200, 170, 110, 0.12), rgba(30, 35, 40, 0.6));
-    }
-
-    .${PANEL_CLASS} .mod-selection li .mod-name.none-label {
-      font-style: italic;
-      color: #8b8b8b;
-    }
-
-    .${PANEL_CLASS} .mod-name-row {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 12px;
-      width: 100%;
-    }
-    
-    .${PANEL_CLASS} .mod-name {
-      color: #f0e6d2;
-      font-size: 13px;
-      font-weight: 700;
-      letter-spacing: 0.5px;
-      flex: 1;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-
-    .${PANEL_CLASS} .mod-description {
-      color: #a09b8c;
-      font-size: 11px;
-      font-weight: 400;
-      line-height: 1.4;
-      word-wrap: break-word;
-    }
-
-    .${PANEL_CLASS} .mod-meta, 
-    .${PANEL_CLASS} .mod-injection-note {
-      color: #7a7a7d;
-      font-size: 10px;
-      font-style: italic;
-    }
-
-    .${PANEL_CLASS} .mod-loading {
-      color: #a09b8c;
-      font-size: 12px;
-      text-align: center;
-      padding: 20px;
-      font-style: italic;
-    }
-
-    .${PANEL_CLASS} .rose-wheel-back-button,
-    .${PANEL_CLASS} .mod-select-button {
-      background: transparent !important;
-      background-color: transparent !important;
-      border: 1px solid #c8aa6e !important;
-      color: #c8aa6e !important;
-      cursor: pointer !important;
-      transition: all 0.2s ease !important;
-      flex-shrink: 0 !important;
-      border-radius: 0 !important;
-      display: flex !important;
-      align-items: center !important;
-      justify-content: center !important;
-      outline: none !important;
-    }
-
-    .${PANEL_CLASS} .rose-wheel-back-button {
-      padding: 4px 10px !important;
-      font-size: 11px !important;
-      font-weight: 700 !important;
-      text-transform: uppercase !important;
-    }
-
-    .${PANEL_CLASS} .mod-select-button {
-      width: 26px !important;
-      height: 26px !important;
-      font-size: 20px !important;
-      font-weight: 400 !important;
-      padding: 0 !important;
-      margin: 0 !important;
-      line-height: 1 !important;
-    }
-
-    .${PANEL_CLASS} .rose-wheel-back-button:hover,
-    .${PANEL_CLASS} .mod-select-button:hover {
-      background: rgba(200, 170, 110, 0.15) !important;
-      background-color: rgba(200, 170, 110, 0.15) !important;
-      box-shadow: 0 0 8px rgba(200, 170, 110, 0.3) !important;
-      color: #f0e6d2 !important;
-      border-color: #f0e6d2 !important;
-    }
-
-    #skins-list {
-      flex: 1 1 auto;
-      min-height: 0;
-      max-height: none;
-    }
-
-    #skins-list .skins-list-container {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-      gap: 10px;
-      padding-right: 8px;
-    }
-
-    .skin-card {
-      position: relative;
-      height: 280px;
-      cursor: pointer;
-      border-radius: 4px;
-      perspective: 1000px;
-      background: transparent;
-    }
-    .skin-card-inner {
-      position: relative;
-      width: 100%;
-      height: 100%;
-      transition: transform 0.45s cubic-bezier(0.2, 0.75, 0.25, 1);
-      transform-style: preserve-3d;
-    }
-    .skin-card.is-flipped .skin-card-inner {
-      transform: rotateY(180deg);
-    }
-    .skin-card-face {
-      position: absolute;
-      inset: 0;
-      display: flex;
-      flex-direction: column;
-      overflow: hidden;
-      border: 1px solid #5b5a56;
-      border-radius: 4px;
-      background: #1e2328;
-      backface-visibility: hidden;
-      -webkit-backface-visibility: hidden;
-      transition: border-color 0.2s, box-shadow 0.2s;
-    }
-    .skin-card-front {
-      z-index: 2;
-    }
-    .skin-card-back {
-      z-index: 1;
-      pointer-events: none;
-    }
-    .skin-card.is-flipped .skin-card-front {
-      z-index: 1;
-      pointer-events: none;
-    }
-    .skin-card.is-flipped .skin-card-back {
-      z-index: 2;
-      pointer-events: auto;
-    }
-    .skin-card-front:hover,
-    .skin-card-back:hover {
-      border-color: #c8aa6e;
-      box-shadow: 0 0 8px rgba(200, 170, 110, 0.3);
-    }
-    .skin-card.selected .skin-card-front,
-    .skin-card.selected .skin-card-back {
-      border-color: #c8aa6e;
-      box-shadow: 0 0 10px rgba(200, 170, 110, 0.55);
-      background: #2b2a20;
-    }
-    .skin-card-back {
-      transform: rotateY(180deg);
-      padding: 8px;
-      box-sizing: border-box;
-    }
-    .skin-card-front img {
-      width: 100%;
-      flex: 1 1 auto;
-      min-height: 0;
-      object-fit: cover;
-      display: block;
-      background: #0a0a0d;
-      white-space: nowrap;
-    }
-    .skin-card-front:hover .skin-name {
-      color: #cdbe91;
-    }
-    .skin-chroma-button {
-      position: absolute;
-      top: 7px;
-      right: 7px;
-      z-index: 2;
-      padding: 4px 7px;
-      border: 1px solid rgba(200, 170, 110, 0.8);
-      border-radius: 3px;
-      background: rgba(10, 10, 13, 0.86);
-      color: #c8aa6e;
-      cursor: pointer;
-      font-family: "Beaufort for LOL", serif;
-      font-size: 10px;
-      font-weight: bold;
-      transition: background 0.2s, color 0.2s, transform 0.2s;
-    }
-    .skin-chroma-button:hover {
-      background: #463714;
-      color: #f0e6d2;
-      transform: translateY(-1px);
-    }
-    .skin-card-back-header {
-      display: flex;
-      align-items: center;
-      gap: 5px;
-      flex: 0 0 auto;
-      min-height: 26px;
-      color: #cdbe91;
-      font-family: "Beaufort for LOL", serif;
-      font-size: 11px;
-      font-weight: bold;
-    }
-    .skin-card-back-close {
-      position: relative;
-      z-index: 1;
-      flex: 0 0 auto;
-      min-width: 34px;
-      padding: 3px 7px;
-      border: 1px solid #5b5a56;
-      border-radius: 2px;
-      background: #121820;
-      color: #a09b8c;
-      cursor: pointer;
-      font-size: 12px;
-      line-height: 16px;
-    }
-    .skin-card-back-close:hover {
-      border-color: #c8aa6e;
-      color: #f0e6d2;
-    }
-    .skin-card-back-options {
-      display: flex;
-      flex: 1 1 auto;
-      flex-direction: column;
-      gap: 6px;
-      min-height: 0;
-      margin-top: 6px;
-      overflow-y: auto;
-      padding-right: 2px;
-    }
-    .skin-option {
-      display: flex;
-      align-items: center;
-      gap: 7px;
-      flex: 0 0 auto;
-      min-height: 55px;
-      padding: 4px;
-      border: 1px solid #4a4a48;
-      border-radius: 3px;
-      background: #151b21;
-      color: #a09b8c;
-      cursor: pointer;
-      text-align: left;
-      transition: border-color 0.2s, background 0.2s;
-    }
-    .skin-option:hover {
-      border-color: #c8aa6e;
-      background: #252b2d;
-    }
-    .skin-option.selected {
-      border-color: #c8aa6e;
-      background: #463714;
-      color: #f0e6d2;
-    }
-    .skin-option img {
-      width: 38px;
-      height: 52px;
-      flex: 0 0 38px;
-      object-fit: cover;
-      background: #0a0a0d;
-    }
-    .skin-option-name {
-      overflow: hidden;
-      font-family: "Beaufort for LOL", serif;
-      font-size: 10px;
-      line-height: 1.2;
-      text-overflow: ellipsis;
-    }
-    #skin-selection-actions {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      margin-top: 12px;
-      padding-top: 12px;
-      border-top: 1px solid #463714;
-      flex: 0 0 auto;
-    }
-    #skin-selection-count {
-      flex: 1;
-      color: #a09b8c;
-      font-family: "Beaufort for LOL", serif;
-      font-size: 13px;
-    }
-    #skin-selection-confirm {
-      padding: 9px 18px;
-      border: 1px solid #c8aa6e;
-      border-radius: 3px;
-      background: #1e2328;
-      color: #c8aa6e;
-      cursor: pointer;
-      font-family: "Beaufort for LOL", serif;
-      font-weight: bold;
-    }
-    #skin-selection-confirm:hover:not(:disabled) {
-      background: #463714;
-      color: #f0e6d2;
-    }
-    #skin-selection-confirm:disabled {
-      opacity: 0.45;
-      cursor: default;
-    }
-  `;
+.${pnl} .rose-wheel-back-button, .${pnl} .mod-select-button {
+  background: transparent !important; border: 1px solid #c8aa6e !important; color: #c8aa6e !important;
+  cursor: pointer !important; transition: all 0.2s ease !important; flex-shrink: 0 !important;
+  border-radius: 0 !important; display: flex !important; align-items: center !important; justify-content: center !important; outline: none !important;
+}
+.${pnl} .rose-wheel-back-button { padding: 4px 10px !important; font-size: 11px !important; font-weight: 700 !important; text-transform: uppercase !important; }
+.${pnl} .mod-select-button { width: 26px !important; height: 26px !important; font-size: 20px !important; padding: 0 !important; line-height: 1 !important; }
+.${pnl} .rose-wheel-back-button:hover, .${pnl} .mod-select-button:hover {
+  background: rgba(200, 170, 110, 0.15) !important; box-shadow: 0 0 8px rgba(200, 170, 110, 0.3) !important; color: #f0e6d2 !important; border-color: #f0e6d2 !important;
+}
+`;
+  }
 
   function injectCSS() {
     const styleId = "rose-custom-wheel-css";
     if (document.getElementById(styleId)) return;
     const styleTag = document.createElement("style");
     styleTag.id = styleId;
-    styleTag.textContent = CSS_RULES;
+    styleTag.textContent = getPluginCSS();
     document.head.appendChild(styleTag);
   }
 
   function createButton() {
     if (button) return button;
-    try { button = document.createElement("lol-uikit-flat-button"); }
-    catch (e) { button = document.createElement("div"); }
-    button.className = "lol-uikit-flat-button idle rose-custom-wheel-button";
-    button.textContent = "Custom mods";
-
-    const computedStyle = window.getComputedStyle(button);
-    if (computedStyle.position === "static" || computedStyle.position === "") {
-      button.style.position = "relative";
-    }
+    button = document.createElement("button");
+    button.className = BUTTON_CLASS;
+    button.textContent = "Custom Mods";
 
     const countBadge = document.createElement("div");
-    countBadge.className = "count-badge social-count-badge";
+    countBadge.className = "count-badge";
     countBadge.textContent = "0";
-    countBadge.style.display = "none"; 
-    countBadge.style.setProperty("--rose-badge-top", "-4px");
-    countBadge.style.setProperty("--rose-badge-right", "-17px");
-    countBadge.style.setProperty("--rose-badge-left", "auto");
-    countBadge.style.setProperty("--rose-badge-translate-x", "60%");
-    countBadge.style.setProperty("--rose-badge-translate-y", "-60%");
     button.appendChild(countBadge);
-    button._countBadge = countBadge; 
+    button._countBadge = countBadge;
 
-    button.addEventListener("click", (event) => {
-      event.stopPropagation();
-      event.preventDefault();
-      isOpen ? closePanel() : openPanel();
+    button.addEventListener("click", (e) => {
+      e.stopPropagation(); 
+      e.preventDefault();
+      if (isOpen) { closePanel(); } else { togglePanel(); }
     });
-
     return button;
   }
 
-  function createPanel() {
-    if (panel) return panel;
-
-    const existingPanel = document.getElementById(PANEL_ID);
-    if (existingPanel) existingPanel.remove();
-
-    panel = document.createElement("div");
-    panel.id = PANEL_ID;
-    panel.className = PANEL_CLASS;
-    panel.style.position = "fixed";
-    panel.style.top = "0";
-    panel.style.left = "0";
-    panel.style.width = "100%";
-    panel.style.height = "100%";
-    panel.style.zIndex = "10000";
-    panel.style.pointerEvents = "none";
-    panel.style.display = "none"; 
-
-    let flyoutFrame;
-    try {
-      flyoutFrame = document.createElement("lol-uikit-flyout-frame");
-      flyoutFrame.className = "flyout";
-      flyoutFrame.setAttribute("orientation", "top");
-      flyoutFrame.setAttribute("animated", "false");
-      flyoutFrame.setAttribute("caretless", "true");
-      flyoutFrame.setAttribute("show", "true");
-    } catch (e) {
-      flyoutFrame = document.createElement("div");
-      flyoutFrame.className = "flyout";
-    }
-
-    flyoutFrame.style.position = "absolute";
-    flyoutFrame.style.overflow = "visible";
-    flyoutFrame.style.pointerEvents = "all";
-
-    let flyoutContent;
-    try {
-      flyoutContent = document.createElement("lc-flyout-content");
-    } catch (e) {
-      flyoutContent = document.createElement("div");
-      flyoutContent.className = "lc-flyout-content";
-    }
-
-    const modal = document.createElement("div");
-    modal.className = "rose-custom-wheel-modal chroma-modal";
-
-    const isOtherCategoryTab = (tabName) => OTHER_CATEGORY_TABS.some((t) => t.id === tabName);
-
-    const switchTab = (tabName) => {
-      activeTab = tabName;
-      const allContents =[
-        panel._modsContent,
-        panel._mapsContent,
-        panel._fontsContent,
-        panel._announcersContent,
-        ...OTHER_CATEGORY_TABS.map((t) => panel[`_${t.id}Content`]).filter(Boolean),
-      ];
-      allContents.forEach((content) => {
-        if (content && content.dataset && content.dataset.tab === tabName) {
-          content.classList.add("active");
-        } else if (content) {
-          content.classList.remove("active");
-        }
-      });
-      
-      // Всегда запрашиваем свежие данные для динамического обновления списка
-      if (tabName === "skins") {
-        lastSkinModsRequestAt = 0; // Сбрасываем троттлинг запроса
-        requestModsForCurrentSkin();
-      }
-      else if (tabName === "maps") {
-        requestMaps();
-      }
-      else if (tabName === "fonts") {
-        requestFonts();
-      }
-      else if (tabName === "announcers") {
-        requestAnnouncers();
-      }
-      else if (isOtherCategoryTab(tabName)) {
-        requestCategoryMods(tabName);
-      }
-
-      if (panel && panel._rightTitle) {
-        if (rightPaneMode === "picker") {
-          const icon = SUMMARY_ICONS[activeTab] || "";
-          panel._rightTitle.innerHTML = `<span class="rose-wheel-title-icon">${icon}</span> Choose \u2022 ${escapeHtml(getTabLabel(activeTab))}`;
-        } else {
-          panel._rightTitle.textContent = "Custom Mods";
-        }
-      }
-    };
-
-    let scrollable;
-    try {
-      scrollable = document.createElement("lol-uikit-scrollable");
-      scrollable.className = "mod-selection";
-      scrollable.setAttribute("overflow-masks", "enabled");
-    } catch (e) {
-      scrollable = document.createElement("div");
-      scrollable.className = "mod-selection";
-      scrollable.style.overflowY = "auto";
-    }
-
-    const modsContent = document.createElement("div");
-    modsContent.className = "tab-content active";
-    modsContent.dataset.tab = "skins";
-
-    const mapsContent = document.createElement("div");
-    mapsContent.className = "tab-content";
-    mapsContent.dataset.tab = "maps";
-
-    const fontsContent = document.createElement("div");
-    fontsContent.className = "tab-content";
-    fontsContent.dataset.tab = "fonts";
-
-    const announcersContent = document.createElement("div");
-    announcersContent.className = "tab-content";
-    announcersContent.dataset.tab = "announcers";
-
-    const otherContents = OTHER_CATEGORY_TABS.map((t) => {
-      const content = document.createElement("div");
-      content.className = "tab-content";
-      content.dataset.tab = t.id;
-      return content;
-    });
-
-    const modList = document.createElement("ul");
-    modList.style.listStyle = "none"; modList.style.margin = "0"; modList.style.padding = "0";
-    modList.style.display = "flex"; modList.style.flexDirection = "column"; modList.style.width = "100%"; modList.style.gap = "4px";
-
-    const mapsList = document.createElement("ul");
-    mapsList.style.listStyle = "none"; mapsList.style.margin = "0"; mapsList.style.padding = "0";
-    mapsList.style.display = "flex"; mapsList.style.flexDirection = "column"; mapsList.style.width = "100%"; mapsList.style.gap = "4px";
-
-    const fontsList = document.createElement("ul");
-    fontsList.style.listStyle = "none"; fontsList.style.margin = "0"; fontsList.style.padding = "0";
-    fontsList.style.display = "flex"; fontsList.style.flexDirection = "column"; fontsList.style.width = "100%"; fontsList.style.gap = "4px";
-
-    const announcersList = document.createElement("ul");
-    announcersList.style.listStyle = "none"; announcersList.style.margin = "0"; announcersList.style.padding = "0";
-    announcersList.style.display = "flex"; announcersList.style.flexDirection = "column"; announcersList.style.width = "100%"; announcersList.style.gap = "4px";
-
-    const createSimpleList = () => {
-      const ul = document.createElement("ul");
-      ul.style.listStyle = "none"; ul.style.margin = "0"; ul.style.padding = "0";
-      ul.style.display = "flex"; ul.style.flexDirection = "column"; ul.style.width = "100%"; ul.style.gap = "4px";
-      return ul;
-    };
-
-    const otherLists = OTHER_CATEGORY_TABS.reduce((acc, t) => { acc[t.id] = createSimpleList(); return acc; }, {});
-
-    const modsLoading = document.createElement("div");
-    modsLoading.className = "mod-loading"; modsLoading.textContent = "Waiting for mods…"; modsLoading.style.display = "none";
-
-    const mapsLoading = document.createElement("div");
-    mapsLoading.className = "mod-loading"; mapsLoading.textContent = "Loading maps…"; mapsLoading.style.display = "none";
-
-    const fontsLoading = document.createElement("div");
-    fontsLoading.className = "mod-loading"; fontsLoading.textContent = "Loading fonts…"; fontsLoading.style.display = "none";
-
-    const announcersLoading = document.createElement("div");
-    announcersLoading.className = "mod-loading"; announcersLoading.textContent = "Loading announcers…"; announcersLoading.style.display = "none";
-
-    const otherLoadingEls = OTHER_CATEGORY_TABS.reduce((acc, t) => {
-      const el = document.createElement("div"); el.className = "mod-loading"; el.textContent = `Loading ${t.label.toLowerCase()}…`; el.style.display = "none";
-      acc[t.id] = el; return acc;
-    }, {});
-
-    modsContent.appendChild(modsLoading); modsContent.appendChild(modList);
-    mapsContent.appendChild(mapsLoading); mapsContent.appendChild(mapsList);
-    fontsContent.appendChild(fontsLoading); fontsContent.appendChild(fontsList);
-    announcersContent.appendChild(announcersLoading); announcersContent.appendChild(announcersList);
-    otherContents.forEach((content) => {
-      const tabId = content.dataset.tab;
-      content.appendChild(otherLoadingEls[tabId]); content.appendChild(otherLists[tabId]);
-    });
-
-    scrollable.appendChild(modsContent); scrollable.appendChild(mapsContent); scrollable.appendChild(fontsContent); scrollable.appendChild(announcersContent);
-    otherContents.forEach((content) => scrollable.appendChild(content));
-
-    const rightHeader = document.createElement("div");
-    rightHeader.className = "rose-wheel-right-header";
-
-    const rightTitle = document.createElement("div");
-    rightTitle.className = "rose-wheel-right-title";
-    rightTitle.textContent = "Custom Mods";
-
-    const headerButtons = document.createElement("div");
-    headerButtons.style.display = "flex"; 
-    headerButtons.style.gap = "12px"; 
-    headerButtons.style.alignItems = "center";
-
-    const backBtn = document.createElement("button");
-    backBtn.className = "rose-wheel-back-button"; 
-    backBtn.textContent = "Back"; 
-    backBtn.style.display = "none";
-
-    const closeBtn = document.createElement("button");
-    closeBtn.innerHTML = "&times;";
-    closeBtn.style.background = "transparent";
-    closeBtn.style.border = "none";
-    closeBtn.style.color = "#a09b8c";
-    closeBtn.style.fontSize = "24px";
-    closeBtn.style.cursor = "pointer";
-    closeBtn.style.lineHeight = "0.5";
-    closeBtn.style.padding = "0";
-    closeBtn.style.margin = "0";
-    closeBtn.style.display = "flex";
-    closeBtn.style.alignItems = "center";
-    closeBtn.style.justifyContent = "center";
-    closeBtn.style.transition = "color 0.2s ease";
-    closeBtn.addEventListener("mouseenter", () => closeBtn.style.color = "#f0e6d2");
-    closeBtn.addEventListener("mouseleave", () => closeBtn.style.color = "#a09b8c");
-    closeBtn.addEventListener("click", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      closePanel();
-    });
-
-    headerButtons.appendChild(backBtn);
-    headerButtons.appendChild(closeBtn);
-    rightHeader.appendChild(rightTitle); 
-    rightHeader.appendChild(headerButtons);
-
-    const summaryView = document.createElement("div");
-    summaryView.className = "rose-wheel-summary";
-
-    panel._summaryValuesByTab = {};
-    panel._summaryRowsByTab = {};
-
-    SUMMARY_TABS.forEach((tab) => {
-      const row = document.createElement("div");
-      row.className = "rose-wheel-summary-row";
-      row.setAttribute("role", "button");
-      row.tabIndex = 0;
-
-      const left = document.createElement("div");
-      left.className = "rose-wheel-summary-left";
-      
-      const label = document.createElement("div");
-      label.className = "rose-wheel-summary-label";
-      label.style.display = "flex";
-      label.style.alignItems = "center";
-      label.style.gap = "6px";
-      
-      const iconSpan = document.createElement("span");
-      iconSpan.className = "rose-wheel-summary-icon";
-      iconSpan.innerHTML = SUMMARY_ICONS[tab.id] || "";
-      label.appendChild(iconSpan);
-      
-      const labelText = document.createElement("span");
-      labelText.textContent = tab.label;
-      label.appendChild(labelText);
-      
-      const value = document.createElement("div");
-      value.className = "rose-wheel-summary-value";
-      value.textContent = getSelectedSummaryForTab(tab.id);
-      
-      panel._summaryValuesByTab[tab.id] = value;
-      left.appendChild(label);
-      left.appendChild(value);
-
-      const btnContainer = document.createElement("div");
-      btnContainer.style.display = "flex";
-      btnContainer.style.gap = "6px";
-
-      const addBtn = document.createElement("button");
-      addBtn.className = "mod-select-button";
-      addBtn.textContent = "+";
-      addBtn.style.fontWeight = "bold";
-      addBtn.style.padding = "2px 8px";
-      addBtn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        if (tab.id === "skins") {
-          openChampionSelection();
-        } else {
-          if (bridge) bridge.send({
-            type: "add-custom-mods-category-selected",
-            category: tab.id
-          });
-        }
-      });
-
-      btnContainer.appendChild(addBtn);
-
-      const openPicker = () => {
-        switchTab(tab.id);
-        setRightPaneMode("picker");
-        refreshSummaryValues();
-      };
-
-      row.addEventListener("click", (e) => {
-        if (e.target !== addBtn) {
-          openPicker();
-        }
-      });
-      row.addEventListener("keydown", (e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          openPicker();
-        }
-      });
-
-      row.appendChild(left);
-      row.appendChild(btnContainer);
-      panel._summaryRowsByTab[tab.id] = row;
-      summaryView.appendChild(row);
-    });
-
-    const pickerView = document.createElement("div");
-    pickerView.className = "rose-wheel-picker"; pickerView.appendChild(scrollable);
-
-    backBtn.addEventListener("click", (e) => { 
-      e.preventDefault();
-      e.stopPropagation(); 
-      setRightPaneMode("summary"); 
-      refreshSummaryValues(); 
-    });
-
-    panel._summaryView = summaryView; panel._pickerView = pickerView; panel._backBtn = backBtn; panel._rightTitle = rightTitle;
-
-    modal.appendChild(rightHeader); modal.appendChild(summaryView); modal.appendChild(pickerView);
-    flyoutContent.appendChild(modal); flyoutFrame.appendChild(flyoutContent); panel.appendChild(flyoutFrame);
-
-    setTimeout(() => {
-      const carets = flyoutFrame.querySelectorAll('.caret,[class*="caret"]');
-      carets.forEach(caret => { if (caret && caret.parentNode) { caret.style.display = 'none'; caret.style.visibility = 'hidden'; } });
-      if (flyoutFrame.shadowRoot) {
-        const shadowCarets = flyoutFrame.shadowRoot.querySelectorAll('.caret, [class*="caret"]');
-        shadowCarets.forEach(caret => { if (caret) { caret.style.display = 'none'; caret.style.visibility = 'hidden'; } });
-      }
-    }, 100);
-
-    panel._modList = modList; panel._mapsList = mapsList; panel._fontsList = fontsList; panel._announcersList = announcersList;
-    OTHER_CATEGORY_TABS.forEach((t) => {
-      panel[`_${t.id}List`] = otherLists[t.id]; panel[`_${t.id}Loading`] = otherLoadingEls[t.id]; panel[`_${t.id}Content`] = otherContents.find((c) => c.dataset.tab === t.id);
-    });
-    panel._modsLoading = modsLoading; panel._mapsLoading = mapsLoading; panel._fontsLoading = fontsLoading; panel._announcersLoading = announcersLoading;
-    panel._modsContent = modsContent; panel._mapsContent = mapsContent; panel._fontsContent = fontsContent; panel._announcersContent = announcersContent;
-    panel._loadingEl = modsLoading; 
-
-    setRightPaneMode("summary");
-    refreshSummaryValues();
-
-    return panel;
-  }
-
-  function attachToChampionSelect() {
-    if (!button) createButton();
-    if (!panel) createPanel();
-
-    const inCS = !!document.querySelector(".champion-select");
-    const inLobby = isActuallyInLobby();
-
-    if (inCS) {
-      const targetContainer = document.querySelector(".bottom-right-buttons");
-      if (targetContainer) {
-        if (button.parentNode !== targetContainer) {
-          targetContainer.appendChild(button);
-        }
-        const containerStyles = window.getComputedStyle(targetContainer);
-        if (containerStyles.position === "static" || containerStyles.position === "") {
-          targetContainer.style.position = "relative";
-        }
-        button.style.position = "absolute";
-        button.style.right = "15px"; // Было "0", смещаем чуть левее от края
-        button.style.bottom = "100%";
-        button.style.marginBottom = "10px";
-        button.style.left = "";
-        button.style.top = "";
-        button.style.zIndex = "";
-        button._container = targetContainer;
-      }
-    } else if (inLobby && isSwiftplayMode) {
-      if (button.parentNode !== document.body) {
-        document.body.appendChild(button);
-      }
-      button.style.position = "fixed";
-      button.style.bottom = "210px"; 
-      button.style.right = "225px";
-      button.style.left = "auto";
-      button.style.top = "auto";
-      button.style.marginBottom = "0";
-      button.style.zIndex = "0";
-      button._container = document.body;
-    }
-
-    if (button && button._countBadge) {
-      const badge = button._countBadge;
-      badge.style.position = "absolute";
-      badge.style.top = "0";
-      badge.style.left = "0";
-      badge.style.transform = "translate(-170%, -70%)";
-      badge.style.zIndex = "10";
-    }
-
-    if (panel && panel.parentNode !== document.body) {
-      document.body.appendChild(panel);
+  function updateButtonVisibility(btn, shouldShow) {
+    if (!btn) return;
+    if (shouldShow) {
+      btn.style.setProperty("display", "flex", "important");
+      btn.style.visibility = "visible"; 
+      btn.style.pointerEvents = "auto"; 
+      btn.style.opacity = "1";
+      btn.removeAttribute("data-hidden");
+    } else {
+      btn.style.setProperty("display", "none", "important");
+      btn.style.visibility = "hidden"; 
+      btn.style.pointerEvents = "none"; 
+      btn.style.opacity = "0";
+      btn.setAttribute("data-hidden", "true");
+      if (panel && panel.parentNode && !isGlobalMode) closePanel();
     }
   }
 
-  function detachFromChampionSelect() {
-    if (button && button.parentNode) {
-      button.parentNode.removeChild(button);
-    }
-    closePanel();
+  function sendDeselect(expectedModId = selectedModId) {
+    const { championId, skinId } = getCurrentSkinContext();
+    if (!bridge || !championId || !skinId) return;
+    const requestId = createSelectionRequestId();
+    pendingSelectionRequest = { requestId, operation: "deselect" };
+    bridge.send({ type: "select-skin-mod", championId, skinId, modId: null, expectedModId, requestId });
   }
 
-  function refreshUIVisibility() {
-    if (championSelectRoot || (isSwiftplayMode && isActuallyInLobby())) {
-      attachToChampionSelect();
-      return;
-    }
-    closePanel();
-    detachFromChampionSelect();
-  }
-
-  function updateChampionSelectTarget() {
-    const target = document.querySelector(".champion-select");
-    const inLobby = isActuallyInLobby();
-    
-    if (!target && !inLobby) {
-       if (championSelectRoot) {
-          championSelectRoot = null;
-       }
-       refreshUIVisibility();
-       return;
-    }
-
-    if (target) {
-        if (target !== championSelectRoot) {
-           lastChampionSelectSession = target;
-           isFirstOpenInSession = true;
-           championSelectRoot = target;
-        }
-    } else if (inLobby && isSwiftplayMode) {
-        if (championSelectRoot !== "swiftplay_lobby") {
-           isFirstOpenInSession = true;
-           championSelectRoot = "swiftplay_lobby";
-        }
-    }
-    refreshUIVisibility();
-  }
-
-  function observeChampionSelect() {
-    if (championSelectObserver || !document.body) {
-      return;
-    }
-    championSelectObserver = new MutationObserver(() => {
-      updateChampionSelectTarget();
-    });
-    championSelectObserver.observe(document.body, {
-      childList: true,
-      subtree: true,
-    });
-  }
-
-  function openPanel() {
-    const inCS = !!document.querySelector(".champion-select");
-    const inLobby = isActuallyInLobby();
-
-    if (!inCS && !(inLobby && isSwiftplayMode)) {
-      return;
-    }
-
-    attachToChampionSelect();
-
-    if (!panel || !button) {
-      return;
-    }
-
-    if (!panel.parentNode) {
-      document.body.appendChild(panel);
-    }
-
-    panel.style.display = "block";
-    panel.style.pointerEvents = "none"; 
-
-    if (isFirstOpenInSession) {
-      activeTab = "skins";
-      isFirstOpenInSession = false;
-    }
-
-    setRightPaneMode("summary");
-    refreshSummaryValues();
-
-    panel.querySelectorAll(".tab-content").forEach((content) => {
-      if (content && content.dataset && content.dataset.tab === activeTab) {
-        content.classList.add("active");
-      } else if (content) {
-        content.classList.remove("active");
-      }
-    });
-
-    if (activeTab === "skins") requestModsForCurrentSkin();
-    else if (activeTab === "maps") {
-      if (lastMapsList) updateMapsEntries(lastMapsList);
-      else requestMaps();
-    }
-    else if (activeTab === "fonts") {
-      if (lastFontsList) updateFontsEntries(lastFontsList);
-      else requestFonts();
-    }
-    else if (activeTab === "announcers") {
-      if (lastAnnouncersList) updateAnnouncersEntries(lastAnnouncersList);
-      else requestAnnouncers();
-    }
-    else if (OTHER_CATEGORY_TABS.some((t) => t.id === activeTab)) {
-      if (lastCategoryModsById[activeTab]) updateOtherCategoryEntries(activeTab, lastCategoryModsById[activeTab]);
-      else requestCategoryMods(activeTab);
-    }
-
-    positionPanel(panel, button);
-
-    panel.offsetHeight;
-
-    setTimeout(() => {
-      positionPanel(panel, button);
-    }, 0);
-
-    isOpen = true;
-
-    if (button) button.classList.add("pressed");
-
-    requestModsForCurrentSkin();
-    requestMaps();
-    requestFonts();
-    requestAnnouncers();
-    for (const t of OTHER_CATEGORY_TABS) {
-      requestCategoryMods(t.id);
-    }
-
-    const closeHandler = (e) => {
-      if (panel && panel.parentNode && !panel.contains(e.target) && !button.contains(e.target)) {
-        closePanel();
-        document.removeEventListener("click", closeHandler);
-      }
-    };
-    setTimeout(() => {
-      document.addEventListener("click", closeHandler);
-    }, 100);
-  }
-
-  function closePanel() {
-    if (!panel) {
-      isOpen = false;
-      isGlobalMode = false;
-      if (button) button.classList.remove("pressed");
-      return;
-    }
-    if (panel.parentNode) {
-      panel.style.display = "none";
-      panel.style.pointerEvents = "none";
-    }
-    isOpen = false;
-    isGlobalMode = false;
-    if (button) button.classList.remove("pressed");
+  function sendSelect(modId, modData) {
+    const { championId, skinId } = getCurrentSkinContext();
+    if (!bridge || !championId || !skinId) return;
+    const requestId = createSelectionRequestId();
+    pendingSelectionRequest = { requestId, operation: "select", modId };
+    bridge.send({ type: "select-skin-mod", championId, skinId, modId, modData, requestId });
   }
 
   function requestModsForCurrentSkin() {
-    const state = window.__roseSkinState || {};
-    const championId = Number(state.championId);
-    const skinId = Number(state.skinId);
-
-    const inLobby = isActuallyInLobby();
-
-    if (!championLocked && !(isSwiftplayMode && inLobby)) {
-      if (panel && panel._modsLoading) {
-        panel._modsLoading.textContent = "Waiting for champ lock…";
-        panel._modsLoading.style.display = "block";
-      }
-      return;
+    if (!bridge) return;
+    const { championId, skinId } = getCurrentSkinContext();
+    if (!championLocked && !(isSwiftplayMode && isActuallyInLobby())) {
+      currentSkinMods = []; return;
     }
-
-    if (selectedModId && selectedModSkinId != null && Number(selectedModSkinId) !== skinId) {
-      selectedModId = null;
-      selectedModSkinId = null;
-      if (bridge) bridge.send({ type: "select-skin-mod", championId, skinId, modId: null });
-    }
-
-    if (!championId || !skinId) {
-      if (panel && panel._modsLoading) {
-        panel._modsLoading.textContent = "Hover a skin…";
-        panel._modsLoading.style.display = "block";
-      }
-      return;
-    }
-
     const requestKey = `${championId}:${skinId}`;
     const now = Date.now();
-    if (
-      requestKey === lastSkinModsRequestKey &&
-      now - lastSkinModsRequestAt < 750
-    ) {
-      return;
-    }
-    lastSkinModsRequestKey = requestKey;
-    lastSkinModsRequestAt = now;
-
-    if (bridge) {
-      const requestId = `${LOG_PREFIX}-mods-${Date.now()}-${++skinModsRequestCounter}`;
-      latestSkinModsRequestId = requestId;
-      bridge.send({ type: REQUEST_TYPE, championId, skinId, requestId });
-    }
-
-    if (panel && panel._modsLoading) {
-      panel._modsLoading.textContent = "Checking for mods…";
-      panel._modsLoading.style.display = "block";
-    }
-  }
-
-  function requestMaps() {
-    if (bridge) bridge.send({ type: "request-maps" });
-    if (panel && panel._mapsLoading) {
-      panel._mapsLoading.textContent = "Loading maps…";
-      panel._mapsLoading.style.display = "block";
-    }
-  }
-
-  function requestFonts() {
-    if (bridge) bridge.send({ type: "request-fonts" });
-    if (panel && panel._fontsLoading) {
-      panel._fontsLoading.textContent = "Loading fonts…";
-      panel._fontsLoading.style.display = "block";
-    }
-  }
-
-  function requestAnnouncers() {
-    if (bridge) bridge.send({ type: "request-announcers" });
-    if (panel && panel._announcersLoading) {
-      panel._announcersLoading.textContent = "Loading announcers…";
-      panel._announcersLoading.style.display = "block";
-    }
-  }
-
-  function requestCategoryMods(categoryId) {
-    if (!categoryId) return;
-    if (bridge) bridge.send({ type: "request-category-mods", category: categoryId });
-    if (!panel) return;
-
-    const loadingEl = panel[`_${categoryId}Loading`] || panel._othersLoading;
-    if (loadingEl) {
-      const label = OTHER_CATEGORY_TABS.find((t) => t.id === categoryId)?.label || "mods";
-      loadingEl.textContent = `Loading ${label.toLowerCase()}…`;
-      loadingEl.style.display = "block";
-    }
-  }
-
-  function handleSkinState(event) {
-    requestModsForCurrentSkin();
-  }
-
-  function updateButtonBadge(count) {
-    if (!button || !button._countBadge) return;
-    const badge = button._countBadge;
-    badge.style.position = "absolute";
-    badge.style.top = "0";
-    badge.style.left = "0";
-    badge.style.transform = "translate(-170%, -70%)";
-    badge.style.zIndex = "10";
-
-    if (count > 0) {
-      badge.textContent = String(count);
-      badge.style.display = "flex"; 
-    } else {
-      badge.textContent = "0"; 
-      badge.style.display = "none";
-    }
-  }
-
-  function getSelectedModsCount() {
-    let count = 0;
-    const inLobby = isActuallyInLobby();
-    // Учитываем логику Swiftplay из HEAD
-    if ((championLocked || (isSwiftplayMode && inLobby)) && selectedModId) count += 1;
-    if (selectedMapId) count += 1;
-    if (selectedFontId) count += 1;
-    if (selectedAnnouncerId) count += 1;
-    // Учитываем новые вкладки из main
-    for (const t of OTHER_CATEGORY_TABS) {
-      const ids = getSelectedIdsForCategory(t.id);
-      if (Array.isArray(ids) && ids.length) {
-        count += new Set(ids).size;
-      }
-    }
-    return count;
-  }
-
-  function refreshButtonBadgeFromSelections() {
-    updateButtonBadge(getSelectedModsCount());
-  }
-
-  function updateNoneRow(listEl, isNoneActive) {
-    const noneLi = listEl?.querySelector('[data-mod-id="__none__"], [data-map-id="__none__"], [data-font-id="__none__"], [data-announcer-id="__none__"], [data-other-id="__none__"]');
-    if (!noneLi) return;
-    if (isNoneActive) {
-      noneLi.classList.add("selected-row");
-    } else {
-      noneLi.classList.remove("selected-row");
-    }
+    if (requestKey === lastSkinModsRequestKey && now - lastSkinModsRequestAt < 750) return;
+    lastSkinModsRequestKey = requestKey; lastSkinModsRequestAt = now;
+    
+    bridge.send({ type: REQUEST_TYPE, championId, skinId, requestId: createSelectionRequestId() });
   }
 
   function handleModSelect(modId, listItem, modData) {
-    if (selectedModId === modId) {
-      selectedModId = null;
-      selectedModSkinId = null;
+    if (selectedModId === modId && isSelectedModForSkin(getCurrentSkinContext().skinId)) {
+      sendDeselect();
       listItem.classList.remove("selected-row");
-
-      const state = window.__roseSkinState || {};
-      const championId = Number(state.championId);
-      const skinId = Number(state.skinId);
-
-      if (championId && skinId) {
-        if (bridge) bridge.send({
-          type: "select-skin-mod",
-          championId,
-          skinId,
-          modId: null, 
-          modData: null,
-        });
-      }
     } else {
-      if (selectedModId) {
-        const prevLi = panel?._modList?.querySelector(`[data-mod-id="${selectedModId}"]`);
-        if (prevLi) {
-          prevLi.classList.remove("selected-row");
-        }
-      }
-
-      selectedModId = modId;
-      const modTargetSkinId = modData?.skinId ? Number(modData.skinId) : null;
-      const state = window.__roseSkinState || {};
-      selectedModSkinId = modTargetSkinId || Number(state.skinId);
-
+      sendSelect(modId, modData);
+      const allItems = listItem.parentElement.querySelectorAll("li");
+      allItems.forEach(i => i.classList.remove("selected-row"));
       listItem.classList.add("selected-row");
-
-      const championId = Number(state.championId);
-      const emitSkinId = selectedModSkinId;
-
-      if (championId && emitSkinId) {
-        if (bridge) bridge.send({ type: "select-skin-mod", championId, skinId: emitSkinId, modId, modData });
-      }
     }
-
     updateNoneRow(panel?._modList, !selectedModId);
     refreshSummaryValues();
     refreshButtonBadgeFromSelections();
   }
 
   function updateModEntries(mods) {
-    if (!panel || !panel._modList || !panel._loadingEl) return;
+    if (!panel || !panel._modList) return;
+    const listEl = panel._modList;
+    listEl.innerHTML = "";
 
-    const modList = panel._modList;
-    const loadingEl = panel._loadingEl;
-    const previousSelectedModId = selectedModId;
-
-    modList.innerHTML = "";
-
+    const loadingEl = panel._modsLoading;
     if (!mods || mods.length === 0) {
-      loadingEl.textContent = "No skins found";
-      loadingEl.style.display = "block";
+      if (loadingEl) { loadingEl.textContent = "No skins found"; loadingEl.style.display = "block"; }
       return;
     }
-    const responseRequestId = detail?.requestId;
-    if (
-      responseRequestId &&
-      String(responseRequestId) !== String(latestSkinModsRequestId)
-    ) {
-      return;
-    }
+    if (loadingEl) loadingEl.style.display = "none";
 
-    loadingEl.style.display = "none";
+    const noneLi = document.createElement("li");
+    noneLi.setAttribute("data-mod-id", "__none__");
+    const noneRow = document.createElement("div"); noneRow.className = "mod-name-row";
+    const noneName = document.createElement("div"); noneName.className = "mod-name none-label"; noneName.textContent = "None";
+    noneRow.appendChild(noneName);
+    if (!selectedModId) noneLi.classList.add("selected-row");
+    noneLi.addEventListener("click", () => {
+      if (selectedModId) sendDeselect();
+      const allLis = listEl.querySelectorAll("li");
+      allLis.forEach(l => l.classList.remove("selected-row"));
+      noneLi.classList.add("selected-row");
+      refreshSummaryValues(); refreshButtonBadgeFromSelections();
+    });
+    noneLi.appendChild(noneRow); listEl.appendChild(noneLi);
 
-    {
-      const noneItem = document.createElement("li");
-      noneItem.setAttribute("data-mod-id", "__none__");
-      const noneRow = document.createElement("div"); noneRow.className = "mod-name-row";
-      const noneName = document.createElement("div"); noneName.className = "mod-name none-label"; noneName.textContent = "None";
-      noneRow.appendChild(noneName);
+    mods.forEach(mod => {
+      const li = document.createElement("li");
+      const modId = mod.relativePath || mod.modName || `mod-${Date.now()}`;
+      li.setAttribute("data-mod-id", modId);
       
-      const nothingSelected = !selectedModId;
-      if (nothingSelected) { noneItem.classList.add("selected-row"); }
-      
-      noneItem.addEventListener("click", () => {
-        if (selectedModId) {
-          const prevLi = modList.querySelector(`[data-mod-id="${selectedModId}"]`);
-          if (prevLi) {
-            prevLi.classList.remove("selected-row");
-          }
-          const state = window.__roseSkinState || {};
-          const championId = Number(state.championId);
-          const skinId = Number(state.skinId);
-          selectedModId = null;
-          selectedModSkinId = null;
-          if (championId && skinId) {
-            if (bridge) bridge.send({ type: "select-skin-mod", championId, skinId, modId: null, modData: null });
-          }
-        }
-        noneItem.classList.add("selected-row");
-        refreshSummaryValues(); refreshButtonBadgeFromSelections();
-      });
-      noneItem.appendChild(noneRow); modList.appendChild(noneItem);
-    }
-
-    mods.forEach((mod) => {
-      const listItem = document.createElement("li");
-      const modId = mod.relativePath || mod.modName || `mod-${Date.now()}-${Math.random()}`;
-
-      const modNameRow = document.createElement("div"); modNameRow.className = "mod-name-row";
-      const modName = document.createElement("div"); modName.className = "mod-name"; modName.textContent = cleanModName(mod.modName) || "Unnamed mod";
-      modNameRow.appendChild(modName);
-
-      const isSelected = (selectedModId === modId || previousSelectedModId === modId);
-
-      if (previousSelectedModId === modId && selectedModId !== modId) {
-        selectedModId = modId;
-      }
-
-      if (isSelected) { listItem.classList.add("selected-row"); }
-      listItem.addEventListener("click", () => { handleModSelect(modId, listItem, mod); });
-
-      listItem.appendChild(modNameRow);
-      listItem.setAttribute("data-mod-id", modId);
+      const row = document.createElement("div"); row.className = "mod-name-row";
+      const name = document.createElement("div"); name.className = "mod-name"; name.textContent = visibleModName(mod);
+      row.appendChild(name);
+      li.appendChild(row);
 
       if (mod.description) {
-        const modDesc = document.createElement("div"); modDesc.className = "mod-description"; modDesc.textContent = mod.description;
-        listItem.appendChild(modDesc);
+        const desc = document.createElement("div"); desc.className = "mod-description"; desc.textContent = mod.description;
+        li.appendChild(desc);
       }
 
-      modList.appendChild(listItem);
-    });
-  }
-
-  function handleModsResponse(event) {
-    const detail = event?.detail;
-    if (!detail || detail.type !== "skin-mods-response") return;
-
-    const championId = Number(detail?.championId);
-    const skinId = Number(detail?.skinId);
-    if (!championId || !skinId) {
-      refreshButtonBadgeFromSelections();
-      return;
-    }
-
-    currentSkinData = { championId, skinId };
-    const liveSkinId = Number((window.__roseSkinState || {}).skinId) || skinId;
-
-    if (selectedModId && selectedModSkinId != null && Number(selectedModSkinId) !== liveSkinId) {
-      selectedModId = null;
-      selectedModSkinId = null;
-      if (bridge) bridge.send({ type: "select-skin-mod", championId, skinId: liveSkinId, modId: null });
-    }
-
-    // Улучшенная фильтрация из ветки main
-    let mods = (Array.isArray(detail.mods) ? detail.mods : []).filter((mod) => (
-      mod?.availableForRequestedSkin === true ||
-      (mod?.availableForRequestedSkin == null && Number(mod?.skinId) === liveSkinId)
-    ));
-    currentSkinMods = mods;
-
-    if (selectedModId && !pendingSelectionRequest) {
-      const selectedEntry = mods.find((mod) => (
-        String(mod?.relativePath || mod?.modName || "") === String(selectedModId)
-      ));
-      if (!selectedEntry) {
-        if (bridge) bridge.send({
-          type: "select-skin-mod",
-          championId,
-          skinId: liveSkinId,
-          modId: null,
-          expectedModId: selectedModId,
-        });
-      } else {
-        selectedModSkinId = liveSkinId;
-      }
-    }
-
-    // Auto-select historic mod
-    const historicMod = detail.historicMod;
-    let didAutoSelect = false;
-    
-    if (historicMod && !selectedModId) {
-      const historicModEntry = mods.find(mod => {
-        const modPath = mod.relativePath || "";
-        return modPath.replace(/\\/g, "/") === historicMod.replace(/\\/g, "/");
-      });
-
-      if (historicModEntry) {
-        const modTargetSkinId = historicModEntry.skinId ? Number(historicModEntry.skinId) : null;
-        if (modTargetSkinId && modTargetSkinId === liveSkinId) {
-          const modId = historicModEntry.relativePath || historicModEntry.modName || `mod-${Date.now()}-${Math.random()}`;
-          selectedModId = modId;
-          selectedModSkinId = modTargetSkinId;
-          didAutoSelect = true;
-        }
-      }
-    }
-
-    if (didAutoSelect) {
-      const autoMod = mods.find(mod => {
-        const modPath = mod.relativePath || mod.modName || "";
-        return modPath === selectedModId || mod.relativePath === selectedModId;
-      });
-      if (autoMod) {
-        const emitSkinId = autoMod.skinId ? Number(autoMod.skinId) : skinId;
-        if (bridge) bridge.send({ type: "select-skin-mod", championId, skinId: emitSkinId, modId: selectedModId, modData: autoMod });
-      }
-    }
-
-    refreshSummaryValues();
-    refreshButtonBadgeFromSelections();
-
-    if (!isOpen || rightPaneMode !== "picker" || activeTab !== "skins") return;
-
-    updateModEntries(mods);
-
-    if (didAutoSelect && selectedModId) {
-      const li = panel?._modList?.querySelector(`[data-mod-id="${selectedModId}"]`);
-      if (li) {
+      if (selectedModId === modId && isSelectedModForSkin(getCurrentSkinContext().skinId)) {
         li.classList.add("selected-row");
       }
-    }
+
+      li.addEventListener("click", () => handleModSelect(modId, li, mod));
+      listEl.appendChild(li);
+    });
   }
 
-  function handleMapSelect(mapId, listItem, mapData) {
-    if (selectedMapId === mapId) {
-      selectedMapId = null;
-      listItem.classList.remove("selected-row");
-      if (bridge) bridge.send({ type: "select-map", mapId: null });
-    } else {
-      if (selectedMapId) {
-        const prevLi = panel?._mapsList?.querySelector(`[data-map-id="${selectedMapId}"]`);
-        if (prevLi) {
-          prevLi.classList.remove("selected-row");
-        }
-      }
-      selectedMapId = mapId;
-      listItem.classList.add("selected-row");
-      if (bridge) bridge.send({ type: "select-map", mapId, mapData });
-    }
+  // --- Единый универсальный рендерер списков для Карт, Шрифтов, Дикторов и др. ---
+  function updateCategoryEntries(categoryId, items) {
+    if (!panel) return;
+    const listEl = (categoryId === "maps") ? panel._mapsList :
+                   (categoryId === "fonts") ? panel._fontsList :
+                   (categoryId === "announcers") ? panel._announcersList :
+                   panel[`_${categoryId}List`];
+                   
+    const loadingEl = (categoryId === "maps") ? panel._mapsLoading :
+                      (categoryId === "fonts") ? panel._fontsLoading :
+                      (categoryId === "announcers") ? panel._announcersLoading :
+                      panel[`_${categoryId}Loading`];
+                      
+    if (!listEl || !loadingEl) return;
 
-    updateNoneRow(panel?._mapsList, !selectedMapId);
-    refreshSummaryValues();
-    refreshButtonBadgeFromSelections();
-  }
+    listEl.innerHTML = "";
+    const isSingleSelect = (categoryId === "maps" || categoryId === "fonts" || categoryId === "announcers");
+    
+    let selectedIds = isSingleSelect ? [] : getSelectedIdsForCategory(categoryId);
+    let selectedSingleId = (categoryId === "maps") ? selectedMapId :
+                           (categoryId === "fonts") ? selectedFontId :
+                           (categoryId === "announcers") ? selectedAnnouncerId : null;
 
-  function updateMapsEntries(mapsList) {
-    if (!panel || !panel._mapsList || !panel._mapsLoading) return;
-
-    const mapsListEl = panel._mapsList;
-    const loadingEl = panel._mapsLoading;
-
-    mapsListEl.innerHTML = "";
-
-    if (!mapsList || mapsList.length === 0) {
-      loadingEl.textContent = "No maps found";
+    if (!items || items.length === 0) {
+      const label = getTabLabel(categoryId);
+      loadingEl.textContent = `No ${label.toLowerCase()} found`;
       loadingEl.style.display = "block";
       return;
     }
 
     loadingEl.style.display = "none";
 
+    // Опция "None"
     {
-      const noneItem = document.createElement("li"); noneItem.setAttribute("data-map-id", "__none__");
+      const noneItem = document.createElement("li");
+      noneItem.setAttribute("data-item-id", "__none__");
       const noneRow = document.createElement("div"); noneRow.className = "mod-name-row";
       const noneName = document.createElement("div"); noneName.className = "mod-name none-label"; noneName.textContent = "None";
       noneRow.appendChild(noneName);
-      const nothingSelected = !selectedMapId;
-      if (nothingSelected) { noneItem.classList.add("selected-row"); }
+
+      const isNoneActive = isSingleSelect ? !selectedSingleId : (selectedIds.length === 0);
+      if (isNoneActive) noneItem.classList.add("selected-row");
+
       noneItem.addEventListener("click", () => {
-        if (selectedMapId) {
-          const prevLi = mapsListEl.querySelector(`[data-map-id="${selectedMapId}"]`);
-          if (prevLi) {
-            prevLi.classList.remove("selected-row");
+        if (isSingleSelect) {
+          if (categoryId === "maps") {
+            selectedMapId = null;
+            if (bridge) bridge.send({ type: "select-map", mapId: null });
+          } else if (categoryId === "fonts") {
+            selectedFontId = null;
+            if (bridge) bridge.send({ type: "select-font", fontId: null });
+          } else if (categoryId === "announcers") {
+            selectedAnnouncerId = null;
+            if (bridge) bridge.send({ type: "select-announcer", announcerId: null });
           }
-          selectedMapId = null;
-          if (bridge) bridge.send({ type: "select-map", mapId: null });
+        } else {
+          const ids = getSelectedIdsForCategory(categoryId);
+          for (const id of [...ids]) {
+            if (bridge) bridge.send({ type: "select-other", category: categoryId, otherId: id, otherData: null, action: "deselect" });
+          }
+          ids.length = 0;
         }
+
+        const allLis = listEl.querySelectorAll("li");
+        allLis.forEach(l => l.classList.remove("selected-row"));
         noneItem.classList.add("selected-row");
-        refreshSummaryValues(); refreshButtonBadgeFromSelections();
+
+        refreshSummaryValues();
+        refreshButtonBadgeFromSelections();
       });
-      noneItem.appendChild(noneRow); mapsListEl.appendChild(noneItem);
+
+      noneItem.appendChild(noneRow);
+      listEl.appendChild(noneItem);
     }
 
-    mapsList.forEach((map) => {
+    items.forEach((item) => {
       const listItem = document.createElement("li");
-      const mapId = map.id || map.name || `map-${Date.now()}-${Math.random()}`;
+      const itemId = item.id || item.relativePath || item.name || `item-${Date.now()}-${Math.random()}`;
 
-      const mapNameRow = document.createElement("div"); mapNameRow.className = "mod-name-row";
-      const mapName = document.createElement("div"); mapName.className = "mod-name"; mapName.textContent = cleanModName(map.name) || "Unnamed map";
-      mapNameRow.appendChild(mapName);
+      const nameRow = document.createElement("div"); nameRow.className = "mod-name-row";
+      const nameEl = document.createElement("div"); nameEl.className = "mod-name";
+      nameEl.textContent = visibleModName(item);
+      nameRow.appendChild(nameEl);
 
-      listItem.setAttribute("data-map-id", mapId);
+      listItem.setAttribute("data-item-id", itemId);
 
-      if (selectedMapId === mapId) {
+      const isSelected = isSingleSelect ? (selectedSingleId === itemId) : selectedIds.includes(itemId);
+      if (isSelected) {
         listItem.classList.add("selected-row");
       }
 
-      listItem.addEventListener("click", () => { handleMapSelect(mapId, listItem, map); });
-
-      listItem.appendChild(mapNameRow);
-
-      if (map.description) {
-        const mapDesc = document.createElement("div"); mapDesc.className = "mod-description"; mapDesc.textContent = map.description;
-        listItem.appendChild(mapDesc);
-      }
-
-      mapsListEl.appendChild(listItem);
-    });
-  }
-
-  function handleMapsResponse(event) {
-    const detail = event?.detail;
-    if (!detail || detail.type !== "maps-response") return;
-
-    const mapsList = Array.isArray(detail.maps) ? detail.maps :[];
-    lastMapsList = mapsList; // CACHE IT
-
-    const historicMod = detail.historicMod;
-    if (historicMod && !selectedMapId) {
-      const historicMap = mapsList.find(map => {
-        const mapId = map.id || "";
-        return mapId.replace(/\\/g, "/") === String(historicMod).replace(/\\/g, "/");
-      });
-
-      if (historicMap) {
-        const mapId = historicMap.id || historicMap.name || `map-${Date.now()}-${Math.random()}`;
-        selectedMapId = mapId;
-      }
-    }
-
-    refreshSummaryValues();
-    refreshButtonBadgeFromSelections();
-
-    if (isOpen && rightPaneMode === "picker" && activeTab === "maps") {
-      updateMapsEntries(mapsList);
-    }
-
-    if (historicMod && selectedMapId) {
-      const historicMap = mapsList.find(map => {
-        const mapId = map.id || map.name || `map-${Date.now()}-${Math.random()}`;
-        return mapId === selectedMapId;
-      });
-      if (historicMap) {
-        const li = panel?._mapsList?.querySelector(`[data-map-id="${selectedMapId}"]`);
-        if (li) { li.classList.add("selected-row"); }
-        if (bridge) bridge.send({ type: "select-map", mapId: selectedMapId, mapData: historicMap });
-      }
-    }
-  }
-
-  function handleFontSelect(fontId, listItem, fontData) {
-    if (selectedFontId === fontId) {
-      selectedFontId = null;
-      listItem.classList.remove("selected-row");
-      if (bridge) bridge.send({ type: "select-font", fontId: null });
-    } else {
-      if (selectedFontId) {
-        const prevLi = panel?._fontsList?.querySelector(`[data-font-id="${selectedFontId}"]`);
-        if (prevLi) {
-          prevLi.classList.remove("selected-row");
-        }
-      }
-      selectedFontId = fontId;
-      listItem.classList.add("selected-row");
-      if (bridge) bridge.send({ type: "select-font", fontId, fontData });
-    }
-
-    updateNoneRow(panel?._fontsList, !selectedFontId);
-    refreshSummaryValues(); refreshButtonBadgeFromSelections();
-  }
-
-  function updateFontsEntries(fontsList) {
-    if (!panel || !panel._fontsList || !panel._fontsLoading) return;
-
-    const fontsListEl = panel._fontsList;
-    const loadingEl = panel._fontsLoading;
-
-    fontsListEl.innerHTML = "";
-
-    if (!fontsList || fontsList.length === 0) {
-      loadingEl.textContent = "No fonts found";
-      loadingEl.style.display = "block";
-      return;
-    }
-
-    loadingEl.style.display = "none";
-
-    {
-      const noneItem = document.createElement("li"); noneItem.setAttribute("data-font-id", "__none__");
-      const noneRow = document.createElement("div"); noneRow.className = "mod-name-row";
-      const noneName = document.createElement("div"); noneName.className = "mod-name none-label"; noneName.textContent = "None";
-      noneRow.appendChild(noneName);
-      const nothingSelected = !selectedFontId;
-      if (nothingSelected) { noneItem.classList.add("selected-row"); }
-      noneItem.addEventListener("click", () => {
-        if (selectedFontId) {
-          const prevLi = fontsListEl.querySelector(`[data-font-id="${selectedFontId}"]`);
-          if (prevLi) {
-            prevLi.classList.remove("selected-row");
+      listItem.addEventListener("click", () => {
+        if (isSingleSelect) {
+          if (selectedSingleId === itemId) {
+            if (categoryId === "maps") { selectedMapId = null; if (bridge) bridge.send({ type: "select-map", mapId: null }); }
+            else if (categoryId === "fonts") { selectedFontId = null; if (bridge) bridge.send({ type: "select-font", fontId: null }); }
+            else if (categoryId === "announcers") { selectedAnnouncerId = null; if (bridge) bridge.send({ type: "select-announcer", announcerId: null }); }
+            listItem.classList.remove("selected-row");
+          } else {
+            if (categoryId === "maps") { selectedMapId = itemId; if (bridge) bridge.send({ type: "select-map", mapId: itemId, mapData: item }); }
+            else if (categoryId === "fonts") { selectedFontId = itemId; if (bridge) bridge.send({ type: "select-font", fontId: itemId, fontData: item }); }
+            else if (categoryId === "announcers") { selectedAnnouncerId = itemId; if (bridge) bridge.send({ type: "select-announcer", announcerId: itemId, announcerData: item }); }
+            
+            const allLis = listEl.querySelectorAll("li");
+            allLis.forEach(l => l.classList.remove("selected-row"));
+            listItem.classList.add("selected-row");
           }
-          selectedFontId = null;
-          if (bridge) bridge.send({ type: "select-font", fontId: null });
+          updateNoneRow(listEl, !(categoryId === "maps" ? selectedMapId : categoryId === "fonts" ? selectedFontId : selectedAnnouncerId));
+        } else {
+          handleCategoryModSelect(categoryId, itemId, listItem, item);
         }
-        noneItem.classList.add("selected-row");
-        refreshSummaryValues(); refreshButtonBadgeFromSelections();
+
+        refreshSummaryValues();
+        refreshButtonBadgeFromSelections();
       });
-      noneItem.appendChild(noneRow); fontsListEl.appendChild(noneItem);
-    }
 
-    fontsList.forEach((font) => {
-      const listItem = document.createElement("li");
-      const fontId = font.id || font.name || `font-${Date.now()}-${Math.random()}`;
+      listItem.appendChild(nameRow);
 
-      const fontNameRow = document.createElement("div"); fontNameRow.className = "mod-name-row";
-      const fontName = document.createElement("div"); fontName.className = "mod-name"; fontName.textContent = cleanModName(font.name) || "Unnamed font";
-      fontNameRow.appendChild(fontName);
-
-      listItem.setAttribute("data-font-id", fontId);
-
-      if (selectedFontId === fontId) {
-        listItem.classList.add("selected-row");
+      if (item.description) {
+        const desc = document.createElement("div"); desc.className = "mod-description"; desc.textContent = item.description;
+        listItem.appendChild(desc);
       }
 
-      listItem.addEventListener("click", () => { handleFontSelect(fontId, listItem, font); });
-
-      listItem.appendChild(fontNameRow);
-
-      if (font.description) {
-        const fontDesc = document.createElement("div"); fontDesc.className = "mod-description"; fontDesc.textContent = font.description;
-        listItem.appendChild(fontDesc);
-      }
-
-      fontsListEl.appendChild(listItem);
+      listEl.appendChild(listItem);
     });
   }
 
-  function handleFontsResponse(event) {
-    const detail = event?.detail;
-    if (!detail || detail.type !== "fonts-response") return;
-
-    const fontsList = Array.isArray(detail.fonts) ? detail.fonts :[];
-    lastFontsList = fontsList; // CACHE IT
-
-    const historicMod = detail.historicMod;
-    if (historicMod && !selectedFontId) {
-      const historicFont = fontsList.find(font => {
-        const fontId = font.id || "";
-        return fontId.replace(/\\/g, "/") === String(historicMod).replace(/\\/g, "/");
-      });
-
-      if (historicFont) {
-        const fontId = historicFont.id || historicFont.name || `font-${Date.now()}-${Math.random()}`;
-        selectedFontId = fontId;
-      }
-    }
-
-    refreshSummaryValues();
-    refreshButtonBadgeFromSelections();
-
-    if (isOpen && rightPaneMode === "picker" && activeTab === "fonts") {
-      updateFontsEntries(fontsList);
-    }
-
-    if (historicMod && selectedFontId) {
-      const historicFont = fontsList.find(font => {
-        const fontId = font.id || font.name || `font-${Date.now()}-${Math.random()}`;
-        return fontId === selectedFontId;
-      });
-      if (historicFont) {
-        const li = panel?._fontsList?.querySelector(`[data-font-id="${selectedFontId}"]`);
-        if (li) { li.classList.add("selected-row"); }
-        if (bridge) bridge.send({ type: "select-font", fontId: selectedFontId, fontData: historicFont });
-      }
-    }
-  }
-
-  function handleAnnouncerSelect(announcerId, listItem, announcerData) {
-    if (selectedAnnouncerId === announcerId) {
-      selectedAnnouncerId = null;
-      listItem.classList.remove("selected-row");
-      if (bridge) bridge.send({ type: "select-announcer", announcerId: null });
-    } else {
-      if (selectedAnnouncerId) {
-        const prevLi = panel?._announcersList?.querySelector(`[data-announcer-id="${selectedAnnouncerId}"]`);
-        if (prevLi) {
-          prevLi.classList.remove("selected-row");
-        }
-      }
-      selectedAnnouncerId = announcerId;
-      listItem.classList.add("selected-row");
-      if (bridge) bridge.send({ type: "select-announcer", announcerId, announcerData });
-    }
-
-    updateNoneRow(panel?._announcersList, !selectedAnnouncerId);
-    refreshSummaryValues(); refreshButtonBadgeFromSelections();
-  }
-
-  function updateAnnouncersEntries(announcersList) {
-    if (!panel || !panel._announcersList || !panel._announcersLoading) return;
-
-    const announcersListEl = panel._announcersList;
-    const loadingEl = panel._announcersLoading;
-
-    announcersListEl.innerHTML = "";
-
-    if (!announcersList || announcersList.length === 0) {
-      loadingEl.textContent = "No announcers found";
-      loadingEl.style.display = "block";
-      return;
-    }
-
-    loadingEl.style.display = "none";
-
-    {
-      const noneItem = document.createElement("li"); noneItem.setAttribute("data-announcer-id", "__none__");
-      const noneRow = document.createElement("div"); noneRow.className = "mod-name-row";
-      const noneName = document.createElement("div"); noneName.className = "mod-name none-label"; noneName.textContent = "None";
-      noneRow.appendChild(noneName);
-      const nothingSelected = !selectedAnnouncerId;
-      if (nothingSelected) { noneItem.classList.add("selected-row"); }
-      noneItem.addEventListener("click", () => {
-        if (selectedAnnouncerId) {
-          const prevLi = announcersListEl.querySelector(`[data-announcer-id="${selectedAnnouncerId}"]`);
-          if (prevLi) {
-            prevLi.classList.remove("selected-row");
-          }
-          selectedAnnouncerId = null;
-          if (bridge) bridge.send({ type: "select-announcer", announcerId: null });
-        }
-        noneItem.classList.add("selected-row");
-        refreshSummaryValues(); refreshButtonBadgeFromSelections();
-      });
-      noneItem.appendChild(noneRow); announcersListEl.appendChild(noneItem);
-    }
-
-    announcersList.forEach((announcer) => {
-      const listItem = document.createElement("li");
-      const announcerId = announcer.id || announcer.name || `announcer-${Date.now()}-${Math.random()}`;
-
-      const announcerNameRow = document.createElement("div"); announcerNameRow.className = "mod-name-row";
-      const announcerName = document.createElement("div"); announcerName.className = "mod-name"; announcerName.textContent = cleanModName(announcer.name) || "Unnamed announcer";
-      announcerNameRow.appendChild(announcerName);
-
-      listItem.setAttribute("data-announcer-id", announcerId);
-
-      if (selectedAnnouncerId === announcerId) {
-        listItem.classList.add("selected-row");
-      }
-
-      listItem.addEventListener("click", () => { handleAnnouncerSelect(announcerId, listItem, announcer); });
-
-      listItem.appendChild(announcerNameRow);
-
-      if (announcer.description) {
-        const announcerDesc = document.createElement("div"); announcerDesc.className = "mod-description"; announcerDesc.textContent = announcer.description;
-        listItem.appendChild(announcerDesc);
-      }
-
-      announcersListEl.appendChild(listItem);
-    });
-  }
-
-  function handleAnnouncersResponse(event) {
-    const detail = event?.detail;
-    if (!detail || detail.type !== "announcers-response") return;
-
-    const announcersList = Array.isArray(detail.announcers) ? detail.announcers :[];
-    lastAnnouncersList = announcersList; // CACHE IT
-
-    const historicMod = detail.historicMod;
-    if (historicMod && !selectedAnnouncerId) {
-      const historicAnnouncer = announcersList.find(announcer => {
-        const announcerId = announcer.id || "";
-        return announcerId.replace(/\\/g, "/") === String(historicMod).replace(/\\/g, "/");
-      });
-
-      if (historicAnnouncer) {
-        const announcerId = historicAnnouncer.id || historicAnnouncer.name || `announcer-${Date.now()}-${Math.random()}`;
-        selectedAnnouncerId = announcerId;
-      }
-    }
-
-    refreshSummaryValues();
-    refreshButtonBadgeFromSelections();
-
-    if (isOpen && rightPaneMode === "picker" && activeTab === "announcers") {
-      updateAnnouncersEntries(announcersList);
-    }
-
-    if (historicMod && selectedAnnouncerId) {
-      const historicAnnouncer = announcersList.find(announcer => {
-        const announcerId = announcer.id || announcer.name || `announcer-${Date.now()}-${Math.random()}`;
-        return announcerId === selectedAnnouncerId;
-      });
-      if (historicAnnouncer) {
-        const li = panel?._announcersList?.querySelector(`[data-announcer-id="${selectedAnnouncerId}"]`);
-        if (li) { li.classList.add("selected-row"); }
-        if (bridge) bridge.send({ type: "select-announcer", announcerId: selectedAnnouncerId, announcerData: historicAnnouncer });
-      }
-    }
-  }
+  function updateMapsEntries(items) { updateCategoryEntries("maps", items); }
+  function updateFontsEntries(items) { updateCategoryEntries("fonts", items); }
+  function updateAnnouncersEntries(items) { updateCategoryEntries("announcers", items); }
+  function updateOtherCategoryEntries(categoryId, items) { updateCategoryEntries(categoryId, items); }
 
   function handleCategoryModSelect(categoryId, otherId, listItem, otherData) {
     const selectedIds = getSelectedIdsForCategory(categoryId);
     const index = selectedIds.indexOf(otherId);
     if (index !== -1) {
-      // Deselect
       selectedIds.splice(index, 1);
       listItem.classList.remove("selected-row");
       if (bridge) bridge.send({ type: "select-other", category: categoryId, otherId, otherData, action: "deselect" });
     } else {
-      // Select
       selectedIds.push(otherId);
       listItem.classList.add("selected-row");
       if (bridge) bridge.send({ type: "select-other", category: categoryId, otherId, otherData, action: "select" });
@@ -2227,89 +798,253 @@
     updateNoneRow(listEl, selectedIds.length === 0);
     refreshSummaryValues();
     refreshButtonBadgeFromSelections();
+    applyVisibleCategoryState();
   }
 
-  function updateOtherCategoryEntries(categoryId, items) {
-    if (!panel) return;
-    const listEl = panel[`_${categoryId}List`];
-    const loadingEl = panel[`_${categoryId}Loading`];
-    if (!listEl || !loadingEl) return;
+  function updateNoneRow(listEl, isNoneActive) {
+    const noneLi = listEl?.querySelector('[data-item-id="__none__"], [data-mod-id="__none__"]');
+    if (!noneLi) return;
+    if (isNoneActive) noneLi.classList.add("selected-row");
+    else noneLi.classList.remove("selected-row");
+  }
 
-    listEl.innerHTML = "";
-    const selectedIds = getSelectedIdsForCategory(categoryId);
+  function createPanel() {
+    if (panel) return panel;
+    const existing = document.getElementById(PANEL_ID);
+    if (existing) existing.remove();
 
-    if (!items || items.length === 0) {
-      const label = OTHER_CATEGORY_TABS.find((t) => t.id === categoryId)?.label || "mods";
-      loadingEl.textContent = `No ${label.toLowerCase()} found`;
-      loadingEl.style.display = "block";
-      return;
-    }
+    panel = document.createElement("div");
+    panel.id = PANEL_ID;
+    panel.className = PANEL_CLASS;
+    panel.style.display = "none";
+    
+    let flyout;
+    try { flyout = document.createElement("lol-uikit-flyout-frame"); flyout.className = "flyout"; flyout.setAttribute("show", "true"); }
+    catch { flyout = document.createElement("div"); flyout.className = "flyout"; }
+    
+    let content;
+    try { content = document.createElement("lc-flyout-content"); }
+    catch { content = document.createElement("div"); content.className = "lc-flyout-content"; }
 
-    loadingEl.style.display = "none";
+    const modal = document.createElement("div"); modal.className = "chroma-modal rose-custom-wheel-modal";
+    
+    // Header
+    const header = document.createElement("div"); header.className = "rose-wheel-right-header";
+    const title = document.createElement("div"); title.className = "rose-wheel-right-title"; title.textContent = "Custom Mods";
+    const headerBtns = document.createElement("div"); headerBtns.style.display="flex"; headerBtns.style.gap="12px";
+    
+    const backBtn = document.createElement("button"); backBtn.className="rose-wheel-back-button"; backBtn.textContent="Back"; backBtn.style.display="none";
+    backBtn.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); setRightPaneMode("summary"); refreshSummaryValues(); });
+    
+    const closeBtn = document.createElement("button"); closeBtn.innerHTML="&times;"; 
+    closeBtn.style.cssText = "background:transparent;border:none;color:#a09b8c;font-size:24px;cursor:pointer;line-height:0.5;padding:0;";
+    closeBtn.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); closePanel(); });
+    
+    headerBtns.appendChild(backBtn); headerBtns.appendChild(closeBtn);
+    header.appendChild(title); header.appendChild(headerBtns);
 
-    {
-      const noneItem = document.createElement("li"); noneItem.setAttribute("data-other-id", "__none__");
-      const noneRow = document.createElement("div"); noneRow.className = "mod-name-row";
-      const noneName = document.createElement("div"); noneName.className = "mod-name none-label"; noneName.textContent = "None";
-      noneRow.appendChild(noneName);
-      const nothingSelected = selectedIds.length === 0;
-      if (nothingSelected) { noneItem.classList.add("selected-row"); }
-      noneItem.addEventListener("click", () => {
-        const allSelectedLis = listEl.querySelectorAll("li.selected-row");
-        allSelectedLis.forEach((li) => {
-          if (li === noneItem) return;
-          li.classList.remove("selected-row");
-        });
-        const ids = getSelectedIdsForCategory(categoryId);
-        for (const id of [...ids]) {
-          if (bridge) bridge.send({ type: "select-other", category: categoryId, otherId: id, otherData: null, action: "deselect" });
+    // Summary View (Категории)
+    const summaryView = document.createElement("div"); summaryView.className = "rose-wheel-summary";
+    panel._summaryValuesByTab = {}; panel._summaryRowsByTab = {};
+
+    SUMMARY_TABS.forEach(tab => {
+      const row = document.createElement("div"); row.className = "rose-wheel-summary-row";
+      const left = document.createElement("div"); left.className = "rose-wheel-summary-left";
+      const label = document.createElement("div"); label.className = "rose-wheel-summary-label";
+      
+      const iconSpan = document.createElement("span"); iconSpan.className = "rose-wheel-summary-icon"; iconSpan.innerHTML = SUMMARY_ICONS[tab.id] || "";
+      const labelText = document.createElement("span"); labelText.textContent = tab.label;
+      label.appendChild(iconSpan); label.appendChild(labelText);
+      
+      const value = document.createElement("div"); value.className = "rose-wheel-summary-value"; value.textContent = "None";
+      panel._summaryValuesByTab[tab.id] = value;
+      left.appendChild(label); left.appendChild(value);
+
+      const btnContainer = document.createElement("div");
+      const addBtn = document.createElement("button"); addBtn.className="mod-select-button"; addBtn.textContent="+";
+      
+      const switchTab = (tabName) => {
+        if (!isSummaryTabVisible(tabName)) tabName = "skins";
+        activeTab = tabName;
+        syncActiveTabContent();
+        
+        if (tabName === "skins") {
+          if (currentSkinMods && currentSkinMods.length) updateModEntries(currentSkinMods);
+          requestModsForCurrentSkin();
+        } else if (tabName === "maps") {
+          if (lastMapsList && lastMapsList.length) updateMapsEntries(lastMapsList);
+          requestMaps();
+        } else if (tabName === "fonts") {
+          if (lastFontsList && lastFontsList.length) updateFontsEntries(lastFontsList);
+          requestFonts();
+        } else if (tabName === "announcers") {
+          if (lastAnnouncersList && lastAnnouncersList.length) updateAnnouncersEntries(lastAnnouncersList);
+          requestAnnouncers();
+        } else if (OTHER_CATEGORY_TABS.some(t => t.id === tabName)) {
+          if (lastCategoryModsById[tabName] && lastCategoryModsById[tabName].length) {
+            updateOtherCategoryEntries(tabName, lastCategoryModsById[tabName]);
+          }
+          requestCategoryMods(tabName);
         }
-        ids.length = 0;
-        noneItem.classList.add("selected-row");
-        refreshSummaryValues(); refreshButtonBadgeFromSelections();
+        
+        if (rightPaneMode === "picker") {
+          const icon = SUMMARY_ICONS[activeTab] || "";
+          panel._rightTitle.innerHTML = `<span class="rose-wheel-title-icon">${icon}</span> Choose \u2022 ${escapeHtml(getTabLabel(activeTab))}`;
+        }
+      };
+
+      addBtn.addEventListener("click", (e) => { 
+        e.stopPropagation(); 
+        if (tab.id === "skins") {
+          openChampionSelection();
+        } else {
+          if (bridge) bridge.send({ type: "add-custom-mods-category-selected", category: tab.id });
+        }
       });
-      noneItem.appendChild(noneRow); listEl.appendChild(noneItem);
-    }
-
-    items.forEach((other) => {
-      const listItem = document.createElement("li");
-      const otherId = other.id || other.name || `other-${Date.now()}-${Math.random()}`;
-
-      const otherNameRow = document.createElement("div"); otherNameRow.className = "mod-name-row";
-      const otherName = document.createElement("div"); otherName.className = "mod-name"; otherName.textContent = cleanModName(other.name || other.modName) || "Unnamed mod";
-      otherNameRow.appendChild(otherName);
-
-      listItem.setAttribute("data-other-id", otherId);
-
-      if (selectedIds.includes(otherId)) {
-        listItem.classList.add("selected-row");
-      }
-
-      listItem.addEventListener("click", () => { handleCategoryModSelect(categoryId, otherId, listItem, other); });
-
-      listItem.appendChild(otherNameRow);
-
-      if (other.description) {
-        const otherDesc = document.createElement("div"); otherDesc.className = "mod-description"; otherDesc.textContent = other.description;
-        listItem.appendChild(otherDesc);
-      }
-
-      listEl.appendChild(listItem);
+      row.addEventListener("click", (e) => { if(e.target !== addBtn) { switchTab(tab.id); setRightPaneMode("picker"); } });
+      
+      btnContainer.appendChild(addBtn); row.appendChild(left); row.appendChild(btnContainer);
+      panel._summaryRowsByTab[tab.id] = row; summaryView.appendChild(row);
     });
+
+    // Picker View
+    const pickerView = document.createElement("div"); pickerView.className = "rose-wheel-picker";
+    const scrollable = document.createElement("div"); scrollable.className = "mod-selection";
+
+    const createList = () => { const ul = document.createElement("ul"); ul.style.cssText="list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:4px;"; return ul; };
+    const createLoad = (txt) => { const div = document.createElement("div"); div.className="mod-loading"; div.textContent=txt; div.style.display="none"; return div; };
+    const createContent = (id) => { const div = document.createElement("div"); div.className="tab-content"; div.dataset.tab=id; return div; };
+
+    panel._modList = createList(); panel._mapsList = createList(); panel._fontsList = createList(); panel._announcersList = createList();
+    panel._modsLoading = createLoad("Waiting for mods..."); panel._mapsLoading = createLoad("Loading maps..."); panel._fontsLoading = createLoad("Loading fonts..."); panel._announcersLoading = createLoad("Loading announcers...");
+    
+    const modsContent = createContent("skins"); modsContent.classList.add("active"); modsContent.appendChild(panel._modsLoading); modsContent.appendChild(panel._modList);
+    const mapsContent = createContent("maps"); mapsContent.appendChild(panel._mapsLoading); mapsContent.appendChild(panel._mapsList);
+    const fontsContent = createContent("fonts"); fontsContent.appendChild(panel._fontsLoading); fontsContent.appendChild(panel._fontsList);
+    const announcersContent = createContent("announcers"); announcersContent.appendChild(panel._announcersLoading); announcersContent.appendChild(panel._announcersList);
+    
+    scrollable.appendChild(modsContent); scrollable.appendChild(mapsContent); scrollable.appendChild(fontsContent); scrollable.appendChild(announcersContent);
+
+    OTHER_CATEGORY_TABS.forEach(t => {
+      const lst = createList(); const ld = createLoad(`Loading ${t.label.toLowerCase()}...`); const cnt = createContent(t.id);
+      cnt.appendChild(ld); cnt.appendChild(lst); scrollable.appendChild(cnt);
+      panel[`_${t.id}List`] = lst; panel[`_${t.id}Loading`] = ld; panel[`_${t.id}Content`] = cnt;
+    });
+
+    pickerView.appendChild(scrollable);
+    
+    panel._summaryView = summaryView; panel._pickerView = pickerView; panel._backBtn = backBtn; panel._rightTitle = title;
+    modal.appendChild(header); modal.appendChild(summaryView); modal.appendChild(pickerView);
+    content.appendChild(modal); flyout.appendChild(content); panel.appendChild(flyout);
+
+    setRightPaneMode("summary");
+    document.body.appendChild(panel);
+    return panel;
   }
 
-  function handleCategoryModsResponse(event) {
-    const detail = event?.detail;
+  function positionPanel(panelElement) {
+    if (!panelElement) return;
+    const flyout = panelElement.querySelector(".flyout");
+    if (!flyout) return;
+
+    let flyoutRect = flyout.getBoundingClientRect();
+    if (!flyoutRect.width) flyoutRect = { width: 980, height: 520 };
+
+    const cx = (window.innerWidth - flyoutRect.width) / 2;
+    const cy = (window.innerHeight - flyoutRect.height) / 2;
+
+    flyout.style.position = "fixed";
+    flyout.style.top = `${Math.max(10, cy)}px`;
+    flyout.style.left = `${Math.max(10, cx)}px`;
+  }
+
+  function togglePanel() {
+    if (document.getElementById(PANEL_ID) && isOpen) { closePanel(); return; }
+    closePanel();
+    
+    if (!panel) createPanel();
+    panel.style.display = "block";
+    isOpen = true;
+    
+    if (isFirstOpenInSession) { activeTab = "skins"; isFirstOpenInSession = false; }
+    setRightPaneMode("summary");
+    refreshSummaryValues();
+    
+    requestModsForCurrentSkin(); requestMaps(); requestFonts(); requestAnnouncers();
+    OTHER_CATEGORY_TABS.forEach(t => requestCategoryMods(t.id));
+
+    positionPanel(panel);
+    
+    setTimeout(() => {
+      const closeHandler = (e) => {
+        const flyout = panel ? panel.querySelector(".flyout") : null;
+        if (!panel || !panel.parentNode) { document.removeEventListener("click", closeHandler); return; }
+        if ((flyout && flyout.contains(e.target)) || (button && button.contains(e.target))) return;
+        closePanel(); document.removeEventListener("click", closeHandler);
+      };
+      document.addEventListener("click", closeHandler);
+    }, 200);
+  }
+
+  function closePanel() {
+    if (panel) panel.style.display = "none";
+    isOpen = false;
+    isGlobalMode = false;
+  }
+
+  function requestMaps() { if (bridge) bridge.send({ type: "request-maps" }); }
+  function requestFonts() { if (bridge) bridge.send({ type: "request-fonts" }); }
+  function requestAnnouncers() { if (bridge) bridge.send({ type: "request-announcers" }); }
+  function requestCategoryMods(cat) { if (bridge) bridge.send({ type: "request-category-mods", category: cat }); }
+
+  function handleMapsResponse(data) {
+    const detail = data?.detail || data;
+    if (!detail || detail.type !== "maps-response") return;
+    lastMapsList = Array.isArray(detail.maps) ? detail.maps : [];
+    if (detail.historicMod && !selectedMapId) {
+      const hm = lastMapsList.find(m => (m.id||"").replace(/\\/g,"/") === String(detail.historicMod).replace(/\\/g,"/"));
+      if (hm) selectedMapId = hm.id || hm.name;
+    }
+    refreshSummaryValues();
+    if (isOpen && rightPaneMode === "picker" && activeTab === "maps") updateMapsEntries(lastMapsList);
+  }
+
+  function handleFontsResponse(data) {
+    const detail = data?.detail || data;
+    if (!detail || detail.type !== "fonts-response") return;
+    lastFontsList = Array.isArray(detail.fonts) ? detail.fonts : [];
+    if (detail.historicMod && !selectedFontId) {
+      const hf = lastFontsList.find(f => (f.id||"").replace(/\\/g,"/") === String(detail.historicMod).replace(/\\/g,"/"));
+      if (hf) selectedFontId = hf.id || hf.name;
+    }
+    refreshSummaryValues();
+    if (isOpen && rightPaneMode === "picker" && activeTab === "fonts") updateFontsEntries(lastFontsList);
+  }
+
+  function handleAnnouncersResponse(data) {
+    const detail = data?.detail || data;
+    if (!detail || detail.type !== "announcers-response") return;
+    lastAnnouncersList = Array.isArray(detail.announcers) ? detail.announcers : [];
+    if (detail.historicMod && !selectedAnnouncerId) {
+      const ha = lastAnnouncersList.find(a => (a.id||"").replace(/\\/g,"/") === String(detail.historicMod).replace(/\\/g,"/"));
+      if (ha) selectedAnnouncerId = ha.id || ha.name;
+    }
+    refreshSummaryValues();
+    if (isOpen && rightPaneMode === "picker" && activeTab === "announcers") updateAnnouncersEntries(lastAnnouncersList);
+  }
+
+  function handleCategoryModsResponse(data) {
+    const detail = data?.detail || data;
     if (!detail || detail.type !== "category-mods-response") return;
 
     const category = String(detail.category || "").trim();
     if (!OTHER_CATEGORY_TABS.some((t) => t.id === category)) return;
 
-    const modsList = Array.isArray(detail.mods) ? detail.mods :[];
+    const modsList = Array.isArray(detail.mods) ? detail.mods : [];
     lastCategoryModsById[category] = modsList;
 
     const historicMod = detail.historicMod;
-    const historicMods = Array.isArray(historicMod) ? historicMod : (historicMod ? [historicMod] :[]);
+    const historicMods = Array.isArray(historicMod) ? historicMod : (historicMod ? [historicMod] : []);
     if (historicMods.length > 0) {
       for (const historicPath of historicMods) {
         const match = modsList.find((m) => {
@@ -2332,24 +1067,14 @@
 
     refreshSummaryValues();
     refreshButtonBadgeFromSelections();
+    applyVisibleCategoryState();
 
     if (!isOpen || rightPaneMode !== "picker" || activeTab !== category) return;
-
     updateOtherCategoryEntries(category, modsList);
-
-    const listEl = panel?.[`_${category}List`];
-    if (listEl) {
-      for (const otherId of getSelectedIdsForCategory(category)) {
-        const li = listEl.querySelector(`[data-other-id="${otherId}"]`);
-        if (li) {
-          li.classList.add("selected-row");
-        }
-      }
-    }
   }
 
-  function handleOthersResponse(event) {
-    const detail = event?.detail;
+  function handleOthersResponse(data) {
+    const detail = data?.detail || data;
     if (!detail || detail.type !== "others-response") return;
 
     const othersList = Array.isArray(detail.others) ? detail.others : [];
@@ -2383,183 +1108,447 @@
     refreshButtonBadgeFromSelections();
 
     if (!isOpen || rightPaneMode !== "picker" || activeTab !== "others") return;
-
     updateOtherCategoryEntries("others", othersList);
   }
 
-  function handleChampionLocked(event) {
-    const locked = Boolean(event?.detail?.locked);
-    if (!locked) {
-      // A dodge/unlock starts a new champ-select lifecycle. Do not let the
-      // previous lobby's chroma selection or mod response affect the next lobby.
-      pythonChromaState = null;
-      latestSkinModsRequestId = null;
-    }
-    if (locked === championLocked) {
-      if (locked && championSelectRoot && (!button || !button.parentNode)) {
-        refreshUIVisibility();
+  function handleSkinState(e) {
+    skinMonitorState = e?.detail || null;
+    resetStaleChromaStateForSkin(skinMonitorState?.skinId);
+    requestModsForCurrentSkin();
+  }
+
+  // --- Безопасная привязка кнопки над панелью выхода ---
+  function attachToChampionSelect() {
+    if (!button) createButton();
+    if (!panel) createPanel();
+
+    const inCS = !!document.querySelector(".champion-select");
+    const inLobby = isActuallyInLobby();
+
+    if (inCS) {
+      const csRoot = document.querySelector(".champion-select");
+      if (csRoot && button.parentNode !== csRoot) {
+        csRoot.appendChild(button);
       }
-      return;
-    }
-
-    if (locked && !championLocked) {
-      pythonChromaState = null;
-      latestSkinModsRequestId = null;
-      selectedModId = null;
-      selectedModSkinId = null;
-      lastChampionSelectSession = championSelectRoot;
-      isFirstOpenInSession = true;
-    }
-
-    championLocked = locked;
-    refreshSummaryValues();
-    refreshButtonBadgeFromSelections();
-
-    if (locked) {
-      setTimeout(() => {
-        if (championLocked && championSelectRoot && (!button || !button.parentNode)) {
-          refreshUIVisibility();
-        }
-      }, 200);
+      // Размещаем кнопку НАД контролами выхода (bottom: 75px, right: 25px)
+      button.style.position = "absolute";
+      button.style.right = "25px";
+      button.style.bottom = "75px";
+      button.style.left = "auto";
+      button.style.top = "auto";
+      button.style.zIndex = "50";
+    } else if (inLobby && isSwiftplayMode) {
+      if (button.parentNode !== document.body) document.body.appendChild(button);
+      button.style.position = "fixed";
+      button.style.bottom = "210px";
+      button.style.right = "225px";
+      button.style.left = "auto";
+      button.style.top = "auto";
+      button.style.zIndex = "50";
     }
   }
 
-  function positionPanel(panelElement, buttonElement) {
-      if (!panelElement || !buttonElement) return;
-  
-      const flyoutFrame = panelElement.querySelector(".flyout");
-      if (!flyoutFrame) return;
-  
-      const rect = buttonElement.getBoundingClientRect();
-      let flyoutRect = flyoutFrame.getBoundingClientRect();
-  
-      if (flyoutRect.width === 0) {
-        const modal = flyoutFrame.querySelector(".chroma-modal");
-        if (modal) {
-          const modalRect = modal.getBoundingClientRect();
-          if (modalRect.width > 0) flyoutRect = { width: modalRect.width, height: flyoutRect.height || 400 };
-          else flyoutRect = { width: rect.width + 32, height: 400 };
+  function updateChampionSelectTarget() {
+    const t = document.querySelector(".champion-select");
+    const il = isActuallyInLobby();
+    if (!t && !il) { championSelectRoot = null; if (button?.parentNode) button.remove(); if (!isGlobalMode) closePanel(); return; }
+    if (t && t !== championSelectRoot) { championSelectRoot = t; isFirstOpenInSession = true; }
+    else if (il && isSwiftplayMode && championSelectRoot !== "swiftplay") { championSelectRoot = "swiftplay"; isFirstOpenInSession = true; }
+    attachToChampionSelect();
+  }
+
+  function updateButtonBadge(count) {
+    if (!button || !button._countBadge) return;
+    const badge = button._countBadge;
+    if (count > 0) {
+      badge.textContent = String(count);
+      badge.style.setProperty("display", "flex", "important");
+    } else {
+      badge.textContent = "0"; 
+      badge.style.setProperty("display", "none", "important");
+    }
+  }
+
+  function getSelectedModsCount() {
+    let count = 0;
+    const inLobby = isActuallyInLobby();
+    if ((championLocked || (isSwiftplayMode && inLobby)) && selectedModId) count += 1;
+    if (selectedMapId) count += 1;
+    if (selectedFontId) count += 1;
+    if (selectedAnnouncerId) count += 1;
+    for (const t of OTHER_CATEGORY_TABS) {
+      const ids = getSelectedIdsForCategory(t.id);
+      if (Array.isArray(ids) && ids.length) {
+        count += new Set(ids).size;
+      }
+    }
+    return count;
+  }
+
+  function refreshButtonBadgeFromSelections() {
+    updateButtonBadge(getSelectedModsCount());
+  }
+
+  // --- Модальные окна с z-index 20000+ (открываются поверх CustomWheel) ---
+  function openChampionSelection() {
+    const existingDialog = document.getElementById("champion-selection-dialog");
+    if (existingDialog) existingDialog.remove();
+
+    const dialog = document.createElement("div");
+    dialog.id = "champion-selection-dialog";
+    dialog.style.cssText = "position:fixed;top:0;left:0;width:100%;height:100%;z-index:20000 !important;background:rgba(0,0,0,0.65);display:flex;align-items:center;justify-content:center;pointer-events:all;";
+    dialog.addEventListener("click", (e) => { if (e.target === dialog) closeChampionSelection(); });
+    document.body.appendChild(dialog);
+
+    const flyoutFrame = document.createElement("div");
+    flyoutFrame.style.cssText = "max-height:75vh;width:700px;overflow:hidden;background:#010a13;border:1px solid #c8aa6e;padding:20px;box-sizing:border-box;font-family:'Beaufort for LOL',serif;color:#cdbe91;";
+    flyoutFrame.addEventListener("click", (e) => e.stopPropagation());
+
+    const header = document.createElement("div");
+    header.style.cssText = "display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;";
+    
+    const titleWrapper = document.createElement("div");
+    titleWrapper.style.cssText = "font-size:18px;font-weight:bold;color:#c8aa6e;";
+    titleWrapper.textContent = "Select Champion";
+    header.appendChild(titleWrapper);
+
+    const closeBtn = document.createElement("button");
+    closeBtn.innerHTML = "&times;";
+    closeBtn.style.cssText = "background:transparent;border:none;color:#a09b8c;font-size:24px;cursor:pointer;";
+    closeBtn.addEventListener("click", closeChampionSelection);
+    header.appendChild(closeBtn);
+    flyoutFrame.appendChild(header);
+
+    const searchInput = document.createElement("input");
+    searchInput.type = "search";
+    searchInput.placeholder = "Search champions...";
+    searchInput.style.cssText = "width:100%;padding:8px;background:#1e2328;border:1px solid #5c5b56;color:#cdbe91;box-sizing:border-box;margin-bottom:12px;outline:none;";
+    flyoutFrame.appendChild(searchInput);
+
+    const loading = document.createElement("div");
+    loading.id = "champion-loading";
+    loading.textContent = "Loading champions...";
+    loading.style.cssText = "color:#cdbe91;text-align:center;padding:20px;";
+    flyoutFrame.appendChild(loading);
+
+    const championsGrid = document.createElement("div");
+    championsGrid.id = "champions-grid";
+    championsGrid.style.cssText = "display:grid;grid-template-columns:repeat(auto-fill,minmax(90px,1fr));gap:8px;max-height:45vh;overflow-y:auto;";
+    flyoutFrame.appendChild(championsGrid);
+
+    dialog.appendChild(flyoutFrame);
+
+    if (bridge) bridge.send({ type: "add-custom-mods-champion-selected", action: "list" });
+
+    searchInput.addEventListener("input", (e) => {
+      const term = e.target.value.toLowerCase().trim();
+      const all = window.__roseAllChampions || [];
+      renderChampionsGrid(all.filter(c => c.name.toLowerCase().includes(term)));
+    });
+
+    window.__roseChampionRenderer = renderChampionsGrid;
+  }
+
+  function closeChampionSelection() {
+    const dialog = document.getElementById("champion-selection-dialog");
+    if (dialog) dialog.remove();
+    delete window.__roseChampionRenderer;
+    delete window.__roseAllChampions;
+  }
+
+  function renderChampionsGrid(champions) {
+    const grid = document.getElementById("champions-grid");
+    if (!grid) return;
+    grid.innerHTML = "";
+
+    champions.forEach((champ) => {
+      const card = document.createElement("div");
+      card.style.cssText = "display:flex;flex-direction:column;align-items:center;cursor:pointer;padding:6px;border:1px solid transparent;border-radius:4px;transition:0.2s;";
+      card.addEventListener("mouseenter", () => card.style.borderColor = "#c8aa6e");
+      card.addEventListener("mouseleave", () => card.style.borderColor = "transparent");
+      
+      const img = document.createElement("img");
+      img.src = `/lol-game-data/assets/v1/champion-icons/${champ.id}.png`;
+      img.style.cssText = "width:60px;height:60px;border-radius:50%;border:2px solid #5b5a56;object-fit:cover;";
+      card.appendChild(img);
+
+      const name = document.createElement("div");
+      name.style.cssText = "margin-top:6px;font-size:11px;color:#a09b8c;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:80px;";
+      name.textContent = champ.name;
+      card.appendChild(name);
+
+      card.addEventListener("click", () => {
+        closeChampionSelection();
+        openSkinSelection(champ.id);
+      });
+      grid.appendChild(card);
+    });
+  }
+
+  function openSkinSelection(championId) {
+    const existing = document.getElementById("skin-selection-dialog");
+    if (existing) existing.remove();
+
+    window.__roseSelectedSkinIds = new Set();
+
+    const dialog = document.createElement("div");
+    dialog.id = "skin-selection-dialog";
+    dialog.style.cssText = "position:fixed;top:0;left:0;width:100%;height:100%;z-index:20001 !important;background:rgba(0,0,0,0.65);display:flex;align-items:center;justify-content:center;pointer-events:all;";
+    dialog.addEventListener("click", (e) => { if (e.target === dialog) closeSkinSelection(); });
+    document.body.appendChild(dialog);
+
+    const flyoutFrame = document.createElement("div");
+    flyoutFrame.style.cssText = "max-height:75vh;width:700px;background:#010a13;border:1px solid #c8aa6e;padding:20px;box-sizing:border-box;font-family:'Beaufort for LOL',serif;color:#cdbe91;display:flex;flex-direction:column;";
+    flyoutFrame.addEventListener("click", (e) => e.stopPropagation());
+
+    const header = document.createElement("div");
+    header.style.cssText = "display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;";
+    
+    const title = document.createElement("div");
+    title.id = "skin-selection-title";
+    title.style.cssText = "font-size:18px;font-weight:bold;color:#c8aa6e;";
+    title.textContent = "Select Skins & Chromas";
+    header.appendChild(title);
+
+    const closeBtn = document.createElement("button");
+    closeBtn.innerHTML = "&times;";
+    closeBtn.style.cssText = "background:transparent;border:none;color:#a09b8c;font-size:24px;cursor:pointer;";
+    closeBtn.addEventListener("click", closeSkinSelection);
+    header.appendChild(closeBtn);
+    flyoutFrame.appendChild(header);
+
+    const loading = document.createElement("div");
+    loading.id = "skin-loading";
+    loading.textContent = "Loading skins...";
+    loading.style.cssText = "color:#cdbe91;text-align:center;padding:20px;";
+    flyoutFrame.appendChild(loading);
+
+    const skinsList = document.createElement("div");
+    skinsList.id = "skins-list";
+    skinsList.style.cssText = "display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px;max-height:50vh;overflow-y:auto;padding-right:6px;";
+    flyoutFrame.appendChild(skinsList);
+
+    const actions = document.createElement("div");
+    actions.style.cssText = "display:flex;align-items:center;justify-content:space-between;margin-top:16px;padding-top:12px;border-top:1px solid #463714;";
+    
+    const count = document.createElement("span");
+    count.id = "skin-selection-count";
+    count.textContent = "0 targets selected";
+    actions.appendChild(count);
+
+    const confirmBtn = document.createElement("button");
+    confirmBtn.textContent = "Confirm & Select Mod";
+    confirmBtn.disabled = true;
+    confirmBtn.style.cssText = "padding:8px 16px;border:1px solid #c8aa6e;background:#1e2328;color:#c8aa6e;cursor:pointer;font-weight:bold;";
+    confirmBtn.addEventListener("click", () => {
+      const selected = Array.from(window.__roseSelectedSkinIds || []);
+      if (!selected.length) return;
+      closeSkinSelection();
+      if (bridge) bridge.send({
+        type: "add-custom-mods-skin-selected",
+        action: "create",
+        championId: championId,
+        skinIds: selected,
+      });
+    });
+    actions.appendChild(confirmBtn);
+    flyoutFrame.appendChild(actions);
+
+    dialog.appendChild(flyoutFrame);
+
+    if (bridge) bridge.send({ type: "add-custom-mods-skin-selected", action: "list", championId });
+  }
+
+  function closeSkinSelection() {
+    const dialog = document.getElementById("skin-selection-dialog");
+    if (dialog) dialog.remove();
+    delete window.__roseSelectedSkinIds;
+  }
+
+  function handleChampionsListResponse(payload) {
+    const loading = document.getElementById("champion-loading");
+    if (loading) loading.style.display = "none";
+    window.__roseAllChampions = payload.champions || [];
+    renderChampionsGrid(window.__roseAllChampions);
+  }
+
+  function handleChampionSkinsResponse(payload) {
+    const loading = document.getElementById("skin-loading");
+    if (loading) loading.style.display = "none";
+
+    const title = document.getElementById("skin-selection-title");
+    if (title && payload.championName) title.textContent = `Select Skins - ${payload.championName}`;
+
+    const skinsList = document.getElementById("skins-list");
+    if (!skinsList) return;
+    skinsList.innerHTML = "";
+
+    const skins = payload.skins || [];
+    skins.forEach((skin) => {
+      const card = document.createElement("div");
+      card.style.cssText = "display:flex;flex-direction:column;align-items:center;cursor:pointer;padding:6px;border:1px solid #4a4a48;border-radius:4px;background:#151b21;transition:0.2s;";
+      
+      const img = document.createElement("img");
+      img.src = skin.tilePath || `/lol-game-data/assets/v1/champion-tiles/${skin.id}.jpg`;
+      img.style.cssText = "width:100%;height:140px;object-fit:cover;border-radius:2px;";
+      img.onerror = () => { img.style.display = "none"; };
+      card.appendChild(img);
+
+      const name = document.createElement("div");
+      name.style.cssText = "margin-top:6px;font-size:11px;color:#a09b8c;text-align:center;line-height:1.2;word-break:break-word;";
+      name.textContent = skin.name || `Skin ${skin.id}`;
+      card.appendChild(name);
+
+      card.addEventListener("click", () => {
+        const id = Number(skin.id || skin.skinId);
+        const set = window.__roseSelectedSkinIds || new Set();
+        if (set.has(id)) {
+          set.delete(id);
+          card.style.borderColor = "#4a4a48";
+          card.style.background = "#151b21";
         } else {
-          flyoutRect = { width: rect.width + 32, height: 400 };
+          set.add(id);
+          card.style.borderColor = "#c8aa6e";
+          card.style.background = "#463714";
         }
-      }
-  
-      // Всегда центрируем панель по центру экрана через фиксированное позиционирование,
-      // чтобы избежать обрезания из-за скрытых границ (overflow: hidden) лобби.
-      const centerX = (window.innerWidth - flyoutRect.width) / 2;
-      const centerY = (window.innerHeight - flyoutRect.height) / 2;
-  
-      flyoutFrame.style.position = "fixed";
-      flyoutFrame.style.overflow = "visible";
-      flyoutFrame.style.top = `${centerY}px`;
-      flyoutFrame.style.left = `${centerX}px`;
-      flyoutFrame.style.right = ""; 
-      flyoutFrame.style.bottom = "";
-      flyoutFrame.style.transform = ""; 
-  
-      panelElement.style.position = "fixed";
-      panelElement.style.top = "0";
-      panelElement.style.left = "0";
-      panelElement.style.width = "100%";
-      panelElement.style.height = "100%";
-      panelElement.style.pointerEvents = "none";
-      flyoutFrame.style.pointerEvents = "all";
-    }
+        window.__roseSelectedSkinIds = set;
 
-  function whenReady(cb) {
-    if (document.readyState === "loading") {
-      document.addEventListener("DOMContentLoaded", cb, { once: true });
-      return;
-    }
-    cb();
+        const countEl = document.getElementById("skin-selection-count");
+        if (countEl) countEl.textContent = `${set.size} target${set.size === 1 ? "" : "s"} selected`;
+
+        const btn = document.querySelector("#skin-selection-dialog button:last-child");
+        if (btn) btn.disabled = set.size === 0;
+      });
+
+      skinsList.appendChild(card);
+    });
   }
 
-  whenReady(async () => {
-    try {
-      bridge = await waitForBridge();
-      console.log(`${LOG_PREFIX} Bridge connected`);
-    } catch (e) {
-      console.error(`${LOG_PREFIX} Failed to connect to bridge:`, e);
+  function handleSelectionResult(data) {
+    const detail = data?.detail || data;
+    if (!detail || detail.type !== "custom-mod-selection-result") return;
+    if (pendingSelectionRequest && detail.requestId !== pendingSelectionRequest.requestId) return;
+    
+    pendingSelectionRequest = null;
+    if (!detail.success) {
+      console.warn(`${LOG_PREFIX} Selection failed: ${detail.error}`);
+      return;
     }
+
+    if (detail.operation === "deselect") { 
+      selectedModId = null; 
+      selectedModSkinId = null; 
+    } else if (detail.operation === "select") {
+      selectedModId = String(detail.relativePath || detail.modId || "");
+      selectedModSkinId = Number(detail.skinId || getCurrentSkinContext().skinId);
+    }
+    if (isOpen && activeTab === "skins") refreshSummaryValues();
+  }
+
+  function handleModsResponse(data) {
+    const detail = data?.detail || data;
+    if (!detail || detail.type !== "skin-mods-response") return;
+
+    hideEmptyCategories = Boolean(detail.hideEmptyCategories);
+    applyVisibleCategoryState();
+
+    currentSkinMods = detail.mods || [];
+    if (detail.historicMod && !selectedModId) {
+      const match = currentSkinMods.find(m => (m.relativePath || "").replace(/\\/g, "/") === String(detail.historicMod).replace(/\\/g, "/"));
+      if (match) {
+        selectedModId = match.relativePath || match.modName;
+        selectedModSkinId = Number(match.skinId);
+      }
+    }
+
+    refreshSummaryValues();
+    if (isOpen && rightPaneMode === "picker" && activeTab === "skins") {
+      updateModEntries(currentSkinMods);
+    }
+  }
+
+  // --- Инициализация ---
+  async function init() {
+    if (window._roseCustomWheelInit) return;
+    window._roseCustomWheelInit = true;
 
     injectCSS();
-    createButton();
-    createPanel();
+    bridge = await waitForBridge();
+    
+    if (window.__roseSkinState) skinMonitorState = window.__roseSkinState;
+
+    bridge.subscribe("skin-mods-response", handleModsResponse);
+    bridge.subscribe("custom-mod-selection-result", handleSelectionResult);
+    bridge.subscribe("chroma-state", handleChromaStateUpdate);
+    bridge.subscribe("phase-change", handlePhaseChange);
+    bridge.subscribe("champion-locked", (d) => {
+      championLocked = Boolean(d?.locked);
+      if (!championLocked) { resetCustomSkinSessionState(); if (!isGlobalMode) closePanel(); }
+      else requestModsForCurrentSkin();
+    });
+    bridge.subscribe("settings-data", (d) => { hideEmptyCategories = Boolean(d?.hideEmptyCategories); applyVisibleCategoryState(); });
+    bridge.subscribe("maps-response", handleMapsResponse);
+    bridge.subscribe("fonts-response", handleFontsResponse);
+    bridge.subscribe("announcers-response", handleAnnouncersResponse);
+    bridge.subscribe("category-mods-response", handleCategoryModsResponse);
+    bridge.subscribe("others-response", handleOthersResponse);
+    bridge.subscribe("champions-list-response", handleChampionsListResponse);
+    bridge.subscribe("champion-skins-response", handleChampionSkinsResponse);
+
+    // Авто-обновление при добавлении мода
+    bridge.subscribe("folder-opened-response", (data) => {
+      const detail = data?.detail || data;
+      if (detail && detail.success) {
+        if (detail.category) {
+          if (detail.category === "maps") requestMaps();
+          else if (detail.category === "fonts") requestFonts();
+          else if (detail.category === "announcers") requestAnnouncers();
+          else requestCategoryMods(detail.category);
+        } else {
+          requestModsForCurrentSkin();
+        }
+      }
+    });
+
+    bridge.subscribe("custom-mod-state", (data) => {
+      if (!data) return;
+      if (!data.active && selectedModId) {
+        selectedModId = null;
+        selectedModSkinId = null;
+        if (panel && panel._modList) {
+          panel._modList.querySelectorAll("li.selected-row").forEach((li) => li.classList.remove("selected-row"));
+          updateNoneRow(panel._modList, true);
+        }
+        refreshSummaryValues();
+      } else if (data.active && (data.relativePath || data.modName)) {
+        selectedModId = String(data.relativePath || data.modName);
+        selectedModSkinId = Number(data.skinId) || Number(getCurrentSkinContext().skinId);
+        refreshSummaryValues();
+      }
+    });
+
+    bridge.onReady(() => {
+      requestModsForCurrentSkin();
+      bridge.send({ type: "settings-request" });
+      requestMaps(); 
+      requestFonts(); 
+      requestAnnouncers();
+      for (const t of OTHER_CATEGORY_TABS) {
+        requestCategoryMods(t.id);
+      }
+    });
 
     window.addEventListener(EVENT_SKIN_STATE, handleSkinState, { passive: true });
+    window.addEventListener("resize", () => { if (isOpen && panel) positionPanel(panel); });
 
-    if (bridge) {
-      bridge.subscribe("champions-list-response", (data) => handleChampionsListResponse(data));
-      bridge.subscribe("champion-skins-response", (data) => handleChampionSkinsResponse(data));
-      bridge.subscribe("skin-mods-response", (data) => handleModsResponse({ detail: data }));
-      bridge.subscribe("maps-response", (data) => handleMapsResponse({ detail: data }));
-      bridge.subscribe("fonts-response", (data) => handleFontsResponse({ detail: data }));
-      bridge.subscribe("announcers-response", (data) => handleAnnouncersResponse({ detail: data }));
-      bridge.subscribe("category-mods-response", (data) => handleCategoryModsResponse({ detail: data }));
-      bridge.subscribe("others-response", (data) => handleOthersResponse({ detail: data }));
-      bridge.subscribe("champion-locked", (data) => handleChampionLocked({ detail: data }));
-      bridge.subscribe("custom-mod-state", (data) => {
-        if (!data) return;
-        if (!data.active && selectedModId) {
-          selectedModId = null;
-          selectedModSkinId = null;
-          if (panel && panel._modList) {
-            panel._modList.querySelectorAll("li.selected-row").forEach((li) => {
-              li.classList.remove("selected-row");
-            });
-            updateNoneRow(panel._modList, true);
-          }
-          refreshSummaryValues();
-          refreshButtonBadgeFromSelections();
-        } else if (data.active && (data.relativePath || data.modName)) {
-          selectedModId = String(data.relativePath || data.modName);
-          selectedModSkinId = Number(data.skinId) || Number(getCurrentSkinContext().skinId);
-          refreshSummaryValues();
-          refreshButtonBadgeFromSelections();
-        }
-      });
-
-      bridge.subscribe("swiftplay-state", (data) => {
-        isSwiftplayMode = data.active;
-      });
-
-      bridge.subscribe("phase-change", (data) => {
-        if (bridgeSocket && bridgeReady) {
-            bridge.send({type: "request-swiftplay-state"});
-        }
-        if (data.phase !== "Lobby" && data.phase !== "ChampSelect" && data.phase !== "FINALIZATION") {
-            if (isOpen && !isGlobalMode) closePanel();
-        }
-      });
-
-      bridge.onReady(() => {
-        requestMaps();
-        requestFonts();
-        requestAnnouncers();
-        for (const t of OTHER_CATEGORY_TABS) {
-          requestCategoryMods(t.id);
-        }
-        bridge.send({type: "request-swiftplay-state"});
-      });
-    }
-
-    const repositionButton = () => {
-      if (isOpen && panel && button && !isGlobalMode) {
-        positionPanel(panel, button);
-      }
-    };
-
-    window.addEventListener("resize", repositionButton);
-    window.addEventListener("scroll", repositionButton);
-
-    // ГЛОБАЛЬНЫЙ СЛУШАТЕЛЬ ДЛЯ ОТКРЫТИЯ ИЗ SETTINGSPANEL
+    // Открытие из настроек (Global Mode)
     window.addEventListener("rose-open-custom-wheel", () => {
       isGlobalMode = true;
       if (!panel) createPanel();
       if (!panel.parentNode) document.body.appendChild(panel);
       
       panel.style.display = "block";
-      panel.style.pointerEvents = "none"; 
+      isOpen = true;
 
       if (isFirstOpenInSession) {
         activeTab = "skins";
@@ -2569,14 +1558,6 @@
       setRightPaneMode("summary");
       refreshSummaryValues();
 
-      panel.querySelectorAll(".tab-content").forEach((content) => {
-        if (content && content.dataset && content.dataset.tab === activeTab) {
-          content.classList.add("active");
-        } else if (content) {
-          content.classList.remove("active");
-        }
-      });
-
       requestModsForCurrentSkin();
       requestMaps();
       requestFonts();
@@ -2585,595 +1566,43 @@
         requestCategoryMods(t.id);
       }
 
-      const flyoutFrame = panel.querySelector(".flyout");
-      if (flyoutFrame) {
-        flyoutFrame.style.position = "fixed";
-        flyoutFrame.style.top = "50%";
-        flyoutFrame.style.left = "50%";
-        flyoutFrame.style.transform = "translate(-50%, -50%)";
-        flyoutFrame.style.right = ""; 
-        flyoutFrame.style.bottom = "";
-      }
+      positionPanel(panel);
 
-      isOpen = true;
-
-      const closeHandler = (e) => {
-        if (panel && panel.parentNode && !panel.contains(e.target)) {
+      setTimeout(() => {
+        const closeHandler = (e) => {
+          const flyout = panel ? panel.querySelector(".flyout") : null;
+          if (!panel || !panel.parentNode) {
+            document.removeEventListener("click", closeHandler);
+            return;
+          }
+          if (flyout && flyout.contains(e.target)) return;
           closePanel();
           document.removeEventListener("click", closeHandler);
-        }
-      };
-      setTimeout(() => document.addEventListener("click", closeHandler), 100);
+        };
+        document.addEventListener("click", closeHandler);
+      }, 200);
     });
 
-    // Smart Visibility Controller
+    // Безопасный цикл проверки и монтирования кнопки в ChampSelect
     setInterval(() => {
-      if (!button) return;
-      
       const inCS = !!document.querySelector(".champion-select");
       const inLobby = isActuallyInLobby();
       const overlayActive = isOverlayOpen();
       
-      const shouldBeVisible = (inCS || (inLobby && isSwiftplayMode)) && !overlayActive;
+      const shouldShow = (inCS || (inLobby && isSwiftplayMode)) && !overlayActive;
 
-      if (shouldBeVisible) {
-        attachToChampionSelect();
-        button.style.setProperty("display", "block", "important");
-        button.style.setProperty("visibility", "visible", "important");
-        button.removeAttribute("data-hidden");
-      } else {
-        button.style.setProperty("display", "none", "important");
-        button.style.setProperty("visibility", "hidden", "important");
-        button.setAttribute("data-hidden", "true");
-        if (isOpen && !isGlobalMode) closePanel();
+      if (shouldShow) { 
+        if (!button) createButton();
+        attachToChampionSelect(); 
+        updateButtonVisibility(button, true); 
+      } else { 
+        if (button) updateButtonVisibility(button, false); 
       }
     }, 150);
-  });
 
-  function openChampionSelection() {
-      const existingDialog = document.getElementById("champion-selection-dialog");
-      if (existingDialog) {
-        existingDialog.remove();
-      }
-  
-      const dialog = document.createElement("div");
-      dialog.id = "champion-selection-dialog";
-      dialog.addEventListener("click", (e) => {
-        if (e.target === dialog) {
-          closeChampionSelection();
-        }
-      });
-      document.body.appendChild(dialog);
-  
-      const flyoutFrame = document.createElement("div");
-      flyoutFrame.id = "champion-selection-flyout";
-      flyoutFrame.className = "flyout";
-      flyoutFrame.style.maxHeight = "75vh";
-      flyoutFrame.style.width = "700px";
-      flyoutFrame.style.overflowY = "hidden";
-      flyoutFrame.style.overflowX = "hidden";
-      flyoutFrame.addEventListener("click", (e) => e.stopPropagation());
-  
-      const flyoutContent = document.createElement("div");
-      flyoutContent.className = "lc-flyout-content";
-  
-      const header = document.createElement("div");
-      header.className = "dialog-header";
-  
-      const backButton = document.createElement("button");
-      backButton.className = "back-button";
-      backButton.innerHTML = '<svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"></polyline></svg>';
-      backButton.setAttribute("aria-label", "Go back");
-      backButton.addEventListener("click", () => {
-        closeChampionSelection();
-      });
-      header.appendChild(backButton);
-  
-      const titleWrapper = document.createElement("div");
-      titleWrapper.className = "dialog-title-wrapper";
-      titleWrapper.textContent = "Select Champion";
-      header.appendChild(titleWrapper);
-  
-      flyoutContent.appendChild(header);
-  
-      const searchContainer = document.createElement("div");
-      searchContainer.className = "settings-section";
-  
-      let flatInput;
-      try {
-        flatInput = document.createElement("lol-uikit-flat-input");
-      } catch (e) {
-        flatInput = document.createElement("div");
-        flatInput.className = "lol-uikit-flat-input";
-      }
-      flatInput.className = "champion-search-input";
-      flyoutContent.style.width = "700px";
-  
-      const searchInput = document.createElement("input");
-      searchInput.type = "search";
-      searchInput.name = "champion_search";
-      searchInput.id = "champion-search-input";
-      searchInput.placeholder = "Search champions...";
-      searchInput.autocomplete = "off";
-      searchInput.autocorrect = "off";
-      searchInput.autocapitalize = "off";
-      searchInput.spellcheck = "false";
-  
-      flatInput.appendChild(searchInput);
-      searchContainer.appendChild(flatInput);
-      flyoutContent.appendChild(searchContainer);
-  
-      const loadingIndicator = document.createElement("div");
-      loadingIndicator.id = "champion-loading";
-      loadingIndicator.textContent = "Loading champions...";
-      loadingIndicator.style.color = "#cdbe91";
-      loadingIndicator.style.textAlign = "center";
-      loadingIndicator.style.padding = "20px";
-      loadingIndicator.style.fontFamily = '"Beaufort for LOL", serif';
-      flyoutContent.appendChild(loadingIndicator);
-  
-      const championsGridWrapper = document.createElement("div");
-      championsGridWrapper.id = "champions-grid-wrapper";
-      championsGridWrapper.style.overflowY = "auto";
-      championsGridWrapper.style.overflowX = "hidden";
-      championsGridWrapper.style.maxHeight = "45vh";
-      championsGridWrapper.style.marginTop = "12px";
-  
-      const championsGrid = document.createElement("div");
-      championsGrid.id = "champions-grid";
-      championsGridWrapper.appendChild(championsGrid);
-      flyoutContent.appendChild(championsGridWrapper);
-  
-      flyoutFrame.appendChild(flyoutContent);
-      dialog.appendChild(flyoutFrame);
-  
-      if (bridge) bridge.send({
-        type: "add-custom-mods-champion-selected",
-        action: "list",
-      });
-  
-      searchInput.addEventListener("input", (e) => {
-        const searchTerm = e.target.value.toLowerCase().trim();
-        const allChampions = window.__roseAllChampions || [];
-        const filtered = allChampions.filter((champ) =>
-          champ.name.toLowerCase().includes(searchTerm)
-        );
-        renderChampionsGrid(filtered);
-      });
-  
-      window.__roseChampionRenderer = renderChampionsGrid;
-    }
-  
-    function closeChampionSelection() {
-      const dialog = document.getElementById("champion-selection-dialog");
-      if (dialog) {
-        dialog.remove();
-      }
-      delete window.__roseChampionRenderer;
-      delete window.__roseAllChampions;
-    }
-  
-    function renderChampionsGrid(champions) {
-      const championsGrid = document.getElementById("champions-grid");
-      if (!championsGrid) return;
-  
-      championsGrid.innerHTML = "";
-  
-      if (champions.length === 0) {
-        championsGrid.innerHTML = '<div style="grid-column: 1 / -1; color: #cdbe91; text-align: center; padding: 20px; font-family: \'Beaufort for LOL\', serif;">No champions found matching your search.</div>';
-        return;
-      }
-  
-      champions.forEach((champion) => {
-        const card = document.createElement("div");
-        card.className = "champion-card";
-  
-        const img = document.createElement("img");
-        img.src = `/lol-game-data/assets/v1/champion-icons/${champion.id}.png`;
-        img.alt = champion.name;
-        img.loading = "lazy";
-        img.onerror = function () { this.style.display = "none"; };
-        card.appendChild(img);
-  
-        const name = document.createElement("div");
-        name.className = "champion-name";
-        name.textContent = champion.name;
-        card.appendChild(name);
-  
-        card.addEventListener("click", () => handleChampionSelection(champion.id));
-        championsGrid.appendChild(card);
-      });
-    }
-  
-    function handleChampionSelection(championId) {
-      closeChampionSelection();
-      openSkinSelection(championId);
-    }
-  
-    function openSkinSelection(championId) {
-      const existingDialog = document.getElementById("skin-selection-dialog");
-      if (existingDialog) {
-        existingDialog.remove();
-      }
-      
-      window.__roseSelectedSkinIds = new Set();
-  
-      const dialog = document.createElement("div");
-      dialog.id = "skin-selection-dialog";
-      dialog.addEventListener("click", (e) => {
-        if (e.target === dialog) {
-          closeSkinSelection();
-        }
-      });
-      document.body.appendChild(dialog);
-  
-      const flyoutFrame = document.createElement("div");
-      flyoutFrame.id = "skin-selection-flyout";
-      flyoutFrame.className = "flyout";
-      flyoutFrame.style.maxHeight = "75vh";
-      flyoutFrame.style.width = "700px";
-      flyoutFrame.style.overflowY = "hidden";
-      flyoutFrame.style.overflowX = "hidden";
-      flyoutFrame.addEventListener("click", (e) => e.stopPropagation());
-  
-      const flyoutContent = document.createElement("div");
-      flyoutContent.className = "lc-flyout-content";
-      flyoutContent.style.display = "flex";
-      flyoutContent.style.flexDirection = "column";
-      flyoutContent.style.height = "100%";
-      flyoutContent.style.boxSizing = "border-box";
-  
-      const header = document.createElement("div");
-      header.className = "dialog-header";
-      header.id = "skin-selection-header";
-      header.style.flex = "0 0 auto";
-  
-      const backButton = document.createElement("button");
-      backButton.className = "back-button";
-      backButton.innerHTML = '<svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"></polyline></svg>';
-      backButton.setAttribute("aria-label", "Go back");
-      backButton.addEventListener("click", (e) => {
-        e.stopPropagation();
-        closeSkinSelection();
-        openChampionSelection();
-      });
-      header.appendChild(backButton);
-  
-      const titleWrapper = document.createElement("div");
-      titleWrapper.className = "dialog-title-wrapper";
-      titleWrapper.textContent = "Select Skins & Chromas";
-      header.appendChild(titleWrapper);
-  
-      flyoutContent.appendChild(header);
-  
-      const loadingIndicator = document.createElement("div");
-      loadingIndicator.id = "skin-loading";
-      loadingIndicator.textContent = "Loading skins...";
-      loadingIndicator.style.color = "#cdbe91";
-      loadingIndicator.style.textAlign = "center";
-      loadingIndicator.style.padding = "20px";
-      loadingIndicator.style.fontFamily = '"Beaufort for LOL", serif';
-      flyoutContent.appendChild(loadingIndicator);
-  
-      const skinsList = document.createElement("div");
-      skinsList.style.overflowX = "hidden";
-      skinsList.id = "skins-list";
-      skinsList.style.flex = "1 1 auto";
-      skinsList.style.minHeight = "0";
-      skinsList.style.maxHeight = "none";
-  
-      const skinsListContainer = document.createElement("div");
-      skinsListContainer.className = "skins-list-container";
-      skinsList.appendChild(skinsListContainer);
-  
-      flyoutContent.appendChild(skinsList);
-  
-      const selectionActions = document.createElement("div");
-      selectionActions.id = "skin-selection-actions";
-      selectionActions.style.flex = "0 0 auto";
-  
-      const selectionCount = document.createElement("span");
-      selectionCount.id = "skin-selection-count";
-      selectionCount.textContent = "0 targets selected";
-      selectionActions.appendChild(selectionCount);
-  
-      const confirmButton = document.createElement("button");
-      confirmButton.id = "skin-selection-confirm";
-      confirmButton.type = "button";
-      confirmButton.textContent = "Confirm & Select Mod";
-      confirmButton.disabled = true;
-      confirmButton.addEventListener("click", (e) => {
-        e.stopPropagation();
-        confirmSkinSelection(championId);
-      });
-      selectionActions.appendChild(confirmButton);
-      flyoutContent.appendChild(selectionActions);
-  
-      flyoutFrame.appendChild(flyoutContent);
-      dialog.appendChild(flyoutFrame);
-  
-      if (bridge) bridge.send({
-        type: "add-custom-mods-skin-selected",
-        action: "list",
-        championId: championId,
-      });
-  
-      window.__roseSelectedChampionId = championId;
-    }
+    new MutationObserver(updateChampionSelectTarget).observe(document.body, { childList: true, subtree: true });
+  }
 
-    function confirmSkinSelection(championId) {
-      const selectedSkinIds = Array.from(window.__roseSelectedSkinIds || []);
-      if (selectedSkinIds.length === 0) return;
-  
-      closeSkinSelection();
-      if (bridge) bridge.send({
-        type: "add-custom-mods-skin-selected",
-        action: "create",
-        championId: championId,
-        skinIds: selectedSkinIds,
-      });
-      log("info", `Skin selection confirmed: champion=${championId}, skins=${selectedSkinIds.join(",")}`);
-    }
-  
-    function closeSkinSelection() {
-      const dialog = document.getElementById("skin-selection-dialog");
-      if (dialog) {
-        dialog.remove();
-      }
-      delete window.__roseSelectedChampionId;
-      delete window.__roseSelectedSkinIds;
-    }
-
-    function updateSkinSelectionUI() {
-      const selectedSkinIds = window.__roseSelectedSkinIds || new Set();
-      document.querySelectorAll("#skins-list [data-target-skin-id]").forEach((option) => {
-        const skinId = Number(option.dataset.targetSkinId);
-        const selected = selectedSkinIds.has(skinId);
-        if (option.classList.contains("skin-option")) {
-          option.classList.toggle("selected", selected);
-        } else {
-          option.classList.toggle("target-selected", selected);
-        }
-        option.setAttribute("aria-pressed", selected ? "true" : "false");
-      });
-  
-      document.querySelectorAll("#skins-list .skin-card").forEach((card) => {
-        const selected = Array.from(card.querySelectorAll("[data-target-skin-id]")).some(
-          (option) => selectedSkinIds.has(Number(option.dataset.targetSkinId))
-        );
-        card.classList.toggle("selected", selected);
-      });
-  
-      const selectionCount = document.getElementById("skin-selection-count");
-      if (selectionCount) {
-        const count = selectedSkinIds.size;
-        selectionCount.textContent = `${count} target${count === 1 ? "" : "s"} selected`;
-      }
-  
-      const confirmButton = document.getElementById("skin-selection-confirm");
-      if (confirmButton) {
-        confirmButton.disabled = selectedSkinIds.size === 0;
-      }
-    }
-
-  
-    function handleSkinSelection(championId, skinId) {
-      const selectedSkinIds = window.__roseSelectedSkinIds || new Set();
-      const numericSkinId = Number(skinId);
-      if (!Number.isFinite(numericSkinId) || numericSkinId <= 0) return;
-  
-      if (selectedSkinIds.has(numericSkinId)) {
-        selectedSkinIds.delete(numericSkinId);
-      } else {
-        selectedSkinIds.add(numericSkinId);
-      }
-      window.__roseSelectedSkinIds = selectedSkinIds;
-      updateSkinSelectionUI();
-      log("info", `Skin selection toggled: champion=${championId}, skin=${numericSkinId}`);
-    }
-  
-    function handleChampionsListResponse(payload) {
-      const loadingIndicator = document.getElementById("champion-loading");
-      if (loadingIndicator) {
-        loadingIndicator.style.display = "none";
-      }
-  
-      const championsGrid = document.getElementById("champions-grid");
-      if (!championsGrid) return;
-  
-      if (payload.error) {
-        championsGrid.innerHTML = `<div style="color: #ff6b6b; text-align: center; padding: 20px; font-family: 'Beaufort for LOL', serif;">${escapeHtml(payload.error)}</div>`;
-        return;
-      }
-  
-      const champions = payload.champions || [];
-      if (champions.length === 0) {
-        championsGrid.innerHTML = `<div style="color: #cdbe91; text-align: center; padding: 20px; font-family: 'Beaufort for LOL', serif;">No champions found. Please ensure League of Legends client is running.</div>`;
-        return;
-      }
-  
-      window.__roseAllChampions = champions;
-  
-      if (window.__roseChampionRenderer) {
-        window.__roseChampionRenderer(champions);
-      } else {
-        renderChampionsGrid(champions);
-      }
-    }
-  
-    function handleChampionSkinsResponse(payload) {
-      const loadingIndicator = document.getElementById("skin-loading");
-      if (loadingIndicator) {
-        loadingIndicator.style.display = "none";
-      }
-  
-      const skinsList = document.getElementById("skins-list");
-      if (!skinsList) return;
-  
-      if (payload.error) {
-        let skinsListContainer = skinsList.querySelector(".skins-list-container");
-        if (!skinsListContainer) {
-          skinsListContainer = document.createElement("div");
-          skinsListContainer.className = "skins-list-container";
-          skinsList.innerHTML = "";
-          skinsList.appendChild(skinsListContainer);
-        } else {
-          skinsListContainer.innerHTML = "";
-        }
-        skinsListContainer.innerHTML = `<div style="color: #ff6b6b; text-align: center; padding: 20px; font-family: 'Beaufort for LOL', serif;">${escapeHtml(payload.error)}</div>`;
-        return;
-      }
-  
-      const skins = payload.skins || [];
-      const championId = payload.championId;
-  
-      const header = document.getElementById("skin-selection-header");
-      if (header && payload.championName) {
-        const titleWrapper = header.querySelector(".dialog-title-wrapper");
-        if (titleWrapper) {
-          titleWrapper.textContent = `Select Skins & Chromas - ${payload.championName}`;
-        }
-      }
-  
-      let skinsListContainer = skinsList.querySelector(".skins-list-container");
-      if (!skinsListContainer) {
-        skinsListContainer = document.createElement("div");
-        skinsListContainer.className = "skins-list-container";
-        skinsList.innerHTML = "";
-        skinsList.appendChild(skinsListContainer);
-      } else {
-        skinsListContainer.innerHTML = "";
-      }
-  
-      if (skins.length === 0) {
-        skinsListContainer.innerHTML = `<div style="color: #cdbe91; text-align: center; padding: 20px; font-family: 'Beaufort for LOL', serif;">No skins found for this champion.</div>`;
-        return;
-      }
-  
-      const baseSkins = skins.filter((skin) => !skin.isChroma);
-      const chromasByBaseSkin = new Map();
-      skins.filter((skin) => skin.isChroma).forEach((chroma) => {
-        const baseSkinId = Number(chroma.baseSkinId);
-        if (!Number.isFinite(baseSkinId)) return;
-        if (!chromasByBaseSkin.has(baseSkinId)) {
-          chromasByBaseSkin.set(baseSkinId, []);
-        }
-        chromasByBaseSkin.get(baseSkinId).push(chroma);
-      });
-  
-      const getSkinId = (skin) => Number(skin.skinId || skin.id);
-      const getTilePath = (skin) => {
-        const skinId = getSkinId(skin);
-        return skin.tilePath || `/lol-game-data/assets/v1/champion-tiles/${skinId}.jpg`;
-      };
-  
-      baseSkins.forEach((skin) => {
-        const baseSkinId = getSkinId(skin);
-        const chromas = chromasByBaseSkin.get(baseSkinId) || [];
-        const card = document.createElement("div");
-        card.className = "skin-card";
-        card.dataset.baseSkinId = String(baseSkinId);
-  
-        const inner = document.createElement("div");
-        inner.className = "skin-card-inner";
-  
-        const front = document.createElement("div");
-        front.className = "skin-card-face skin-card-front";
-        front.dataset.targetSkinId = String(baseSkinId);
-        front.setAttribute("role", "button");
-        front.setAttribute("aria-pressed", "false");
-  
-        const img = document.createElement("img");
-        img.src = getTilePath(skin);
-        img.alt = skin.name || `Skin ${baseSkinId}`;
-        img.loading = "lazy";
-        img.onerror = function () { this.style.display = "none"; };
-        front.appendChild(img);
-  
-        const nameEl = document.createElement("div");
-        nameEl.className = "skin-name";
-        nameEl.textContent = skin.name || `Skin ${baseSkinId}`;
-        front.appendChild(nameEl);
-  
-        front.addEventListener("click", () => handleSkinSelection(championId, baseSkinId));
-  
-        if (chromas.length > 0) {
-          const chromaButton = document.createElement("button");
-          chromaButton.type = "button";
-          chromaButton.className = "skin-chroma-button";
-          chromaButton.textContent = `Chromas ${chromas.length}`;
-          chromaButton.setAttribute("aria-label", `Show ${chromas.length} chromas`);
-          chromaButton.addEventListener("click", (event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            card.classList.add("is-flipped");
-          });
-          front.appendChild(chromaButton);
-        }
-        inner.appendChild(front);
-  
-        if (chromas.length > 0) {
-          const back = document.createElement("div");
-          back.className = "skin-card-face skin-card-back";
-  
-          const backHeader = document.createElement("div");
-          backHeader.className = "skin-card-back-header";
-  
-          const backButton = document.createElement("button");
-          backButton.type = "button";
-          backButton.className = "skin-card-back-close";
-          backButton.textContent = "\u2039";
-          backButton.setAttribute("aria-label", "Back to skin");
-          backButton.addEventListener("click", (event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            card.classList.remove("is-flipped");
-          });
-          backHeader.appendChild(backButton);
-  
-          const backTitle = document.createElement("span");
-          backTitle.textContent = `${skin.name || "Skin"} - Chromas`;
-          backHeader.appendChild(backTitle);
-          back.appendChild(backHeader);
-  
-          const options = document.createElement("div");
-          options.className = "skin-card-back-options";
-          [skin, ...chromas].forEach((optionSkin, optionIndex) => {
-            const optionId = getSkinId(optionSkin);
-            const option = document.createElement("button");
-            option.type = "button";
-            option.className = "skin-option";
-            option.dataset.targetSkinId = String(optionId);
-            option.setAttribute("aria-pressed", "false");
-  
-            const optionImg = document.createElement("img");
-            optionImg.src = getTilePath(optionSkin);
-            optionImg.alt = optionSkin.name || `Skin ${optionId}`;
-            optionImg.loading = "lazy";
-            optionImg.onerror = function () { this.style.display = "none"; };
-            option.appendChild(optionImg);
-  
-            const optionName = document.createElement("span");
-            optionName.className = "skin-option-name";
-            optionName.textContent = optionIndex === 0
-              ? "Base skin"
-              : (optionSkin.name || `Chroma ${optionId}`);
-            option.appendChild(optionName);
-  
-            option.addEventListener("click", (event) => {
-              event.preventDefault();
-              event.stopPropagation();
-              handleSkinSelection(championId, optionId);
-            });
-            options.appendChild(option);
-          });
-          back.appendChild(options);
-          inner.appendChild(back);
-        }
-  
-        card.appendChild(inner);
-        skinsListContainer.appendChild(card);
-      });
-      updateSkinSelectionUI();
-    }
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init, { once: true });
+  else init();
 })();

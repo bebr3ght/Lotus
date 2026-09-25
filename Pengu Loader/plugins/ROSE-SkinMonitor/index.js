@@ -755,18 +755,16 @@ let isPanelRequested = false; // Флаг от спама запросов
 let panelRequestTimer = null; // Таймер сброса флага
 
 function isOverlayOpen() {
+    if (isGlobalMode) return false;
     const overlays =[
         'lol-perks-v2-editor',           
         'lol-perks-v2-main-view',        
         '.perks-editor-modal',           
-        'lol-uikit-full-page-modal',     
-        '.champion-customization-flyout',
-        'lol-uikit-dialog-frame',        
-        '.modal-root',
         '#rose-custom-wheel-panel-container',
         '#lu-chroma-panel-container',
         '#forms-wheel-panel-container',
-        '#rose-settings-panel'
+        '#rose-settings-panel',
+        'lol-uikit-full-page-modal'
     ];
 
     for (const selector of overlays) {
@@ -774,8 +772,6 @@ function isOverlayOpen() {
         if (el && (el.offsetWidth > 0 || el.offsetHeight > 0)) return true;
     }
     
-    const backdrop = document.querySelector('.lol-uikit-layer-manager-wrapper');
-    if (backdrop && backdrop.children.length > 1) return true;
 
     return false;
 }
