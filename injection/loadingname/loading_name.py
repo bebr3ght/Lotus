@@ -243,18 +243,22 @@ def build(game_dir: Path, mods_dir: Path, mod_folder: Path, skin_id: int, locali
                 continue
 
             for alias in aliases:
-                name_key = f"game_character_skin_displayname_{alias}_{skin_id % 1000}"
+                name = None
                 
-                # Приоритет отдаем переданному чистому имени базового скина
-                if clean_localized_name:
+                # Проверяем, что переданное имя не является просто именем самого чемпиона
+                is_just_champion_name = bool(clean_localized_name and (
+                    clean_localized_name.casefold() == alias.casefold()
+                ))
+
+                if clean_localized_name and not is_just_champion_name:
                     name = clean_localized_name
-                    log.info(f"[LOADNAME] Using provided localized name: '{name}'")
+                    log.info(f"[LOADNAME] Using provided localized skin name: '{name}'")
                 else:
-                    # Если его почему-то нет, только тогда лезем в файлы игры
+                    name_key = f"game_character_skin_displayname_{alias}_{skin_id % 1000}"
                     name = _text_of(table, _key_hash(name_key))
                     if name:
                         log.info(f"[LOADNAME] Found name in stringtable: '{name}'")
-                
+
                 if not name:
                     log.warning(f"[LOADNAME] Could not find name for {name_key} and no fallback provided")
                     continue

@@ -1611,16 +1611,6 @@ class MessageHandler:
                 "relative_path": str(selected_mod.path.relative_to(self.mod_storage.mods_root)).replace("\\", "/"),
             }
 
-            # === ИСПРАВЛЕНИЕ: МГНОВЕННОЕ СОХРАНЕНИЕ КАСТОМНОГО СКИНА В ИСТОРИЮ ===
-            try:
-                from utils.core.historic import write_historic_entry, write_historic_target
-                custom_mod_path = f"path:{self.shared_state.selected_custom_mod['relative_path']}"
-                write_historic_entry(int(champion_id), custom_mod_path)
-                write_historic_target(int(champion_id), int(skin_id))
-                log.debug(f"[HISTORIC] Custom skin mod saved immediately on selection: {custom_mod_path}")
-            except Exception as e:
-                log.debug(f"[HISTORIC] Failed to save custom skin mod on selection: {e}")
-            # =====================================================================
             
             # Disable HistoricMode if active (custom mod takes priority)
             if getattr(self.shared_state, 'historic_mode_active', False):

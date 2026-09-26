@@ -15,8 +15,6 @@ from lcu import LCU
 from state import SharedState
 from utils.core.issue_reporter import report_issue
 from utils.core.logging import get_logger, log_action
-from utils.core.junction import is_junction, safe_remove_entry, link_or_extract
-from utils.core.paths import get_injection_dir
 from utils.core.utilities import is_default_skin
 from injection.config.base_skin_tracker import start_tracking as _start_skin_tracking
 from injection.loadingname.loading_name import build as build_loading_name, parse_skin_id
@@ -47,6 +45,29 @@ class InjectionTrigger:
             return get_champion_id_from_skin_id(int(skin_id)) == int(champion_id)
         except (ValueError, TypeError):
             return True
+
+    def _resolve_skin_display_name(self, skin_id: Optional[int], champ_id: Optional[int], fallback_name: Optional[str] = None) -> Optional[str]:
+        """Resolve clean base skin name for loading screen, even if skin_id is a chroma or from auto-lock"""
+        if not skin_id or not champ_id:
+            return fallback_name
+
+        try:
+            if self.skin_scraper:
+                if not self.skin_scraper.cache.is_loaded_for_champion(champ_id):
+                    self.skin_scraper.scrape_champion_skins(champ_id)
+
+                base_skin_id = skin_id
+                chroma_id_map = getattr(self.skin_scraper.cache, "chroma_id_map", {})
+                if skin_id in chroma_id_map:
+                    base_skin_id = chroma_id_map[skin_id].get("skinId", skin_id)
+
+                skin_data = self.skin_scraper.cache.get_skin_by_id(base_skin_id)
+                if skin_data and skin_data.get("skinName"):
+                    return skin_data.get("skinName")
+        except Exception as e:
+            log.debug(f"[INJECT] Failed to resolve display name for skin {skin_id}: {e}")
+
+        return fallback_name
 
     def trigger_injection(self, name: str, ticker_id: int, cname: str = ""):
         if not name:
@@ -167,8 +188,8 @@ class InjectionTrigger:
                     if historic_custom_mod_path:
                         path_parts = historic_custom_mod_path.replace("\\", "/").split("/")
                         if len(path_parts) >= 2 and path_parts[0] == "skins":
-                            historic_skin_id = int(path_parts[1])
-                            if ui_skin_id and historic_skin_id != int(ui_skin_id):
+                            historic_skin_id_val = int(path_parts[1])
+                            if ui_skin_id and historic_skin_id_val != int(ui_skin_id):
                                 historic_custom_mod_path = None
                 except Exception:
                     historic_custom_mod_path = None
@@ -176,6 +197,7 @@ class InjectionTrigger:
             if not selected_custom_mod and historic_custom_mod_path:
                 try:
                     from injection.mods.storage import ModStorageService
+                    from pathlib import Path
                     mod_storage = ModStorageService()
                     path_parts = historic_custom_mod_path.replace("\\", "/").split("/")
                     if len(path_parts) >= 2 and path_parts[0] == "skins":
@@ -232,23 +254,30 @@ class InjectionTrigger:
 
             has_custom_skin_mod = bool(selected_custom_mod)
             target_skin_id = selected_custom_mod.get("skin_id", effective_skin_id or ui_skin_id) if selected_custom_mod else (effective_skin_id or ui_skin_id)
-            has_other_mods = selected_map_mod or selected_font_mod or selected_announcer_mod or (selected_other_mods and len(selected_other_mods) > 0)
+            has_other_mods = bool(selected_map_mod or selected_font_mod or selected_announcer_mod or (selected_other_mods and len(selected_other_mods) > 0))
             
+            # Получаем реальное чистое имя скина для Loading Screen (даже из истории/хромы)
+            resolved_loading_name = self._resolve_skin_display_name(
+                effective_skin_id, 
+                locked_champ_id, 
+                fallback_name=self.state.last_hovered_skin_key
+            )
+
             if has_custom_skin_mod:
                 is_skin_owned = target_skin_id in owned_skin_ids
                 if not is_skin_owned:
                     log.info(f"[INJECT] Custom mod selected for unowned skin {target_skin_id}, injecting base skin ZIP + custom mod")
-                    self._inject_custom_mod(selected_custom_mod, base_skin_name=name, champion_name=cname)
+                    self._inject_custom_mod(selected_custom_mod, base_skin_name=name, champion_name=cname, localized_name=resolved_loading_name)
                 else:
                     log.info(f"[INJECT] Custom mod selected for owned skin {target_skin_id}, injecting custom mod only")
-                    self._inject_custom_mod(selected_custom_mod)
+                    self._inject_custom_mod(selected_custom_mod, localized_name=resolved_loading_name)
                 return
             
             if has_other_mods and not has_custom_skin_mod:
                 target_skin_id = effective_skin_id or ui_skin_id
                 dummy_custom_mod = {
                     "skin_id": target_skin_id,
-                    "champion_id": self.state.locked_champ_id or self.state.hovered_champ_id,
+                    "champion_id": locked_champ_id,
                     "mod_name": name.upper(),
                     "mod_folder_name": None,
                 }
@@ -263,11 +292,9 @@ class InjectionTrigger:
                 elif is_skin_owned and not is_default:
                     self._force_owned_skin(target_skin_id)
                 
-                self._inject_custom_mod(dummy_custom_mod, base_skin_name=base_skin_name_for_injection, champion_name=cname)
+                self._inject_custom_mod(dummy_custom_mod, base_skin_name=base_skin_name_for_injection, champion_name=cname, localized_name=resolved_loading_name)
                 return
             
-            historic_active = getattr(self.state, 'historic_mode_active', False)
-            random_active = getattr(self.state, 'random_mode_active', False)
             is_default = effective_skin_id is not None and is_default_skin(effective_skin_id)
             if is_default and not historic_active and not random_active:
                 log.info(f"[INJECT] skipping injection for default skin (skinId={effective_skin_id}) - no mods selected")
@@ -281,8 +308,8 @@ class InjectionTrigger:
                     self.injection_manager.inject_skin_immediately(
                         name,
                         champion_name=cname,
-                        champion_id=self.state.locked_champ_id or self.state.hovered_champ_id,
-                        localized_name=self.state.last_hovered_skin_key,
+                        champion_id=locked_champ_id,
+                        localized_name=resolved_loading_name,
                     )
             elif (ui_skin_id in owned_skin_ids and ui_skin_id < effective_skin_id < ui_skin_id + 100 and not is_default):
                 self._force_owned_skin(effective_skin_id)
@@ -290,11 +317,11 @@ class InjectionTrigger:
                     self.injection_manager.inject_skin_immediately(
                         name,
                         champion_name=cname,
-                        champion_id=self.state.locked_champ_id or self.state.hovered_champ_id,
-                        localized_name=self.state.last_hovered_skin_key,
+                        champion_id=locked_champ_id,
+                        localized_name=resolved_loading_name,
                     )
             elif self.injection_manager:
-                self._inject_unowned_skin(name, cname)
+                self._inject_unowned_skin(name, cname, effective_skin_id=effective_skin_id, localized_name=resolved_loading_name)
         
         except Exception as e:
             log.warning(f"[loadout #{ticker_id}] injection setup failed: {e}")
@@ -334,8 +361,8 @@ class InjectionTrigger:
                     self.injection_manager.resume_if_suspended()
                 except Exception:
                     pass
-    
-    def _inject_unowned_skin(self, name: str, cname: str):
+
+    def _inject_unowned_skin(self, name: str, cname: str, effective_skin_id: Optional[int] = None, localized_name: Optional[str] = None):
         try:
             champ_id = self.state.locked_champ_id or self.state.hovered_champ_id
             if champ_id:
@@ -371,29 +398,18 @@ class InjectionTrigger:
             
             log.info(f"[INJECT] Starting injection: {name}")
             champ_id_for_history = self.state.locked_champ_id
-            
-            # Безопасно достаем ID скина из переданного name (например "chroma_12345" -> 12345)
-            current_id = None
-            try:
-                if name.startswith("skin_") or name.startswith("chroma_"):
-                    current_id = int(name.split("_", 1)[1])
-            except Exception:
-                pass
 
-            # Гарантированно получаем имя БАЗОВОГО скина для Loading Screen (без приписок хром)
-            localized_name = self.state.last_hovered_skin_key
-            
-            if current_id and self.skin_scraper and self.skin_scraper.cache:
-                base_skin_id_for_name = current_id
-                chroma_id_map = getattr(self.skin_scraper.cache, "chroma_id_map", {})
-                
-                if current_id in chroma_id_map:
-                    base_skin_id_for_name = chroma_id_map[current_id].get('skinId', current_id)
-                    
-                skin_data = self.skin_scraper.cache.get_skin_by_id(base_skin_id_for_name)
-                if skin_data and skin_data.get('skinName'):
-                    localized_name = skin_data.get('skinName')
-                    
+            current_id = effective_skin_id
+            if current_id is None:
+                try:
+                    if name.startswith("skin_") or name.startswith("chroma_"):
+                        current_id = int(name.split("_", 1)[1])
+                except Exception:
+                    pass
+
+            if not localized_name:
+                localized_name = self._resolve_skin_display_name(current_id, champ_id_for_history, self.state.last_hovered_skin_key)
+
             log.info(f"[INJECT] Localized name for Loading Screen: {localized_name}")
 
             def run_injection():
@@ -414,19 +430,15 @@ class InjectionTrigger:
                         self.state.random_skin_id = None
                         self.state.random_mode_active = False
 
-                    if success:
+                    # Сохранение в historic ТОЛЬКО после успешного инжекта
+                    if success and champ_id_for_history and current_id and not is_default_skin(current_id):
                         try:
-                            injected_id = None
-                            if isinstance(name, str) and '_' in name:
-                                parts = name.split('_', 1)
-                                if len(parts) == 2 and parts[1].isdigit():
-                                    injected_id = int(parts[1])
-                            champ_id = champ_id_for_history
-                            if champ_id is not None and injected_id is not None:
-                                from utils.core.historic import write_historic_entry
-                                write_historic_entry(int(champ_id), int(injected_id))
-                        except Exception:
-                            pass
+                            from utils.core.historic import write_historic_entry, clear_historic_target
+                            write_historic_entry(int(champ_id_for_history), int(current_id))
+                            clear_historic_target(int(champ_id_for_history))
+                            log.info(f"[HISTORIC] Saved historic skin {current_id} for champ {champ_id_for_history} after game injection")
+                        except Exception as e:
+                            log.debug(f"[HISTORIC] Failed to save historic in unowned injection: {e}")
                 except Exception as e:
                     log.error(f"[INJECT] injection thread error: {e}")
             
@@ -449,7 +461,6 @@ class InjectionTrigger:
             pass
         
         base_skin_set_successfully = False
-        t_force0 = time.perf_counter()
         
         try:
             sess = self.lcu.session or {}
@@ -477,7 +488,7 @@ class InjectionTrigger:
         except Exception as e:
             log.error(f"[INJECT] Error forcing base skin: {e}")
     
-    def _inject_custom_mod(self, custom_mod: dict, base_skin_name: Optional[str] = None, champion_name: str = ""):
+    def _inject_custom_mod(self, custom_mod: dict, base_skin_name: Optional[str] = None, champion_name: str = "", localized_name: Optional[str] = None):
         try:
             from pathlib import Path
             
@@ -489,6 +500,7 @@ class InjectionTrigger:
             mod_folder_name = custom_mod.get("mod_folder_name")
             mod_path = custom_mod.get("mod_path")
             champion_id = custom_mod.get("champion_id") or self.state.locked_champ_id
+            target_skin_id = custom_mod.get("skin_id")
             
             injector._clean_mods_dir()
             injector._clean_overlay_dir()
@@ -515,14 +527,13 @@ class InjectionTrigger:
                             mod_folder_names.append(base_mod_folder.name)
                             mod_names_list.append(f"Base Skin ({base_skin_name})")
                             
-                            # === ГЕНЕРАЦИЯ LOADING NAME ДЛЯ МОДОВ ===
                             try:
                                 loading_name_mod = build_loading_name(
                                     injector.game_dir,
                                     injector.mods_dir,
                                     base_mod_folder,
                                     parse_skin_id(base_skin_name, champion_id),
-                                    localized_name=self.state.last_hovered_skin_key,
+                                    localized_name=localized_name or custom_mod.get("display_name") or mod_name,
                                 )
                                 if loading_name_mod:
                                     mod_folder_names.append(loading_name_mod)
@@ -532,73 +543,58 @@ class InjectionTrigger:
                 except Exception as e:
                     log.error(f"[INJECT] Error extracting base skin ZIP: {e}")
 
-            # 2. Извлекаем кастомный скин
+            # 2. Извлекаем кастомный скин через надежный системный метод
             if mod_folder_name and mod_path:
-                try:
-                    mod_source = Path(mod_path)
-                    if mod_source.exists():
-                        extract_cache_dir = get_injection_dir() / ".extract_cache"
-                        mod_dest = injector.mods_dir / mod_folder_name
-                        if mod_dest.exists() or is_junction(mod_dest):
-                            safe_remove_entry(mod_dest)
-                        link_or_extract(mod_source, mod_dest, cache_dir=extract_cache_dir)
-                        if mod_dest.exists() or is_junction(mod_dest):
-                            mod_folder_names.append(mod_folder_name)
-                            mod_names_list.append(mod_name or "Custom Mod")
-                except Exception as e:
-                    log.error(f"[INJECT] Error re-extracting custom mod: {e}")
+                fld = self.injection_manager.prepare_custom_mod(custom_mod, "Custom Skin")
+                if fld:
+                    mod_folder_names.append(fld)
+                    mod_names_list.append(mod_name or "Custom Mod")
 
-            # 3. Дополнительные моды (карты, шрифты, аннонсеры)
-            def re_extract_mod(mod_dict, mod_type_name):
-                if not mod_dict or not mod_dict.get("mod_folder_name") or not mod_dict.get("mod_path"):
-                    return None
-                try:
-                    mod_source = Path(mod_dict["mod_path"])
-                    if not mod_source.exists():
-                        return None
-                    extract_cache_dir = get_injection_dir() / ".extract_cache"
-                    mod_dest = injector.mods_dir / mod_dict["mod_folder_name"]
-                    if mod_dest.exists() or is_junction(mod_dest):
-                        safe_remove_entry(mod_dest)
-                    link_or_extract(mod_source, mod_dest, cache_dir=extract_cache_dir)
-                    return mod_dict["mod_folder_name"]
-                except Exception:
-                    return None
-
-            selected_map_mod = getattr(self.state, 'selectf# Top-level modulesed_map_mod', None)
+            # 3. Дополнительные моды (карты, шрифты, аннонсеры) - используем prepare_custom_mod
+            selected_map_mod = getattr(self.state, 'selected_map_mod', None)
             if selected_map_mod:
-                folder = re_extract_mod(selected_map_mod, "Map")
+                folder = self.injection_manager.prepare_custom_mod(selected_map_mod, "Map")
                 if folder:
                     mod_folder_names.append(folder)
                     mod_names_list.append(selected_map_mod.get("mod_name", "Map"))
 
             selected_font_mod = getattr(self.state, 'selected_font_mod', None)
             if selected_font_mod:
-                folder = re_extract_mod(selected_font_mod, "Font")
+                folder = self.injection_manager.prepare_custom_mod(selected_font_mod, "Font")
                 if folder:
                     mod_folder_names.append(folder)
                     mod_names_list.append(selected_font_mod.get("mod_name", "Font"))
 
             selected_announcer_mod = getattr(self.state, 'selected_announcer_mod', None)
             if selected_announcer_mod:
-                folder = re_extract_mod(selected_announcer_mod, "Announcer")
+                folder = self.injection_manager.prepare_custom_mod(selected_announcer_mod, "Announcer")
                 if folder:
                     mod_folder_names.append(folder)
                     mod_names_list.append(selected_announcer_mod.get("mod_name", "Announcer"))
 
             selected_other_mods = getattr(self.state, 'selected_other_mods', None)
             if selected_other_mods:
-                for mod in selected_other_mods:
-                    folder = re_extract_mod(mod, "Other")
+                for o_mod in selected_other_mods:
+                    folder = self.injection_manager.prepare_custom_mod(o_mod, "Other")
                     if folder:
                         mod_folder_names.append(folder)
-                        mod_names_list.append(mod.get("mod_name", "Other"))
+                        mod_names_list.append(o_mod.get("mod_name", "Other"))
 
             if not mod_folder_names:
                 return
 
-            if champion_id and base_skin_name:
-                self._force_base_skin(champion_id * 1000)
+            # Гарантируем переключение скина в клиенте, чтобы моделька загрузилась
+            if champion_id:
+                if base_skin_name:
+                    self._force_base_skin(champion_id * 1000)
+                elif target_skin_id:
+                    owned_skin_ids = self.state.owned_skin_ids or set()
+                    if is_default_skin(target_skin_id):
+                        self._force_base_skin(target_skin_id)
+                    elif target_skin_id in owned_skin_ids:
+                        self._force_owned_skin(target_skin_id)
+                    else:
+                        self._force_base_skin(champion_id * 1000)
 
             has_been_in_progress = False
 
@@ -628,9 +624,24 @@ class InjectionTrigger:
             if self.injection_manager:
                 self.injection_manager._stop_monitor()
 
+            # Сохранение в historic ТОЛЬКО при успешном коде завершения (0)
             if result == 0:
                 log.info("=" * LOG_SEPARATOR_WIDTH)
                 log.info(f"CUSTOM MOD INJECTION COMPLETED >>> {' + '.join([m.upper() for m in mod_names_list])} <<<")
                 log.info("=" * LOG_SEPARATOR_WIDTH)
+
+                try:
+                    from utils.core.historic import write_historic_entry, write_historic_target
+                    if champion_id:
+                        if custom_mod.get("relative_path"):
+                            write_historic_entry(int(champion_id), f"path:{custom_mod['relative_path']}")
+                            if target_skin_id:
+                                write_historic_target(int(champion_id), int(target_skin_id))
+                            log.info(f"[HISTORIC] Saved custom mod to historic for champ {champion_id} after game injection")
+                        elif target_skin_id and not is_default_skin(target_skin_id):
+                            write_historic_entry(int(champion_id), int(target_skin_id))
+                            log.info(f"[HISTORIC] Saved skin {target_skin_id} to historic for champ {champion_id} after game injection")
+                except Exception as e:
+                    log.debug(f"[HISTORIC] Failed to save historic in _inject_custom_mod: {e}")
         except Exception as e:
             log.error(f"[INJECT] Error injecting custom mod: {e}")
