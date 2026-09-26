@@ -323,8 +323,9 @@ class SwiftplayHandler:
                         # Это происходит, если для чемпиона еще нет записи, ИЛИ если текущая запись - это базовый скин.
                         current_tracked_skin = self.state.swiftplay_skin_tracking.get(cid_int)
                         is_base_skin = (current_tracked_skin == cid_int * 1000)
+                        is_user_changed = cid_int in self._user_changed_since_inject
 
-                        if current_tracked_skin is None or is_base_skin:
+                        if current_tracked_skin is None or (is_base_skin and not is_user_changed):
                             try:
                                 from utils.core.historic import get_historic_skin_for_champion, is_custom_mod_path, get_custom_mod_path
                                 historic_val = get_historic_skin_for_champion(cid_int)
@@ -466,6 +467,14 @@ class SwiftplayHandler:
                 # Ensure Swiftplay flag and queue ID are cleared
                 self.state.is_swiftplay_mode = False
                 self.state.current_queue_id = None
+
+                # Уведомляем интерфейс о выходе из Swiftplay
+                ui_thread = getattr(self.state, "ui_skin_thread", None)
+                if ui_thread and hasattr(ui_thread, "broadcaster"):
+                    try:
+                        ui_thread.broadcaster.broadcast_swiftplay_state()
+                    except Exception:
+                        pass
 
             except Exception as e:
                 log.warning(f"[phase] Error while cleaning up Swiftplay state: {e}")
@@ -614,6 +623,32 @@ class SwiftplayHandler:
                                 base_mod_folder = self.injection_manager.injector._extract_zip_to_mod(zip_path)
                                 if base_mod_folder:
                                     extracted_mods.append(base_mod_folder.name)
+                                    
+                                    # Получаем локализованное имя скина для Swiftplay
+                                    skin_name_for_loadname = None
+                                    chroma_id_map = getattr(self.skin_scraper.cache, "chroma_id_map", {}) if self.skin_scraper and self.skin_scraper.cache else {}
+                                    if int(skin_id) in chroma_id_map:
+                                        skin_name_for_loadname = chroma_id_map[int(skin_id)].get('name')
+                                    else:
+                                        if self.skin_scraper and self.skin_scraper.cache:
+                                            skin_data = self.skin_scraper.cache.get_skin_by_id(int(skin_id))
+                                            if skin_data:
+                                                skin_name_for_loadname = skin_data.get('skinName')
+                                    
+                                    try:
+                                        from injection.loadingname.loading_name import build as build_loading_name, parse_skin_id
+                                        loading_name_mod = build_loading_name(
+                                            self.injection_manager.injector.game_dir,
+                                            self.injection_manager.injector.mods_dir,
+                                            base_mod_folder,
+                                            parse_skin_id(injection_name, champion_id),
+                                            localized_name=skin_name_for_loadname,
+                                        )
+                                        if loading_name_mod:
+                                            extracted_mods.append(loading_name_mod)
+                                            log.info(f"[Swiftplay] Added loading screen name mod: {loading_name_mod} (Name: {skin_name_for_loadname})")
+                                    except Exception as e:
+                                        log.error(f"[Swiftplay] Failed to build loading name mod: {e}", exc_info=True)
                         except Exception as e:
                             log.error(f"[phase] Error extracting skin {skin_id}: {e}")
     

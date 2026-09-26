@@ -147,6 +147,7 @@ class SkinInjector:
         champion_name: str = None,
         champion_id: int = None,
         extra_mods_callback: Optional[Callable[["SkinInjector"], List[str]]] = None,
+        localized_name: str = None,
     ) -> bool:
         """Inject a single skin (with optional chroma and party mods)
         
@@ -157,19 +158,22 @@ class SkinInjector:
             injection_manager: InjectionManager instance to call resume_game()
             chroma_id: Optional chroma ID to inject specific chroma variant
             extra_mods_callback: Optional callback(injector) -> list of extra mod folder names (e.g. party skins)
+            localized_name: Optional localized skin name for the loading screen
         """
         injection_start_time = time.time()
-        
-        # Game suspension is now handled entirely by the monitor in InjectionManager
-        # No need for a separate GameMonitor thread
-        
+
         # Find the skin ZIP (with chroma support)
-        # Extract base skin name (remove skin ID if present) for chroma path construction
         base_skin_name = skin_name
         if skin_name and skin_name.split()[-1].isdigit():
-            base_skin_name = ' '.join(skin_name.split()[:-1])
-        
-        zp = self._resolve_zip(skin_name, chroma_id=chroma_id, skin_name=base_skin_name, champion_name=champion_name, champion_id=champion_id)
+            base_skin_name = " ".join(skin_name.split()[:-1])
+
+        zp = self._resolve_zip(
+            skin_name,
+            chroma_id=chroma_id,
+            skin_name=base_skin_name,
+            champion_name=champion_name,
+            champion_id=champion_id,
+        )
         if not zp:
             log.error(f"[INJECT] Skin '{skin_name}' not found in {self.zips_dir}")
             report_issue(
@@ -179,38 +183,35 @@ class SkinInjector:
                 details={"skin": skin_name},
                 hint="Download the skin first, or check your skins folder.",
             )
-            avail_zip = list(self.zips_dir.rglob('*.zip'))
-            avail_fantome = list(self.zips_dir.rglob('*.fantome'))
-            avail_rse = list(self.zips_dir.rglob('*.rse'))
+            avail_zip = list(self.zips_dir.rglob("*.zip"))
+            avail_fantome = list(self.zips_dir.rglob("*.fantome"))
+            avail_rse = list(self.zips_dir.rglob("*.rse"))
             avail = avail_zip + avail_fantome + avail_rse
             if avail:
                 log.info("[INJECT] Available skins (first 10):")
                 for a in avail[:10]:
                     log.info(f"  - {a.name}")
             return False
-        
+
         log.debug(f"[INJECT] Using skin file: {zp}")
-        
-        # Clean mods and overlay directories, then extract new skin
+
         clean_start = time.time()
         self._clean_mods_dir()
         self._clean_overlay_dir()
         clean_duration = time.time() - clean_start
         log.debug(f"[INJECT] Directory cleanup took {clean_duration:.2f}s")
-        
+
         extract_start = time.time()
         mod_folder = self._extract_zip_to_mod(zp)
         extract_duration = time.time() - extract_start
         log.debug(f"[INJECT] ZIP extraction took {extract_duration:.2f}s")
-        
-        # Create list of mods to inject (our skin + optional party/extra mods)
+
         mod_names = [mod_folder.name]
 
-        # An injected skin runs as the champion's default one, so the loading screen prints the champion's name. This
-        # adds a mod that puts the skin's name there instead, built from the player's own game files (their language,
-        # their patch). It never fails the injection: without it the screen simply reads as it did before.
+        # An injected skin runs as the champion's default one, so the loading screen prints the champion's name.
+        # This adds a mod that puts the skin's name there instead, built from the player's own game files.
         loading_name_mod = build_loading_name(
-            self.game_dir, self.mods_dir, mod_folder, parse_skin_id(skin_name, champion_id)
+            self.game_dir, self.mods_dir, mod_folder, parse_skin_id(skin_name, champion_id), localized_name=localized_name
         )
         if loading_name_mod:
             mod_names.append(loading_name_mod)
@@ -224,28 +225,39 @@ class SkinInjector:
             except Exception as e:
                 log.warning(f"[INJECT] Extra mods callback failed: {e}")
 
-        # Create and run overlay
         result = self._mk_run_overlay(mod_names, timeout, stop_callback, injection_manager)
-        
-        # Get mkoverlay duration from stored timing data
-        mkoverlay_duration = self.last_injection_timing.get('mkoverlay_duration', 0.0) if self.last_injection_timing else 0.0
-        
+
+        mkoverlay_duration = (
+            self.last_injection_timing.get("mkoverlay_duration", 0.0)
+            if self.last_injection_timing
+            else 0.0
+        )
+
         total_duration = time.time() - injection_start_time
         runoverlay_duration = total_duration - clean_duration - extract_duration - mkoverlay_duration
-        
-        # Log timing breakdown
+
         if result == 0:
-            log.info(f"[INJECT] Completed in {total_duration:.2f}s (mkoverlay: {mkoverlay_duration:.2f}s, runoverlay: {runoverlay_duration:.2f}s)")
+            log.info(
+                f"[INJECT] Completed in {total_duration:.2f}s "
+                f"(mkoverlay: {mkoverlay_duration:.2f}s, runoverlay: {runoverlay_duration:.2f}s)"
+            )
         else:
-            log.warning(f"[INJECT] Failed - timeout or error after {total_duration:.2f}s (mkoverlay: {mkoverlay_duration:.2f}s)")
+            log.warning(
+                f"[INJECT] Failed - timeout or error after {total_duration:.2f}s "
+                f"(mkoverlay: {mkoverlay_duration:.2f}s)"
+            )
             report_issue(
                 "INJECTION_FAILED",
                 "warning",
                 "Injection failed.",
-                details={"total_s": f"{total_duration:.2f}", "mkoverlay_s": f"{mkoverlay_duration:.2f}", "skin": skin_name},
+                details={
+                    "total_s": f"{total_duration:.2f}",
+                    "mkoverlay_s": f"{mkoverlay_duration:.2f}",
+                    "skin": skin_name,
+                },
                 hint="Check Rose logs for details, then retry.",
             )
-        
+
         return result == 0
     
     def inject_mods_only(self, timeout: int = 60, stop_callback=None, injection_manager=None) -> bool:

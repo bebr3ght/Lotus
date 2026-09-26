@@ -203,23 +203,20 @@ class InjectionManager:
         # This prevents unnecessary suspension for base skins and owned skins
         pass
     
-    def inject_skin_immediately(self, skin_name: str, stop_callback=None, chroma_id: int = None, champion_name: str = None, champion_id: int = None) -> bool:
+    def inject_skin_immediately(self, skin_name: str, stop_callback=None, chroma_id: int = None, champion_name: str = None, champion_id: int = None, localized_name: str = None) -> bool:
         """Immediately inject a specific skin (with optional chroma)
         
         Args:
             skin_name: Name of skin to inject
             stop_callback: Callback to check if injection should stop
             chroma_id: Optional chroma ID for chroma variant
+            localized_name: Optional localized skin name for the loading screen
         """
-        # Check if this is a base skin (skin_0 or skin name ending with base/default indicators)
-        # If skin_name starts with "skin_" and the ID is 0 or matches base skin pattern, inject mods only
         if skin_name and skin_name.startswith("skin_"):
             try:
                 skin_id_str = skin_name.split("_")[1] if "_" in skin_name else None
                 if skin_id_str:
                     skin_id = int(skin_id_str)
-                    # Check if this is a base skin (skin ID 0 or champion's base skin ID like 36000 for champ 36)
-                    # Base skins typically have ID = champion_id * 1000
                     if skin_id == 0:
                         log.info("[INJECT] Base skin detected (skinId=0) - injection skipped")
                         report_issue(
@@ -229,37 +226,39 @@ class InjectionManager:
                             details={"skin": skin_name, "skin_id": 0},
                         )
                         return False
-                    # Check if it matches base skin pattern (champion_id * 1000)
                     if champion_id and skin_id == champion_id * 1000:
-                        log.info(f"[INJECT] Base skin detected (skinId={skin_id} for champion {champion_id}) - injection skipped")
+                        log.info(
+                            f"[INJECT] Base skin detected (skinId={skin_id} for champion {champion_id}) - injection skipped"
+                        )
                         report_issue(
                             "INJECTION_SKIPPED_BASE_SKIN",
                             "info",
                             "Injection skipped (base skin selected).",
-                            details={"skin": skin_name, "skin_id": skin_id, "champion_id": champion_id},
+                            details={
+                                "skin": skin_name,
+                                "skin_id": skin_id,
+                                "champion_id": champion_id,
+                            },
                         )
                         return False
             except (ValueError, IndexError):
-                pass  # Not a numeric skin ID, continue with normal injection
-        
+                pass
+    
         self._ensure_initialized()
         self.refresh_injection_threshold()
-        
-        # Don't attempt injection if system isn't properly initialized
+    
         if not self._initialized or self.injector is None or self.injector.game_dir is None:
             log.error("[INJECT] Cannot inject - League game directory not found")
             log.error("[INJECT] Please ensure League Client is running or manually set the path in config.ini")
             return False
-        
-        # Check if injection already in progress
+    
         if self._injection_in_progress:
             log.warning(f"[INJECT] Injection already in progress - skipping request for: {skin_name}")
             return False
-        
-        # Try to acquire lock with timeout to prevent indefinite blocking
+    
         lock_acquired = self.injection_lock.acquire(timeout=INJECTION_LOCK_TIMEOUT_S)
         if not lock_acquired:
-            log.warning(f"[INJECT] Could not acquire injection lock - another injection in progress")
+            log.warning("[INJECT] Could not acquire injection lock - another injection in progress")
             report_issue(
                 "INJECTION_LOCK_TIMEOUT",
                 "warning",
@@ -268,16 +267,19 @@ class InjectionManager:
                 hint="Try again in a few seconds.",
             )
             return False
-        
+    
         try:
             self._injection_in_progress = True
             log.debug(f"[INJECT] Injection started - lock acquired for: {skin_name}")
-
+    
             current_time = time.time()
             elapsed = current_time - self.last_injection_time
             if self.last_injection_time and elapsed < self.injection_threshold:
                 remaining = self.injection_threshold - elapsed
-                log.debug(f"[INJECT] Skipping immediate injection for '{skin_name}' (cooldown {remaining:.2f}s remaining)")
+                log.debug(
+                    f"[INJECT] Skipping immediate injection for '{skin_name}' "
+                    f"(cooldown {remaining:.2f}s remaining)"
+                )
                 report_issue(
                     "INJECTION_SKIPPED_COOLDOWN",
                     "info",
@@ -290,40 +292,31 @@ class InjectionManager:
                     hint="Wait a bit, or lower the Injection Cooldown/Threshold in Settings.",
                 )
                 return False
-
-            # Disconnect from UIA window when injection happens
-            # (launcher closes when game starts, so the window is gone)
+    
             if self.shared_state and self.shared_state.ui_skin_thread:
                 try:
                     self.shared_state.ui_skin_thread.force_disconnect()
                 except Exception as e:
                     log.debug(f"[INJECT] Failed to disconnect UIA: {e}")
-            
-            # Start monitor now (only when injection actually happens)
-            # Monitor runs in background and will suspend game if/when it finds it
-            # Injection proceeds immediately - suspension is optional and helps prevent file locks
+    
             if not self._monitor_active:
                 log.info("[INJECT] Starting game monitor for injection")
                 self._start_monitor()
-            
-            # Build optional callback to add party member skins to injection
+    
             extra_mods_callback = None
             if self.shared_state:
                 party_manager = getattr(self.shared_state, "party_manager", None)
                 if party_manager and getattr(party_manager, "enabled", False):
                     try:
                         from party.integration.injection_hook import PartyInjectionHook
-                        party_hook = PartyInjectionHook(
-                            party_manager, self.shared_state, self
-                        )
+                        party_hook = PartyInjectionHook(party_manager, self.shared_state, self)
                         if party_hook.is_enabled():
                             extra_mods_callback = lambda inj: party_hook.prepare_party_mods(inj)
                     except Exception as e:
                         log.debug(f"[INJECT] Party injection hook not used: {e}")
-
+    
             timeout_val = int(self._get_monitor_auto_resume_timeout())
-            
-            # Pass the manager instance so injector can call resume_game()
+    
             success = self.injector.inject_skin(
                 skin_name,
                 timeout=timeout_val,
@@ -333,20 +326,18 @@ class InjectionManager:
                 champion_name=champion_name,
                 champion_id=champion_id,
                 extra_mods_callback=extra_mods_callback,
+                localized_name=localized_name,
             )
-            
+    
             if success:
                 self.last_skin_name = skin_name
                 self.last_injection_time = current_time
-            
+    
             return success
         finally:
             self._injection_in_progress = False
             self.injection_lock.release()
-            log.debug(f"[INJECT] Injection completed - lock released")
-            
-            # Stop monitor after injection completes (this will resume game if still suspended)
-            # Note: Monitor may have already stopped if game ended, but that's fine
+            log.debug("[INJECT] Injection completed - lock released")
             self._stop_monitor()
     
     def inject_skin_for_testing(self, skin_name: str) -> bool:

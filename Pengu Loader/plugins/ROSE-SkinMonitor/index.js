@@ -11,12 +11,13 @@ const LOG_PREFIX = "[SkinMonitor]";
 const STATE_EVENT = "lu-skin-monitor-state";
 const SKIN_SELECTORS = [
   ".skin-name-text", // Classic Champ Select
-  ".skin-name", // Swiftplay lobby
+  ".skin-name",      // Swiftplay lobby
 ];
 const POLL_INTERVAL_MS = 250;
 const RETRY_BASE_MS = 1000;
 const RETRY_MAX_MS = 30000;
-let BRIDGE_PORT = 50000; // Default, will be updated from /bridge-port endpoint
+
+let BRIDGE_PORT = 50000;
 let BRIDGE_URL = `ws://127.0.0.1:${BRIDGE_PORT}`;
 const BRIDGE_PORT_STORAGE_KEY = "rose_bridge_port";
 const DISCOVERY_START_PORT = 50000;
@@ -24,15 +25,13 @@ const DISCOVERY_END_PORT = 50010;
 
 async function loadBridgePort() {
   try {
-    // First, check localStorage for cached port
     const cachedPort = localStorage.getItem(BRIDGE_PORT_STORAGE_KEY);
     if (cachedPort) {
       const port = parseInt(cachedPort, 10);
       if (!isNaN(port) && port > 0) {
-        // Verify cached port is still valid with shorter timeout
         try {
           const response = await fetch(`http://127.0.0.1:${port}/bridge-port`, {
-            signal: AbortSignal.timeout(50)
+            signal: AbortSignal.timeout(50),
           });
           if (response.ok) {
             const portText = await response.text();
@@ -45,16 +44,14 @@ async function loadBridgePort() {
             }
           }
         } catch (e) {
-          // Cached port invalid, continue to discovery
           localStorage.removeItem(BRIDGE_PORT_STORAGE_KEY);
         }
       }
     }
 
-    // OPTIMIZATION: Try default port 50000 FIRST before scanning all ports
     try {
       const response = await fetch(`http://127.0.0.1:50000/bridge-port`, {
-        signal: AbortSignal.timeout(50)
+        signal: AbortSignal.timeout(50),
       });
       if (response.ok) {
         const portText = await response.text();
@@ -67,14 +64,11 @@ async function loadBridgePort() {
           return true;
         }
       }
-    } catch (e) {
-      // Port 50000 not ready, continue to discovery
-    }
+    } catch (e) {}
 
-    // OPTIMIZATION: Try fallback port 50001 SECOND
     try {
       const response = await fetch(`http://127.0.0.1:50001/bridge-port`, {
-        signal: AbortSignal.timeout(50)
+        signal: AbortSignal.timeout(50),
       });
       if (response.ok) {
         const portText = await response.text();
@@ -87,25 +81,17 @@ async function loadBridgePort() {
           return true;
         }
       }
-    } catch (e) {
-      // Port 50001 not ready, continue to discovery
-    }
+    } catch (e) {}
 
-    // OPTIMIZATION: Parallel port discovery instead of sequential
-    // Try all ports at once, return as soon as one succeeds
     const portPromises = [];
     for (let port = DISCOVERY_START_PORT; port <= DISCOVERY_END_PORT; port++) {
       portPromises.push(
-        fetch(`http://127.0.0.1:${port}/bridge-port`, {
-          signal: AbortSignal.timeout(100)
-        })
-          .then(response => {
+        fetch(`http://127.0.0.1:${port}/bridge-port`, { signal: AbortSignal.timeout(100) })
+          .then((response) => {
             if (response.ok) {
-              return response.text().then(portText => {
+              return response.text().then((portText) => {
                 const fetchedPort = parseInt(portText.trim(), 10);
-                if (!isNaN(fetchedPort) && fetchedPort > 0) {
-                  return { port: fetchedPort, sourcePort: port };
-                }
+                if (!isNaN(fetchedPort) && fetchedPort > 0) return { port: fetchedPort, sourcePort: port };
                 return null;
               });
             }
@@ -114,49 +100,13 @@ async function loadBridgePort() {
           .catch(() => null)
       );
     }
-
-    // Wait for first successful response
     const results = await Promise.allSettled(portPromises);
     for (const result of results) {
-      if (result.status === 'fulfilled' && result.value) {
+      if (result.status === "fulfilled" && result.value) {
         BRIDGE_PORT = result.value.port;
         BRIDGE_URL = `ws://127.0.0.1:${BRIDGE_PORT}`;
         localStorage.setItem(BRIDGE_PORT_STORAGE_KEY, String(BRIDGE_PORT));
         console.log(`${LOG_PREFIX} Loaded bridge port: ${BRIDGE_PORT}`);
-        return true;
-      }
-    }
-
-    // Fallback: try old /port endpoint (parallel as well)
-    const legacyPromises = [];
-    for (let port = DISCOVERY_START_PORT; port <= DISCOVERY_END_PORT; port++) {
-      legacyPromises.push(
-        fetch(`http://127.0.0.1:${port}/port`, {
-          signal: AbortSignal.timeout(100)
-        })
-          .then(response => {
-            if (response.ok) {
-              return response.text().then(portText => {
-                const fetchedPort = parseInt(portText.trim(), 10);
-                if (!isNaN(fetchedPort) && fetchedPort > 0) {
-                  return { port: fetchedPort, sourcePort: port };
-                }
-                return null;
-              });
-            }
-            return null;
-          })
-          .catch(() => null)
-      );
-    }
-
-    const legacyResults = await Promise.allSettled(legacyPromises);
-    for (const result of legacyResults) {
-      if (result.status === 'fulfilled' && result.value) {
-        BRIDGE_PORT = result.value.port;
-        BRIDGE_URL = `ws://127.0.0.1:${BRIDGE_PORT}`;
-        localStorage.setItem(BRIDGE_PORT_STORAGE_KEY, String(BRIDGE_PORT));
-        console.log(`${LOG_PREFIX} Loaded bridge port (legacy): ${BRIDGE_PORT}`);
         return true;
       }
     }
@@ -181,59 +131,45 @@ let retryTimer = null;
 let stopped = false;
 let retryDelay = RETRY_BASE_MS;
 
-// --- Bridge subscription infrastructure ---
-const _subscribers = new Map(); // type -> Set<callback>
+const _subscribers = new Map();
 const _readyCallbacks = new Set();
 
 function subscribe(type, cb) {
   if (!_subscribers.has(type)) _subscribers.set(type, new Set());
   _subscribers.get(type).add(cb);
 }
-
 function unsubscribe(type, cb) {
   const subs = _subscribers.get(type);
   if (subs) subs.delete(cb);
 }
-
 function onReady(cb) {
   _readyCallbacks.add(cb);
   if (bridgeReady) cb();
 }
-
 function _notifySubscribers(data) {
   if (!data || !data.type) return;
   const subs = _subscribers.get(data.type);
   if (!subs) return;
   for (const cb of subs) {
-    try { cb(data); } catch (e) {
-      console.warn(`${LOG_PREFIX} Subscriber error for "${data.type}":`, e);
-    }
+    try { cb(data); } catch (e) { console.warn(`${LOG_PREFIX} Subscriber error for "${data.type}":`, e); }
   }
 }
-
 function _notifyReady() {
   for (const cb of _readyCallbacks) {
-    try { cb(); } catch (e) {
-      console.warn(`${LOG_PREFIX} onReady callback error:`, e);
-    }
+    try { cb(); } catch (e) { console.warn(`${LOG_PREFIX} onReady callback error:`, e); }
   }
 }
 
 function sanitizeSkinName(name) {
-  // Keep the raw UI name intact.
-  // Any matching/normalization (including chroma suffix handling) should happen server-side.
   return String(name || "").trim();
 }
 
 function resyncSkinAfterConnect() {
   try {
-    // On reconnect, backend may have missed the last hover (or hover happened before lock).
-    // Send a best-effort snapshot immediately so injection doesn't depend on a new hover.
     const current = readCurrentSkin();
     const name = current || lastLoggedSkin || null;
     if (!name) return;
 
-    // Match logHover() sanitization
     const cleanName = sanitizeSkinName(name);
     if (!cleanName) return;
 
@@ -243,43 +179,32 @@ function resyncSkinAfterConnect() {
       originalName: name,
       timestamp: Date.now(),
     });
-  } catch {
-    // ignore
-  }
+  } catch {}
 }
 
 function publishSkinState(payload) {
-  // Use payload name, fallback to lastLoggedSkin if available (improves reliability if backend doesn't echo name)
   const name = payload?.skinName || lastLoggedSkin || null;
 
   const detail = {
     name: name,
     skinId: Number.isFinite(payload?.skinId) ? payload.skinId : null,
-    championId: Number.isFinite(payload?.championId)
-      ? payload.championId
-      : null,
+    championId: Number.isFinite(payload?.championId) ? payload.championId : null,
     hasChromas: Boolean(payload?.hasChromas),
     updatedAt: Date.now(),
   };
   window.__roseSkinState = detail;
   try {
     window.__roseCurrentSkin = detail.name;
-    // Update lastLoggedSkin to match ensuring consistency if payload brought a new name
     if (name) lastLoggedSkin = name;
-  } catch {
-    // ignore
-  }
+  } catch {}
   window.dispatchEvent(new CustomEvent(STATE_EVENT, { detail }));
 }
 
 function logHover(skinName) {
-  // Sanitize skin name (currently: keep raw text, only trim).
   const cleanName = sanitizeSkinName(skinName);
-
   if (cleanName !== skinName) {
     console.log(`${LOG_PREFIX} Sanitized skin name: '${skinName}' -> '${cleanName}'`);
   }
-
   console.log(`${LOG_PREFIX} Hovered skin: ${cleanName}`);
   sendBridgePayload({ skin: cleanName, originalName: skinName, timestamp: Date.now() });
 }
@@ -293,28 +218,20 @@ function sendBridgePayload(obj) {
   }
 }
 
-// window.__roseBridge is exposed in start() after port discovery completes,
-// so that consumer plugins' waitForBridge() won't resolve until the port is known.
 if (typeof window !== "undefined") {
-  window.__roseBridgeEmit = sendBridgePayload; // backward compat (available early)
+  window.__roseBridgeEmit = sendBridgePayload;
 }
 
 function sendToBridge(payload) {
-  if (
-    !bridgeSocket ||
-    bridgeSocket.readyState === WebSocket.CLOSING ||
-    bridgeSocket.readyState === WebSocket.CLOSED
-  ) {
+  if (!bridgeSocket || bridgeSocket.readyState === WebSocket.CLOSING || bridgeSocket.readyState === WebSocket.CLOSED) {
     bridgeQueue.push(payload);
     setupBridgeSocket();
     return;
   }
-
   if (bridgeSocket.readyState === WebSocket.CONNECTING) {
     bridgeQueue.push(payload);
     return;
   }
-
   try {
     bridgeSocket.send(payload);
   } catch (error) {
@@ -325,17 +242,8 @@ function sendToBridge(payload) {
 }
 
 function setupBridgeSocket() {
-  if (stopped) {
-    return;
-  }
-
-  if (
-    bridgeSocket &&
-    (bridgeSocket.readyState === WebSocket.OPEN ||
-      bridgeSocket.readyState === WebSocket.CONNECTING)
-  ) {
-    return;
-  }
+  if (stopped) return;
+  if (bridgeSocket && (bridgeSocket.readyState === WebSocket.OPEN || bridgeSocket.readyState === WebSocket.CONNECTING)) return;
 
   try {
     bridgeSocket = new WebSocket(BRIDGE_URL);
@@ -351,10 +259,7 @@ function setupBridgeSocket() {
   bridgeSocket.addEventListener("open", () => {
     bridgeReady = true;
     retryDelay = RETRY_BASE_MS;
-    if (retryTimer) {
-      clearTimeout(retryTimer);
-      retryTimer = null;
-    }
+    if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
     flushBridgeQueue();
     resyncSkinAfterConnect();
     bridgeErrorLogged = false;
@@ -365,76 +270,49 @@ function setupBridgeSocket() {
 
   bridgeSocket.addEventListener("message", (event) => {
     let data = null;
-    try {
-      data = JSON.parse(event.data);
-    } catch (error) {
-      console.log(`${LOG_PREFIX} Bridge message: ${event.data}`);
-      return;
-    }
+    try { data = JSON.parse(event.data); }
+    catch (error) { console.log(`${LOG_PREFIX} Bridge message: ${event.data}`); return; }
 
-    // Notify all bridge subscribers
     _notifySubscribers(data);
 
     if (data && data.type === "skin-state") {
       publishSkinState(data);
       return;
     }
-
     if (data && data.type === "skin-mods-response") {
-      window.dispatchEvent(
-        new CustomEvent("rose-custom-wheel-skin-mods", { detail: data })
-      );
+      window.dispatchEvent(new CustomEvent("rose-custom-wheel-skin-mods", { detail: data }));
       return;
     }
-
     if (data && data.type === "maps-response") {
-      window.dispatchEvent(
-        new CustomEvent("rose-custom-wheel-maps", { detail: data })
-      );
+      window.dispatchEvent(new CustomEvent("rose-custom-wheel-maps", { detail: data }));
       return;
     }
-
     if (data && data.type === "fonts-response") {
-      window.dispatchEvent(
-        new CustomEvent("rose-custom-wheel-fonts", { detail: data })
-      );
+      window.dispatchEvent(new CustomEvent("rose-custom-wheel-fonts", { detail: data }));
       return;
     }
-
     if (data && data.type === "announcers-response") {
-      window.dispatchEvent(
-        new CustomEvent("rose-custom-wheel-announcers", { detail: data })
-      );
+      window.dispatchEvent(new CustomEvent("rose-custom-wheel-announcers", { detail: data }));
       return;
     }
-
     if (data && data.type === "category-mods-response") {
-      window.dispatchEvent(
-        new CustomEvent("rose-custom-wheel-category-mods", { detail: data })
-      );
+      window.dispatchEvent(new CustomEvent("rose-custom-wheel-category-mods", { detail: data }));
       return;
     }
-
     if (data && data.type === "others-response") {
-      window.dispatchEvent(
-        new CustomEvent("rose-custom-wheel-others", { detail: data })
-      );
+      window.dispatchEvent(new CustomEvent("rose-custom-wheel-others", { detail: data }));
       return;
     }
 
-    // Reset skin state when entering Lobby phase (so same skin in next game triggers detection)
     if (data && data.type === "champion-locked") {
       if (data.locked === false) {
         lastLoggedSkin = null;
         window.__roseSkinState = null;
         window.__roseCurrentSkin = null;
       }
-      window.dispatchEvent(
-        new CustomEvent("rose-custom-wheel-champion-locked", { detail: data })
-      );
+      window.dispatchEvent(new CustomEvent("rose-custom-wheel-champion-locked", { detail: data }));
       return;
     }
-
     if (data && data.type === "phase-change" && data.phase === "Lobby") {
       lastLoggedSkin = null;
       window.__roseSkinState = null;
@@ -447,31 +325,20 @@ function setupBridgeSocket() {
     console.log(`${LOG_PREFIX} Bridge message: ${event.data}`);
   });
 
-  bridgeSocket.addEventListener("close", () => {
-    bridgeReady = false;
-    scheduleBridgeRetry();
-  });
-
+  bridgeSocket.addEventListener("close", () => { bridgeReady = false; scheduleBridgeRetry(); });
   bridgeSocket.addEventListener("error", (error) => {
-    if (!bridgeErrorLogged) {
-      console.warn(`${LOG_PREFIX} Bridge socket error`, error);
-      bridgeErrorLogged = true;
-    }
+    if (!bridgeErrorLogged) { console.warn(`${LOG_PREFIX} Bridge socket error`, error); bridgeErrorLogged = true; }
     bridgeReady = false;
     scheduleBridgeRetry();
   });
 }
 
 function flushBridgeQueue() {
-  if (!bridgeSocket || bridgeSocket.readyState !== WebSocket.OPEN) {
-    return;
-  }
-
+  if (!bridgeSocket || bridgeSocket.readyState !== WebSocket.OPEN) return;
   while (bridgeQueue.length) {
     const payload = bridgeQueue.shift();
-    try {
-      bridgeSocket.send(payload);
-    } catch (error) {
+    try { bridgeSocket.send(payload); }
+    catch (error) {
       console.warn(`${LOG_PREFIX} Bridge flush failed`, error);
       bridgeQueue.unshift(payload);
       resetBridgeSocket();
@@ -481,112 +348,64 @@ function flushBridgeQueue() {
 }
 
 function scheduleBridgeRetry() {
-  if (bridgeReady || stopped) {
-    return;
-  }
-
-  if (retryTimer) {
-    return;
-  }
-
-  retryTimer = setTimeout(() => {
-    retryTimer = null;
-    setupBridgeSocket();
-  }, retryDelay);
+  if (bridgeReady || stopped) return;
+  if (retryTimer) return;
+  retryTimer = setTimeout(() => { retryTimer = null; setupBridgeSocket(); }, retryDelay);
   retryDelay = Math.min(retryDelay * 2, RETRY_MAX_MS);
 }
 
 function resetBridgeSocket() {
   if (bridgeSocket) {
-    try {
-      bridgeSocket.close();
-    } catch (error) {
-      console.warn(`${LOG_PREFIX} Bridge socket close failed`, error);
-    }
+    try { bridgeSocket.close(); }
+    catch (error) { console.warn(`${LOG_PREFIX} Bridge socket close failed`, error); }
   }
-
   bridgeSocket = null;
   bridgeReady = false;
 }
 
 function isVisible(element) {
-  if (typeof element.offsetParent === "undefined") {
-    return true;
-  }
+  if (typeof element.offsetParent === "undefined") return true;
   return element.offsetParent !== null;
 }
 
 function readCurrentSkin() {
   for (const selector of SKIN_SELECTORS) {
     const nodes = document.querySelectorAll(selector);
-    if (!nodes.length) {
-      continue;
-    }
+    if (!nodes.length) continue;
 
     let candidate = null;
-
     nodes.forEach((node) => {
       const name = node.textContent.trim();
-      if (!name) {
-        return;
-      }
-
-      if (isVisible(node)) {
-        candidate = name;
-      } else if (!candidate) {
-        candidate = name;
-      }
+      if (!name) return;
+      if (isVisible(node)) candidate = name;
+      else if (!candidate) candidate = name;
     });
-
-    if (candidate) {
-      return candidate;
-    }
+    if (candidate) return candidate;
   }
-
   return null;
 }
 
 function reportSkinIfChanged() {
   const name = readCurrentSkin();
-  if (!name || name === lastLoggedSkin) {
-    return;
-  }
-
+  if (!name || name === lastLoggedSkin) return;
   lastLoggedSkin = name;
   logHover(name);
 }
 
 function attachObservers() {
-  if (observer) {
-    observer.disconnect();
-  }
-
+  if (observer) observer.disconnect();
   observer = new MutationObserver(reportSkinIfChanged);
   observer.observe(document.body, { childList: true, subtree: true });
 
   document.querySelectorAll("*").forEach((node) => {
-    if (!node.shadowRoot || !(node.shadowRoot instanceof Node)) {
-      return;
-    }
-
-    try {
-      observer.observe(node.shadowRoot, { childList: true, subtree: true });
-    } catch (error) {
-      console.warn(`${LOG_PREFIX} Cannot observe shadowRoot`, error);
-    }
+    if (!node.shadowRoot || !(node.shadowRoot instanceof Node)) return;
+    try { observer.observe(node.shadowRoot, { childList: true, subtree: true }); }
+    catch (error) { console.warn(`${LOG_PREFIX} Cannot observe shadowRoot`, error); }
   });
 
-  if (!pollTimer) {
-    pollTimer = setInterval(reportSkinIfChanged, POLL_INTERVAL_MS);
-  }
+  if (!pollTimer) pollTimer = setInterval(reportSkinIfChanged, POLL_INTERVAL_MS);
 }
 
-// Only phase where monitoring must stop.  During `InProgress` the League game
-// process is actively rendering and the LeagueClientUxRender process is
-// backgrounded — running the 250ms poll + MutationObserver there steals CPU
-// from the game.  In every other phase (Lobby/Matchmaking/ReadyCheck/
-// ChampSelect/FINALIZATION/EndOfGame/...) we keep monitoring so Swiftplay
-// skin selection in the Lobby phase still works.  See GitHub issue #22.
 let monitoring = false;
 
 function startMonitoring() {
@@ -601,25 +420,16 @@ function stopMonitoring() {
   if (!monitoring) return;
   monitoring = false;
   console.log(`${LOG_PREFIX} Stopping skin monitoring (out-of-game phase)`);
-  if (observer) {
-    observer.disconnect();
-    observer = null;
-  }
-  if (pollTimer) {
-    clearInterval(pollTimer);
-    pollTimer = null;
-  }
+  if (observer) { observer.disconnect(); observer = null; }
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
   lastLoggedSkin = null;
 }
 
 function handlePhaseChange(data) {
   const phase = data && data.phase;
   if (!phase) return;
-  if (phase === "InProgress") {
-    stopMonitoring();
-  } else {
-    startMonitoring();
-  }
+  if (phase === "InProgress") stopMonitoring();
+  else startMonitoring();
 }
 
 function installFindMatchObserver() {
@@ -640,185 +450,276 @@ function installFindMatchObserver() {
 }
 
 // ====== SWIFTPLAY SMART PANEL (FULL TEXT & STABLE HIDE) ======
+let isSmartPanelOpen = false; // По умолчанию скрыта!
+
 function updateSwiftplaySmartPanel(data) {
-    let panel = document.getElementById('rose-swiftplay-smart-panel');
-    
-    // ПРОВЕРКА: Видны ли баннеры игроков? (Это признак того, что мы ВНУТРИ лобби, а не в меню выбора)
-    const lobbyBanners = document.querySelector('.v2-banner-component.local-player');
-    const isVisibleInDOM = lobbyBanners && lobbyBanners.offsetParent !== null;
-    
-    // Если мы не в лобби или данных нет - прячем мгновенно
-    if (!data.active || !isVisibleInDOM || !data.skins || data.skins.length === 0) {
-        if (panel) panel.style.display = 'none';
+  let panel = document.getElementById('rose-swiftplay-smart-panel');
+  
+  const inLobby = isActuallyInLobby();
+  const overlayActive = isOverlayOpen();
+  
+  if (!data.active || !inLobby || overlayActive || !data.skins || data.skins.length === 0) {
+      if (panel) panel.style.display = 'none';
+      return;
+  }
+
+  if (!panel) {
+      panel = document.createElement('div');
+      panel.id = 'rose-swiftplay-smart-panel';
+      panel.innerHTML = `
+          <div class="rsp-header">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#c8aa6e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+              <span>Swiftplay Locks</span>
+          </div>
+          <div class="rsp-body" id="rsp-skins-container"></div>
+      `;
+      document.body.appendChild(panel);
+      
+      const style = document.createElement('style');
+      style.textContent = `
+          #rose-swiftplay-smart-panel {
+              position: fixed;
+              bottom: 100px;
+              left: 30px;
+              background: rgba(1, 10, 19, 0.98);
+              border: 1px solid #463714;
+              border-top: 2px solid #c8aa6e;
+              padding: 12px;
+              z-index: 1000;
+              display: flex;
+              flex-direction: column;
+              gap: 10px;
+              box-shadow: 0 8px 16px rgba(0,0,0,0.8);
+              min-width: 260px;
+              max-width: 450px;
+              pointer-events: none;
+          }
+          .rsp-header {
+              color: #c8aa6e;
+              font-size: 11px;
+              font-weight: bold;
+              text-transform: uppercase;
+              letter-spacing: 1px;
+              display: flex;
+              align-items: center; gap: 8px;
+              margin-bottom: 4px;
+              border-bottom: 1px solid rgba(200, 170, 110, 0.2);
+              padding-bottom: 6px;
+          }
+          .rsp-item { display: flex; align-items: flex-start; gap: 12px; margin: 4px 0; }
+          .rsp-icon { width: 34px; height: 34px; border-radius: 50%; border: 1px solid #785a28; flex-shrink: 0; }
+          .rsp-text { display: flex; flex-direction: column; min-width: 0; }
+          .rsp-champ { color: #a09b8c; font-size: 9px; text-transform: uppercase; font-weight: bold; }
+          .rsp-skin { 
+              color: #f0e6d2; 
+              font-size: 13px; 
+              font-weight: bold; 
+              line-height: 1.2;
+              white-space: normal; 
+              word-wrap: break-word; 
+              overflow: visible; 
+              text-overflow: clip; 
+          }
+      `;
+      document.head.appendChild(style);
+  }
+
+  const container = document.getElementById('rsp-skins-container');
+  container.innerHTML = data.skins.map(skin => {
+      const ownedBadge = skin.isOwned 
+          ? `<span style="color: #0acbe6; font-size: 10px; margin-left: 6px; text-shadow: 0 0 4px rgba(10, 203, 230, 0.5); vertical-align: baseline;">✔ OWNED</span>` 
+          : '';
+      const borderColor = skin.isOwned ? '#0acbe6' : '#785a28';
+      const opacity = skin.isOwned ? '0.85' : '1';
+      
+      return `
+          <div class="rsp-item" style="opacity: ${opacity};">
+              <img class="rsp-icon" src="/lol-game-data/assets/v1/champion-icons/${skin.championId}.png" style="border-color: ${borderColor};">
+              <div class="rsp-text">
+                  <span class="rsp-champ">${skin.championName}</span>
+                  <span class="rsp-skin">${skin.skinName}${ownedBadge}</span>
+              </div>
+          </div>
+      `;
+  }).join('');
+  
+  if (!isOverlayOpen() && isSmartPanelOpen) {
+      panel.style.display = 'flex';
+  } else {
+      panel.style.display = 'none';
+  }
+}
+
+// ====== КНОПКА ПЕРЕКЛЮЧАТЕЛЯ ======
+function ensurePanelToggleButton() {
+    const inLobby = isActuallyInLobby();
+    const overlayActive = isOverlayOpen();
+    let btn = document.getElementById('rose-smart-panel-toggle');
+
+    // При выходе из лобби уничтожаем кнопку
+    if (!inLobby) {
+        if (btn) btn.remove();
         return;
     }
 
-    if (!panel) {
-        panel = document.createElement('div');
-        panel.id = 'rose-swiftplay-smart-panel';
-        panel.innerHTML = `
-            <div class="rsp-header">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#c8aa6e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
-                <span>Swiftplay Locks</span>
-            </div>
-            <div class="rsp-body" id="rsp-skins-container"></div>
-        `;
-        document.body.appendChild(panel);
+    if (!btn) {
+        btn = document.createElement('div');
+        btn.id = 'rose-smart-panel-toggle';
+        btn.title = 'Swiftplay Locks';
+        btn.innerHTML = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"></line><line x1="8" y1="12" x2="21" y2="12"></line><line x1="8" y1="18" x2="21" y2="18"></line><line x1="3" y1="6" x2="3.01" y2="6"></line><line x1="3" y1="12" x2="3.01" y2="12"></line><line x1="3" y1="18" x2="3.01" y2="18"></line></svg>`;
         
-        const style = document.createElement('style');
-        style.textContent = `
-            #rose-swiftplay-smart-panel {
-                position: fixed;
-                bottom: 100px;
-                left: 30px;
-                background: rgba(1, 10, 19, 0.98);
-                border: 1px solid #463714;
-                border-top: 2px solid #c8aa6e;
-                padding: 12px;
-                z-index: ;
-                display: flex;
-                flex-direction: column;
-                gap: 10px;
-                box-shadow: 0 8px 16px rgba(0,0,0,0.8);
-                min-width: 260px;
-                max-width: 450px; /* Чтобы не на весь экран, но достаточно широко */
-                pointer-events: none;
-            }
-            .rsp-header {
-                color: #c8aa6e;
-                font-size: 11px;
-                font-weight: bold;
-                text-transform: uppercase;
-                letter-spacing: 1px;
-                display: flex;
-                align-items: center; gap: 8px;
-                margin-bottom: 4px;
-                border-bottom: 1px solid rgba(200, 170, 110, 0.2);
-                padding-bottom: 6px;
-            }
-            .rsp-item { display: flex; align-items: flex-start; gap: 12px; margin: 4px 0; }
-            .rsp-icon { width: 34px; height: 34px; border-radius: 50%; border: 1px solid #785a28; flex-shrink: 0; }
-            .rsp-text { display: flex; flex-direction: column; min-width: 0; }
-            .rsp-champ { color: #a09b8c; font-size: 9px; text-transform: uppercase; font-weight: bold; }
+        btn.style.position = 'fixed';
+        btn.style.width = '22px';
+        btn.style.height = '22px';
+        btn.style.background = 'transparent';
+        btn.style.border = 'none';
+        btn.style.outline = 'none';
+        btn.style.boxShadow = 'none';
+        btn.style.display = 'none';
+        btn.style.alignItems = 'center';
+        btn.style.justifyContent = 'center';
+        btn.style.cursor = 'pointer';
+        btn.style.zIndex = '1000';
+        btn.style.transition = 'color 0.2s';
+        
+        btn.addEventListener('mouseenter', () => {
+            btn.style.color = '#f0e6d2';
+        });
+        btn.addEventListener('mouseleave', () => {
+            btn.style.color = isSmartPanelOpen ? '#0acbe6' : '#c8aa6e';
+        });
+        
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            isSmartPanelOpen = !isSmartPanelOpen;
             
-            /* СТИЛЬ ДЛЯ ПОЛНОГО НАЗВАНИЯ */
-            .rsp-skin { 
-                color: #f0e6d2; 
-                font-size: 13px; 
-                font-weight: bold; 
-                line-height: 1.2;
-                white-space: normal; /* Разрешаем перенос */
-                word-wrap: break-word; /* Переносим длинные слова */
-                overflow: visible; 
-                text-overflow: clip; 
+            // Только смена цвета иконки, без цветного фона
+            btn.style.color = isSmartPanelOpen ? '#0acbe6' : '#c8aa6e';
+            
+            const panel = document.getElementById('rose-swiftplay-smart-panel');
+            if (panel) {
+                panel.style.display = (isSmartPanelOpen && !isOverlayOpen()) ? 'flex' : 'none';
             }
-        `;
-        document.head.appendChild(style);
+            if (isSmartPanelOpen && window.__roseBridge && window.__roseBridge.ready) {
+                window.__roseBridge.send({type: "request-swiftplay-state"});
+            }
+        });
+        
+        document.body.appendChild(btn);
     }
 
-    const container = document.getElementById('rsp-skins-container');
-        container.innerHTML = data.skins.map(skin => {
-            // Если скин куплен официально, делаем красивый бейдж
-            const ownedBadge = skin.isOwned 
-                ? `<span style="color: #0acbe6; font-size: 10px; margin-left: 6px; text-shadow: 0 0 4px rgba(10, 203, 230, 0.5); vertical-align: baseline;">✔ OWNED</span>` 
-                : '';
-                
-            // Если куплен — меняем цвет рамки иконки
-            const borderColor = skin.isOwned ? '#0acbe6' : '#785a28';
-            const opacity = skin.isOwned ? '0.85' : '1';
-            
-            return `
-                <div class="rsp-item" style="opacity: ${opacity};">
-                    <img class="rsp-icon" src="/lol-game-data/assets/v1/champion-icons/${skin.championId}.png" style="border-color: ${borderColor};">
-                    <div class="rsp-text">
-                        <span class="rsp-champ">${skin.championName}</span>
-                        <span class="rsp-skin">${skin.skinName}${ownedBadge}</span>
-                    </div>
-                </div>
-            `;
-        }).join('');
-        
-        // Включаем панель ТОЛЬКО если в этот момент руны не открыты
-        if (!isOverlayOpen()) {
-            panel.style.display = 'flex';
+    if (overlayActive) {
+        btn.style.display = 'none';
+        return;
+    }
+
+    // Синхронизация состояния (решает проблему "кнопка OFF, панель ON" при переоткрытии лобби)
+    btn.style.color = isSmartPanelOpen ? '#0acbe6' : '#c8aa6e';
+    btn.style.background = 'transparent';
+
+    // Позиционируем справа от lol-uikit-info-icon
+    const infoIcon = document.querySelector('.lobby-header lol-uikit-info-icon, .parties-game-info-panel lol-uikit-info-icon, lol-uikit-info-icon');
+    if (infoIcon) {
+        const rect = infoIcon.getBoundingClientRect();
+        if (rect.right > 0 && rect.top > 0) {
+            btn.style.left = `${Math.round(rect.right + 8)}px`;
+            btn.style.top = `${Math.round(rect.top + (rect.height - 22) / 2)}px`;
         }
+    }
+    btn.style.display = 'flex';
 }
 
-// ====== УЛУЧШЕННЫЙ КОНТРОЛЛЕР ВИДИМОСТИ (БЕЗ ЗАДЕРЖЕК) ======
-
+// ====== КОНТРОЛЛЕР ВИДИМОСТИ ======
 function isActuallyInLobby() {
     const lobbyBanners = document.querySelector('.v2-banner-component.local-player');
     return !!(lobbyBanners && lobbyBanners.offsetParent !== null);
 }
 
-let isPanelRequested = false; // Флаг от спама запросов
-let panelRequestTimer = null; // Таймер сброса флага
+let isPanelRequested = false;
+let panelRequestTimer = null;
 
 function isOverlayOpen() {
-    if (isGlobalMode) return false;
-    const overlays =[
+    if (typeof isGlobalMode !== 'undefined' && isGlobalMode) return false;
+    
+    const overlays = [
         'lol-perks-v2-editor',           
         'lol-perks-v2-main-view',        
-        '.perks-editor-modal',           
+        '.perks-editor-modal',
+        'lol-uikit-full-page-modal',
+        'lol-uikit-dialog-frame',
+        '.quick-play-champion-select-component',
+        '.quick-play-skin-select-component',
+        '.quick-play-loadout-container',
         '#rose-custom-wheel-panel-container',
         '#lu-chroma-panel-container',
         '#forms-wheel-panel-container',
-        '#rose-settings-panel',
-        'lol-uikit-full-page-modal'
+        '#rose-settings-panel'
     ];
 
     for (const selector of overlays) {
         const el = document.querySelector(selector);
         if (el && (el.offsetWidth > 0 || el.offsetHeight > 0)) return true;
     }
-    
+
+    const flyouts = document.querySelectorAll('lol-uikit-flyout-frame');
+    for (const f of flyouts) {
+        if (f.id !== 'rose-settings-flyout' && !f.closest('#rose-custom-wheel-panel-container, #lu-chroma-panel-container, #forms-wheel-panel-container')) {
+            if (f.offsetWidth > 0 || f.offsetHeight > 0) return true;
+        }
+    }
 
     return false;
 }
 
-// Глобальная функция решения: показывать панель или нет
-function shouldShowSmartPanel() {
-    return isActuallyInLobby() && !isOverlayOpen();
-}
-
 setInterval(() => {
     const panel = document.getElementById('rose-swiftplay-smart-panel');
+    const btn = document.getElementById('rose-smart-panel-toggle');
     const inLobby = isActuallyInLobby();
     const overlayActive = isOverlayOpen();
 
-    const shouldShow = inLobby && !overlayActive;
+    if (!inLobby) {
+        if (panel) panel.remove();
+        if (btn) btn.remove();
+        isPanelRequested = false;
+        if (panelRequestTimer) {
+            clearTimeout(panelRequestTimer);
+            panelRequestTimer = null;
+        }
+        return;
+    }
 
-    if (shouldShow) {
+    ensurePanelToggleButton();
+
+    const shouldShowPanel = !overlayActive && isSmartPanelOpen;
+
+    if (shouldShowPanel) {
         if ((!panel || panel.style.display === 'none') && !isPanelRequested) {
-            isPanelRequested = true; // Запоминаем, что послали запрос
+            isPanelRequested = true;
             if (window.__roseBridge && window.__roseBridge.ready) {
                 window.__roseBridge.send({type: "request-swiftplay-state"});
             }
-            // Разрешаем повторный запрос через 1 секунду, если панель так и не отрисовалась
             panelRequestTimer = setTimeout(() => { isPanelRequested = false; }, 1000);
+        } else if (panel && panel.style.display === 'none') {
+            panel.style.display = 'flex';
         }
     } else {
-        // Если открыты руны или вышли из лобби — жестко прячем
         if (panel && panel.style.display !== 'none') {
             panel.style.display = 'none';
         }
-       isPanelRequested = false;
-       if (panelRequestTimer) {
-           clearTimeout(panelRequestTimer);
-           panelRequestTimer = null;
-       }
     }
 }, 150);
 
-// Реактивное скрытие через события фаз (доп. страховка)
 function setupPhaseSubscription() {
     if (window.__roseBridge && window.__roseBridge.subscribe) {
         window.__roseBridge.subscribe("phase-change", (data) => {
-            const panel = document.getElementById('rose-swiftplay-smart-panel');
-            if (panel && data.phase !== "Lobby") {
-                panel.style.display = 'none';
+            if (data.phase !== "Lobby") {
+                const panel = document.getElementById('rose-swiftplay-smart-panel');
+                const btn = document.getElementById('rose-smart-panel-toggle');
+                if (panel) panel.remove();
+                if (btn) btn.remove();
             }
         });
+        window.__roseBridge.subscribe("swiftplay-state", updateSwiftplaySmartPanel);
     } else {
         setTimeout(setupPhaseSubscription, 500);
     }
@@ -835,11 +736,8 @@ async function start() {
   stopped = false;
   retryDelay = RETRY_BASE_MS;
 
-  // Load bridge port before initializing socket
   await loadBridgePort();
 
-  // Expose the shared bridge API now that the port is known.
-  // Consumer plugins poll for this object via waitForBridge().
   if (typeof window !== "undefined") {
     window.__roseBridge = Object.freeze({
       send: sendBridgePayload,
@@ -852,14 +750,14 @@ async function start() {
     
     subscribe("swiftplay-state", updateSwiftplaySmartPanel);
     subscribe("phase-change", (data) => { 
-      // Запрашиваем состояние свифтплея, чтобы обновить (или убить) панель
       if (bridgeSocket && bridgeReady) {
           sendBridgePayload({type: "request-swiftplay-state"});
       }
-      // Жестко прячем панель, если мы вышли из лобби
       if (data.phase !== "Lobby") {
           const panel = document.getElementById('rose-swiftplay-smart-panel');
-          if (panel) panel.style.display = 'none';
+          const btn = document.getElementById('rose-smart-panel-toggle');
+          if (panel) panel.remove();
+          if (btn) btn.remove();
       }
     });
   }
@@ -867,35 +765,16 @@ async function start() {
   installFindMatchObserver();
   setupBridgeSocket();
   subscribe("phase-change", handlePhaseChange);
-  // Default-on: if the first phase broadcast says we're in-game, stopMonitoring()
-  // will fire immediately and shut the 250ms poll back off.
   startMonitoring();
 }
 
 function stop() {
   stopped = true;
-
-  if (retryTimer) {
-    clearTimeout(retryTimer);
-    retryTimer = null;
-  }
-
+  if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
   monitoring = false;
-
-  if (observer) {
-    observer.disconnect();
-    observer = null;
-  }
-
-  if (pollTimer) {
-    clearInterval(pollTimer);
-    pollTimer = null;
-  }
-
-  if (bridgeSocket) {
-    bridgeSocket.close();
-    bridgeSocket = null;
-  }
+  if (observer) { observer.disconnect(); observer = null; }
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+  if (bridgeSocket) { bridgeSocket.close(); bridgeSocket = null; }
 }
 
 function whenReady(callback) {
@@ -903,7 +782,6 @@ function whenReady(callback) {
     document.addEventListener("DOMContentLoaded", callback, { once: true });
     return;
   }
-
   callback();
 }
 

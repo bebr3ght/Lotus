@@ -318,6 +318,8 @@ hiddenimports = [
     
     # Top-level modules
     'config',
+    'zstandard',
+    'cffi',
 ]
 
 # Exclusions - modules we don't need (reduces size and build time)

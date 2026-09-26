@@ -3,89 +3,94 @@
 """
 Loading screen name
 Builds a mod that makes the loading screen print the injected skin's name instead of the champion's.
-
-The loading screen is drawn by the game, which asks its text table for
-"game_character_skin_displayname_<Champion>_<n>" when the server says the player is on skin n, and for the champion's
-own name when it says 0. An injected skin always runs as skin 0, so the screen prints the champion's name.
-
-The skin's name is already in the player's game, translated, for every skin: this copies the table the game has
-installed, writes the skin's text over the champion's, and leaves the copy in the mods directory as one more mod. The
-language and the patch are therefore always the player's own, and nothing has to be downloaded or shipped.
-
-The mod is a single loose file, RAW/DATA/Menu/en_US/lol.stringtable (the folder is en_US in every language: the
-language is in the name of the game's wad, not in the path inside it). mod-tools resolves that path by its hash and
-packs it into whichever Global.<locale>.wad.client the player has.
 """
 
 import json
 import struct
+import re
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import List, Optional, Tuple
 
 from utils.core.logging import get_logger
 
 log = get_logger()
 
+try:
+    import zstandard
+    log.info("[LOADNAME] zstandard module imported successfully")
+except ImportError as e:
+    log.error(f"[LOADNAME] Failed to import zstandard: {e}")
+    zstandard = None
+
 MOD_FOLDER = "ROSE-LoadingName"
-TABLE_PATH = Path("RAW") / "DATA" / "Menu" / "en_US" / "lol.stringtable"
-TABLE_HASH = 0x062D6ED714BFF7DF  # xxh64("data/menu/en_us/lol.stringtable"), fixed for every language
 RST_MASK = (1 << 38) - 1
+_ZSTD_WARNED = False
 
-
-# --------------------------------------------------------------------------------------
-# the game's files
-# --------------------------------------------------------------------------------------
 
 def _language_wads(game_dir: Path) -> List[Path]:
     localized = Path(game_dir) / "DATA" / "FINAL" / "Localized"
-    return sorted(localized.glob("Global.*.wad.client")) if localized.is_dir() else []
+    wads = sorted(localized.glob("Global.*.wad.client")) if localized.is_dir() else []
+    log.info(f"[LOADNAME] Found {len(wads)} language WADs in {localized}")
+    return wads
+
+
+def _unzstd(chunk: bytes, size: int, single_frame: bool) -> Optional[bytes]:
+    global _ZSTD_WARNED
+    try:
+        from compression.zstd import decompress
+        return decompress(chunk)
+    except ImportError:
+        pass
+
+    if zstandard is None:
+        if not _ZSTD_WARNED:
+            log.warning("[LOADNAME] zstandard module is not available, skipping loading screen name decompression")
+            _ZSTD_WARNED = True
+        return None
+
+    try:
+        if single_frame:
+            return zstandard.ZstdDecompressor().decompress(chunk, max_output_size=size)
+        import io
+        with zstandard.ZstdDecompressor().stream_reader(io.BytesIO(chunk), read_across_frames=True) as reader:
+            return reader.read(size)
+    except Exception as exc:
+        log.error(f"[LOADNAME] zstd decompression error: {exc}")
+        return None
 
 
 def _read_table(wad: Path) -> Optional[bytes]:
     """The lol.stringtable entry of a wad, decompressed."""
-    data = wad.read_bytes()
-    if data[:2] != b"RW" or data[2] != 3:
-        log.warning(f"[LOADNAME] {wad.name}: unsupported wad version {data[2]}")
+    try:
+        data = wad.read_bytes()
+    except OSError as e:
+        log.error(f"[LOADNAME] Failed to read WAD {wad.name}: {e}")
         return None
+        
+    if len(data) < 272 or data[:2] != b"RW" or data[2] != 3:
+        log.warning(f"[LOADNAME] {wad.name}: unsupported wad version or invalid signature")
+        return None
+        
     count = struct.unpack_from("<I", data, 268)[0]
     for i in range(count):
         at = 272 + i * 32
+        if at + 32 > len(data):
+            break
         path_hash, offset, packed, size = struct.unpack_from("<QIII", data, at)
-        if path_hash != TABLE_HASH:
-            continue
         kind = data[at + 20] & 0xF
+        chunk = None
         if kind == 0:
-            return data[offset:offset + size]
-        if kind in (3, 4):
-            return _unzstd(data[offset:offset + packed], size, single_frame=kind == 3)
-        log.warning(f"[LOADNAME] {wad.name}: the text table is stored as type {kind}")
-        return None
+            chunk = data[offset:offset + size]
+        elif kind in (3, 4):
+            chunk = _unzstd(data[offset:offset + packed], size, single_frame=kind == 3)
+
+        # RST v2 - v5 signatures
+        if chunk and len(chunk) >= 4 and chunk[:3] == b"RST" and chunk[3] in (2, 3, 4, 5):
+            return chunk
+            
+    log.warning(f"[LOADNAME] No valid RST stringtable found in {wad.name}")
     return None
 
-
-def _unzstd(chunk: bytes, size: int, single_frame: bool) -> Optional[bytes]:
-    """Decompresses a wad entry: the standard library from Python 3.14 on, zstandard before that."""
-    try:
-        from compression.zstd import decompress   # Python 3.14+, reads frames one after the other
-        return decompress(chunk)
-    except ImportError:
-        pass
-    try:
-        import zstandard
-    except ImportError:
-        log.warning("[LOADNAME] zstandard is not installed, the loading screen name is skipped")
-        return None
-    if single_frame:
-        return zstandard.ZstdDecompressor().decompress(chunk, max_output_size=size)
-    import io
-    # type 4 is the same stream cut into frames, so they are read one after the other
-    with zstandard.ZstdDecompressor().stream_reader(io.BytesIO(chunk), read_across_frames=True) as reader:
-        return reader.read(size)
-
-
-# --------------------------------------------------------------------------------------
-# RST v5: "RST", 5, u32 count, count x u64 (38-bit key hash | offset << 38), then the texts
-# --------------------------------------------------------------------------------------
 
 def _entries(table: bytes) -> Tuple[int, int]:
     count = struct.unpack_from("<I", table, 4)[0]
@@ -99,17 +104,14 @@ def _text_of(table: bytes, key_hash: int) -> Optional[str]:
         if entry & RST_MASK != key_hash:
             continue
         at = text_start + (entry >> 38)
-        end = table.index(b"\0", at)
+        end = table.find(b"\0", at)
+        if end == -1:
+            end = len(table)
         return table[at:end].decode("utf-8", "replace")
     return None
 
 
 def _with_text(table: bytes, key_hash: int, text: str) -> bytes:
-    """The table again, with this key's text replaced.
-
-    The offsets are counted from the start of the text block, which is copied whole, so appending one text leaves
-    every other offset where it was.
-    """
     count, text_start = _entries(table)
     entries = [struct.unpack_from("<Q", table, 8 + i * 8)[0] for i in range(count)]
     added = text.encode("utf-8") + b"\0"
@@ -131,10 +133,6 @@ def _with_text(table: bytes, key_hash: int, text: str) -> bytes:
     out += added
     return bytes(out)
 
-
-# --------------------------------------------------------------------------------------
-# XXH3-64 (seed 0, default secret), for inputs of 17 to 128 bytes: every key this module hashes
-# --------------------------------------------------------------------------------------
 
 _SECRET = bytes.fromhex(
     "b8fe6c3923a44bbe7c01812cf721ad1cded46de9839097db7240a4a4b7b3671f"
@@ -184,14 +182,10 @@ def _key_hash(key: str) -> int:
     return _xxh3_64(key.lower().encode("utf-8")) & RST_MASK
 
 
-# --------------------------------------------------------------------------------------
-# what the injector calls
-# --------------------------------------------------------------------------------------
-
 def champion_aliases(mod_folder: Path) -> List[str]:
-    """The champions a mod carries files for, from the names of its wads (Zed.wad.client -> Zed)."""
     wad_dir = Path(mod_folder) / "WAD"
     if not wad_dir.is_dir():
+        log.warning(f"[LOADNAME] No WAD directory found in {mod_folder}")
         return []
     aliases = []
     for wad in wad_dir.iterdir():
@@ -201,14 +195,11 @@ def champion_aliases(mod_folder: Path) -> List[str]:
         alias = name[: -len(".wad.client")].split(".")[0]
         if alias.lower() != "global" and alias not in aliases:
             aliases.append(alias)
+    log.info(f"[LOADNAME] Extracted champion aliases from WADs: {aliases}")
     return aliases
 
 
 def parse_skin_id(skin_name: str, champion_id: Optional[int] = None) -> int:
-    """The client's skin id out of the name the injector was given ("Shockblade Zed 238001" -> 238001).
-
-    Skin names end in a number of their own ("Worlds 2016"), so with a champion known the id has to belong to it.
-    """
     for token in reversed(str(skin_name or "").replace("_", " ").split()):
         if not token.isdigit():
             continue
@@ -221,37 +212,62 @@ def parse_skin_id(skin_name: str, champion_id: Optional[int] = None) -> int:
     return 0
 
 
-def build(game_dir: Path, mods_dir: Path, mod_folder: Path, skin_id: int) -> Optional[str]:
-    """Writes the mod and returns its folder name, or None when there is nothing to show.
-
-    skin_id is the client's id (champion id * 1000 + skin number); chromas pass their base skin's id.
-    """
+def build(game_dir: Path, mods_dir: Path, mod_folder: Path, skin_id: int, localized_name: Optional[str] = None) -> Optional[str]:
     try:
+        log.info(f"[LOADNAME] Starting build for skin_id={skin_id}, localized_name='{localized_name}'")
         if not skin_id or skin_id % 1000 == 0:
+            log.info("[LOADNAME] Base skin or invalid ID, skipping.")
             return None
+            
         aliases = champion_aliases(mod_folder)
         if not aliases:
-            log.debug("[LOADNAME] the skin carries no champion wad, skipped")
+            log.debug("[LOADNAME] The skin carries no champion wad, skipped")
             return None
 
         wads = _language_wads(Path(game_dir))
         if not wads:
-            log.debug("[LOADNAME] no language wad in the game folder, skipped")
+            log.debug("[LOADNAME] No language wad in the game folder, skipped")
             return None
+
+        clean_localized_name = None
+        if localized_name:
+            clean_localized_name = re.sub(r'\s+\d+$', '', str(localized_name)).strip()
+            log.info(f"[LOADNAME] Cleaned localized name to use as fallback: '{clean_localized_name}'")
+
+        built = False
+        target = Path(mods_dir) / MOD_FOLDER
 
         for wad in wads:
             table = _read_table(wad)
-            if not table or table[:3] != b"RST" or table[3] != 5:
+            if not table:
                 continue
+
             for alias in aliases:
-                name = _text_of(table, _key_hash(f"game_character_skin_displayname_{alias}_{skin_id % 1000}"))
+                name_key = f"game_character_skin_displayname_{alias}_{skin_id % 1000}"
+                
+                # Приоритет отдаем переданному чистому имени базового скина
+                if clean_localized_name:
+                    name = clean_localized_name
+                    log.info(f"[LOADNAME] Using provided localized name: '{name}'")
+                else:
+                    # Если его почему-то нет, только тогда лезем в файлы игры
+                    name = _text_of(table, _key_hash(name_key))
+                    if name:
+                        log.info(f"[LOADNAME] Found name in stringtable: '{name}'")
+                
                 if not name:
+                    log.warning(f"[LOADNAME] Could not find name for {name_key} and no fallback provided")
                     continue
+
                 champion_key = _key_hash(f"game_character_displayname_{alias}")
                 if _text_of(table, champion_key) is None:
+                    log.warning(f"[LOADNAME] Champion key {champion_key} not found in stringtable for {alias}")
                     continue
-                target = Path(mods_dir) / MOD_FOLDER
-                (target / TABLE_PATH.parent).mkdir(parents=True, exist_ok=True)
+
+                # КРИТИЧЕСКИЙ ФИКС ИЗ PR: Путь ВСЕГДА en_US внутри WAD, независимо от языка игры!
+                table_rel_path = Path("RAW") / "DATA" / "Menu" / "en_US" / "lol.stringtable"
+                
+                (target / table_rel_path.parent).mkdir(parents=True, exist_ok=True)
                 (target / "META").mkdir(parents=True, exist_ok=True)
                 (target / "META" / "info.json").write_text(json.dumps({
                     "Author": "Rose",
@@ -259,12 +275,17 @@ def build(game_dir: Path, mods_dir: Path, mod_folder: Path, skin_id: int) -> Opt
                     "Name": "Loading screen name",
                     "Version": "1.0.0",
                 }), encoding="utf-8")
-                (target / TABLE_PATH).write_bytes(_with_text(table, champion_key, name))
-                log.info(f"[LOADNAME] the loading screen will show '{name}'")
-                return MOD_FOLDER
-        log.debug(f"[LOADNAME] the game has no name for skin {skin_id}, skipped")
+                
+                (target / table_rel_path).write_bytes(_with_text(table, champion_key, name))
+                log.info(f"[LOADNAME] Success! The loading screen will show '{name}'")
+                built = True
+                break # Break aliases loop, go to next WAD
+                
+        if built:
+            return MOD_FOLDER
+
+        log.warning(f"[LOADNAME] Failed to build mod for skin {skin_id}")
         return None
     except Exception as e:
-        # a name is a nicety: an injection must never fail because of it
-        log.warning(f"[LOADNAME] skipped: {e}")
+        log.error(f"[LOADNAME] Fatal error during build: {e}", exc_info=True)
         return None

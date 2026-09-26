@@ -169,6 +169,12 @@ class LobbyProcessor:
                     log.warning(f"[phase] Failed to request UI destruction for Lobby: {e}")
 
             self.state.is_swiftplay_mode = False
+            ui_thread = getattr(self.state, "ui_skin_thread", None)
+            if ui_thread and hasattr(ui_thread, "broadcaster"):
+                try:
+                    ui_thread.broadcaster.broadcast_swiftplay_state()
+                except Exception:
+                    pass
 
         if effective_mode is not None:
             self._last_lobby_mode = effective_mode

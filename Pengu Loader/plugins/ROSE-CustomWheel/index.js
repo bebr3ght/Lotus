@@ -22,6 +22,7 @@
   let championSelectObserver = null;
   let championLocked = false;
   let currentSkinData = null;
+  let skinMonitorState = null; // <-- ДОБАВИТЬ ЭТУ СТРОКУ
 
   // --- Трекинг выбранных модов (апстрим) ---
   let selectedModId = null; // Track which mod is currently selected

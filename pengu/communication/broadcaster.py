@@ -471,13 +471,36 @@ class Broadcaster:
             
             # Используем правильную функцию проверки (она учитывает дефолтные скины)
             skin_is_owned = is_owned(int(skin_id), owned_skins)
+
+            # Формируем путь к официальному сплеш-арту клиента Лиги
+            banner_path = f"/lol-game-data/assets/v1/champion-splashes/{champ_id}/{skin_id}.jpg"
+            tile_path = f"/lol-game-data/assets/v1/champion-tiles/{skin_id}.jpg"
+
+            # --- ВЫЧИСЛЕНИЕ И СОХРАНЕНИЕ БАННЕРА ---
+            from utils.core.utilities import is_base_skin, get_base_skin_id_for_chroma
+            from utils.core.historic import write_historic_banner, get_historic_banner_for_champion
+            
+            actual_skin_for_splash = int(skin_id)
+            if not is_base_skin(int(skin_id), chroma_id_map):
+                base_id = get_base_skin_id_for_chroma(int(skin_id), chroma_id_map)
+                if base_id:
+                    actual_skin_for_splash = base_id
+            
+            banner_url = f"/lol-game-data/assets/v1/champion-splashes/{champ_id}/{actual_skin_for_splash}.jpg"
+            tile_url = f"/lol-game-data/assets/v1/champion-tiles/{champ_id}/{skin_id}.jpg"
+            
+            # Сохраняем в файл истории баннеров
+            write_historic_banner(int(champ_id), banner_url)
+            # ---------------------------------------
             
             skins_data.append({
                 "championId": int(champ_id),
                 "championName": champ_name,
                 "skinId": int(skin_id),
                 "skinName": skin_name,
-                "isOwned": skin_is_owned
+                "isOwned": skin_is_owned,
+                "bannerUrl": banner_url,
+                "tileUrl": tile_url
             })
             
         payload = {

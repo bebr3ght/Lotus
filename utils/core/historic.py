@@ -22,6 +22,41 @@ def _historic_file_path() -> Path:
     data_dir = get_user_data_dir()
     return data_dir / "historic.json"
 
+def _historic_banners_file_path() -> Path:
+    data_dir = get_user_data_dir()
+    return data_dir / "historic_banners.json"
+
+
+def load_historic_banner_map() -> Dict[str, str]:
+    """Load mapping of champion IDs to skin splash banner URLs."""
+    try:
+        p = _historic_banners_file_path()
+        if not p.exists():
+            return {}
+        with p.open("r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def get_historic_banner_for_champion(champion_id: int) -> Optional[str]:
+    """Get saved banner/splash URL for a champion."""
+    m = load_historic_banner_map()
+    return m.get(str(int(champion_id)))
+
+
+def write_historic_banner(champion_id: int, banner_url: str) -> None:
+    """Save banner/splash URL for a champion."""
+    try:
+        p = _historic_banners_file_path()
+        m = load_historic_banner_map()
+        m[str(int(champion_id))] = str(banner_url)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        with p.open("w", encoding="utf-8") as f:
+            json.dump(m, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
 
 def _historic_target_file_path() -> Path:
     data_dir = get_user_data_dir()

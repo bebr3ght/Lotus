@@ -14,21 +14,15 @@
 
   const DISCORD_INVITE_URL = "https://discord.com/invite/roseskins";
   const ROSE_DISCORD_GUILD_ID = "1490473857075642621";
-  const ROSE_GITHUB_REPO_API_URL =
-    "https://api.github.com/repos/Alban1911/Rose";
+  const ROSE_GITHUB_REPO_API_URL = "https://api.github.com/repos/Alban1911/Rose";
   const ROSE_GITHUB_BADGE_FALLBACK_URL =
     "https://img.shields.io/badge/GitHub-Stars-32A832?style=flat&logo=github&logoColor=white";
   let roseGithubStarsPromise = null;
 
-  // The welcome modal is rendered by Pengu's signed core module. Keep its
-  // links working without modifying the signed binary when external badge
-  // providers change or the embedded server ID becomes stale.
   function getRoseGithubStars() {
     if (roseGithubStarsPromise) return roseGithubStarsPromise;
 
-    roseGithubStarsPromise = fetch(ROSE_GITHUB_REPO_API_URL, {
-      cache: "no-store",
-    })
+    roseGithubStarsPromise = fetch(ROSE_GITHUB_REPO_API_URL, { cache: "no-store" })
       .then((response) => {
         if (!response.ok) throw new Error("GitHub API request failed");
         return response.json();
@@ -44,11 +38,7 @@
 
   function getRoseGithubBadgeUrl(stars) {
     const message = encodeURIComponent(stars + " stars");
-    return (
-      "https://img.shields.io/badge/GitHub-" +
-      message +
-      "-32A832?style=flat&logo=github&logoColor=white"
-    );
+    return "https://img.shields.io/badge/GitHub-" + message + "-32A832?style=flat&logo=github&logoColor=white";
   }
 
   function fixPenguWelcomeBadges(shadowRoot) {
@@ -60,13 +50,8 @@
       const source = badge.getAttribute("src") || "";
 
       if (source.includes("/discord/")) {
-        const fixedSource = source.replace(
-          /\/discord\/\d+/,
-          "/discord/" + ROSE_DISCORD_GUILD_ID
-        );
-        if (fixedSource !== source) {
-          badge.setAttribute("src", fixedSource);
-        }
+        const fixedSource = source.replace(/\/discord\/\d+/, "/discord/" + ROSE_DISCORD_GUILD_ID);
+        if (fixedSource !== source) badge.setAttribute("src", fixedSource);
         return;
       }
 
@@ -89,17 +74,12 @@
       const shadowRoot = host && host.shadowRoot;
       if (!shadowRoot) return false;
 
-      if (attachedHost === host) {
-        fixPenguWelcomeBadges(shadowRoot);
-        return true;
-      }
+      if (attachedHost === host) { fixPenguWelcomeBadges(shadowRoot); return true; }
 
       if (shadowObserver) shadowObserver.disconnect();
       attachedHost = host;
       fixPenguWelcomeBadges(shadowRoot);
-      shadowObserver = new MutationObserver(() => {
-        fixPenguWelcomeBadges(shadowRoot);
-      });
+      shadowObserver = new MutationObserver(() => { fixPenguWelcomeBadges(shadowRoot); });
       shadowObserver.observe(shadowRoot, {
         attributes: true,
         attributeFilter: ["src"],
@@ -114,10 +94,7 @@
     const documentObserver = new MutationObserver(() => {
       if (attach()) documentObserver.disconnect();
     });
-    documentObserver.observe(document.documentElement, {
-      childList: true,
-      subtree: true,
-    });
+    documentObserver.observe(document.documentElement, { childList: true, subtree: true });
     setTimeout(() => documentObserver.disconnect(), 30000);
   }
 
@@ -144,11 +121,8 @@
     log.info("received base skin skip request from rose");
   }
 
-  // TODO Preferably move bridge communication logic and websocket interception to a separate Pengu plugin like ROSE-CORE,
-  // which provides a simple interface for adding custom observers for bridge and socket instead of duplicating this kind
-  // of code over all the plugins; this will do for now though
   function interceptChampSelectWebsocket() {
-    if (!window.rcp || typeof window.rcp.postInit !== 'function') {
+    if (!window.rcp || typeof window.rcp.postInit !== "function") {
       setTimeout(interceptChampSelectWebsocket, 500);
       return;
     }
@@ -172,7 +146,7 @@
               }
             }
             return parentOnMessage.call(this, event);
-          } catch(e) {
+          } catch (e) {
             log.error("Error during WebSocket response parse: ", e);
           }
         };
@@ -370,27 +344,27 @@
       clip-path: inset(-200px -9999px -9999px -9999px) !important;
     }
     @keyframes rose-rgb-glow {
-      0% { 
+      0% {
         background-color: hsl(340, 35%, 72%);
         filter: drop-shadow(0 0 3px hsla(340, 35%, 72%, 0.35));
       }
-      20% { 
+      20% {
         background-color: hsl(280, 25%, 72%);
         filter: drop-shadow(0 0 3px hsla(280, 25%, 72%, 0.35));
       }
-      40% { 
+      40% {
         background-color: hsl(210, 35%, 72%);
         filter: drop-shadow(0 0 3px hsla(210, 35%, 72%, 0.35));
       }
-      60% { 
+      60% {
         background-color: hsl(150, 25%, 70%);
         filter: drop-shadow(0 0 3px hsla(150, 25%, 70%, 0.35));
       }
-      80% { 
+      80% {
         background-color: hsl(35, 35%, 72%);
         filter: drop-shadow(0 0 3px hsla(35, 35%, 72%, 0.35));
       }
-      100% { 
+      100% {
         background-color: hsl(340, 35%, 72%);
         filter: drop-shadow(0 0 3px hsla(340, 35%, 72%, 0.35));
       }
@@ -417,10 +391,7 @@
   };
 
   function injectInlineRules() {
-    if (document.getElementById(INLINE_ID)) {
-      return;
-    }
-
+    if (document.getElementById(INLINE_ID)) return;
     const styleTag = document.createElement("style");
     styleTag.id = INLINE_ID;
     styleTag.textContent = INLINE_RULES;
@@ -429,9 +400,7 @@
   }
 
   function ensureBorderFrame(skinItem) {
-    if (!skinItem) {
-      return;
-    }
+    if (!skinItem) return;
 
     let border = skinItem.querySelector(`.${BORDER_CLASS}`);
     if (!border) {
@@ -440,28 +409,22 @@
       border.setAttribute("aria-hidden", "true");
     }
 
-    const chromaContainer = skinItem.querySelector(
-      `.${CHROMA_CONTAINER_CLASS}`
-    );
+    const chromaContainer = skinItem.querySelector(`.${CHROMA_CONTAINER_CLASS}`);
     if (chromaContainer && border.nextSibling !== chromaContainer) {
       skinItem.insertBefore(border, chromaContainer);
       return;
     }
-
     if (border.parentElement !== skinItem || border !== skinItem.firstChild) {
       skinItem.insertBefore(border, skinItem.firstChild || null);
     }
   }
 
+  
   function ensureChromaContainer(skinItem) {
-    if (!skinItem) {
-      return;
-    }
+    if (!skinItem) return;
 
     const chromaButton = skinItem.querySelector(".outer-mask .chroma-button");
-    if (!chromaButton) {
-      return;
-    }
+    if (!chromaButton) return;
 
     let container = skinItem.querySelector(`.${CHROMA_CONTAINER_CLASS}`);
     if (!container) {
@@ -473,90 +436,59 @@
       skinItem.appendChild(container);
     }
 
-    if (
-      container.previousSibling &&
-      !container.previousSibling.classList?.contains(BORDER_CLASS)
-    ) {
+    if (container.previousSibling && !container.previousSibling.classList?.contains(BORDER_CLASS)) {
       const border = skinItem.querySelector(`.${BORDER_CLASS}`);
-      if (border) {
-        skinItem.insertBefore(border, container);
-      }
+      if (border) skinItem.insertBefore(border, container);
     }
-
-    if (chromaButton.parentElement !== container) {
-      container.appendChild(chromaButton);
-    }
+    if (chromaButton.parentElement !== container) container.appendChild(chromaButton);
   }
 
   function parseCarouselOffset(skinItem) {
-    const offsetClass = Array.from(skinItem.classList).find((cls) =>
-      cls.startsWith("skin-carousel-offset")
-    );
-    if (!offsetClass) {
-      return null;
-    }
-
+    const offsetClass = Array.from(skinItem.classList).find((cls) => cls.startsWith("skin-carousel-offset"));
+    if (!offsetClass) return null;
     const match = offsetClass.match(/skin-carousel-offset-(-?\d+)/);
-    if (!match) {
-      return null;
-    }
-
+    if (!match) return null;
     const value = Number.parseInt(match[1], 10);
     return Number.isNaN(value) ? null : value;
   }
 
   function isOffsetVisible(offset) {
-    if (offset === null) {
-      return true;
-    }
-
+    if (offset === null) return true;
     return VISIBLE_OFFSETS.has(offset);
   }
 
   function applyOffsetVisibility(skinItem) {
-    if (!skinItem) {
-      return;
-    }
-
+    if (!skinItem) return;
     const offset = parseCarouselOffset(skinItem);
     const shouldBeVisible = isOffsetVisible(offset);
-
     skinItem.classList.toggle("lpp-visible-skin", shouldBeVisible);
     skinItem.classList.toggle(HIDDEN_CLASS, !shouldBeVisible);
-
-    if (shouldBeVisible) {
-      skinItem.style.removeProperty("pointer-events");
-    } else {
-      skinItem.style.setProperty("pointer-events", "none", "important");
-    }
+    if (shouldBeVisible) skinItem.style.removeProperty("pointer-events");
+    else skinItem.style.setProperty("pointer-events", "none", "important");
   }
 
   function markSkinsAsOwned() {
-    // Remove unowned class and add owned class to thumbnail-wrapper elements
-    document
-      .querySelectorAll(".thumbnail-wrapper.unowned")
-      .forEach((wrapper) => {
-        wrapper.classList.remove("unowned");
-        wrapper.classList.add("owned");
-      });
-
-    // Replace purchase-available with active
+    document.querySelectorAll(".thumbnail-wrapper.unowned").forEach((wrapper) => {
+      wrapper.classList.remove("unowned");
+      wrapper.classList.add("owned");
+    });
     document.querySelectorAll(".purchase-available").forEach((element) => {
       element.classList.remove("purchase-available");
       element.classList.add("active");
     });
-
-    // Remove purchase-disabled class from any element
     document.querySelectorAll(".purchase-disabled").forEach((element) => {
       element.classList.remove("purchase-disabled");
     });
   }
 
-  // Swiftplay: the lobby only stores skins the account owns, so a slot's banner
-  // keeps the owned skin's splash when another skin is picked in the carousel.
-  // Remember the pick per banner (keyed by the splash the client shows) and
-  // show the picked skin's splash instead, as the game will.
-  const swiftplayBanners = new Map();
+  // ---------------------------------------------------------------------------
+  // swiftplayBanners is completely rewritten to use backend state!
+  // ---------------------------------------------------------------------------
+  let lastSwiftplayData = null;
+  const swiftplayManualBanners = new Map(); // originalSrc -> newSrc
+  const swiftplayHistoricUncentered = new Map(); // champId -> uncenteredSplashUrl (для главного лобби)
+  const swiftplayHistoricCentered = new Map(); // champId -> centeredSplashUrl (для меню выбора)
+  const swiftplayHistoricCenteredByAlias = new Map(); // alias -> centeredSplashUrl
 
   function champFolder(src) {
     const match = /\/Characters\/([^/]+)\//i.exec(src || "");
@@ -569,46 +501,190 @@
     return match ? match[1].replace("_splash_tile_", "_splash_centered_") : null;
   }
 
-  // The splash the client itself set, even after we replaced it
   function clientSplash(img) {
     const src = img.getAttribute("src");
     return img.dataset.roseBanner && src === img.dataset.roseBanner ? img.dataset.roseOriginal : src;
   }
 
-  function syncSwiftplayBanners() {
-    const active = document.querySelector(".quick-play-skin-select-component .thumbnail-wrapper.active-skin");
-    const tile = document.querySelector(".quick-play-loadout-selection-hitbox.selected .champion-slot-tile");
-    if (active && tile) {
-      const original = clientSplash(tile);
-      const picked = pickedSplash(active);
-      if (original && picked && champFolder(original) === champFolder(picked)) {
-        if (picked === original) {
-          swiftplayBanners.delete(original);
-        } else {
-          swiftplayBanners.set(original, picked);
+  async function handleSwiftplayState(data) {
+    log.info("handleSwiftplayState received", data);
+    lastSwiftplayData = data;
+    if (!data || !data.active || !data.skins) return;
+
+    swiftplayHistoricUncentered.clear();
+    swiftplayHistoricCentered.clear();
+    swiftplayHistoricCenteredByAlias.clear();
+
+    for (const skinData of data.skins) {
+      const champId = skinData.championId;
+      const skinId = skinData.skinId;
+
+      if (skinId % 1000 === 0) continue;
+
+      try {
+        const response = await fetch(`/lol-game-data/assets/v1/champions/${champId}.json`);
+        if (!response.ok) continue;
+        const champJson = await response.json();
+        const alias = champJson.alias.toLowerCase();
+
+        let targetSkin = champJson.skins.find((s) => s.id === skinId);
+        if (!targetSkin && champJson.skins) {
+          for (const s of champJson.skins) {
+            if (s.chromas && s.chromas.some((c) => c.id === skinId)) {
+              targetSkin = s;
+              break;
+            }
+          }
         }
+
+        if (targetSkin) {
+          // 1. Uncentered Splash (для большого фона в лобби за спиной)
+          let uncenteredPath = targetSkin.uncenteredSplashPath || targetSkin.splashPath;
+          if (uncenteredPath) {
+            const fullUncenteredUrl = uncenteredPath.startsWith("/lol-game-data")
+              ? uncenteredPath
+              : `/lol-game-data/assets/${uncenteredPath.replace(/^\//, "")}`;
+            swiftplayHistoricUncentered.set(champId, fullUncenteredUrl);
+          }
+
+          // 2. Centered Splash (для узких плашек в меню выбора)
+          let tilePath = targetSkin.tilePath;
+          if (tilePath) {
+            let centeredUrl = tilePath;
+            // Превращаем путь тайла в путь центрированного баннера
+            if (tilePath.includes("_splash_tile_")) {
+              centeredUrl = tilePath.replace("_splash_tile_", "_splash_centered_");
+            } else {
+              centeredUrl = targetSkin.uncenteredSplashPath || targetSkin.splashPath; // фоллбек
+            }
+            
+            if (!centeredUrl.startsWith("/lol-game-data")) {
+              centeredUrl = `/lol-game-data/assets/${centeredUrl.replace(/^\//, "")}`;
+            }
+            
+            swiftplayHistoricCentered.set(champId, centeredUrl);
+            swiftplayHistoricCenteredByAlias.set(alias, centeredUrl);
+          }
+        }
+      } catch (e) {
+        log.error(`Failed to fetch splash for champ ${champId}`, e);
       }
     }
 
-    document.querySelectorAll('img[src*="_splash_centered_"]').forEach((img) => {
-      const src = img.getAttribute("src");
-      if (src !== img.dataset.roseBanner) {
-        img.dataset.roseOriginal = src; // the client set a new splash
-      }
-      const picked = swiftplayBanners.get(img.dataset.roseOriginal);
-      if (picked && src !== picked) {
-        img.dataset.roseBanner = picked;
-        img.setAttribute("src", picked);
-      } else if (!picked && img.dataset.roseBanner && src === img.dataset.roseBanner) {
-        img.setAttribute("src", img.dataset.roseOriginal);
-      }
-    });
+    applySwiftplayBannerReplacement();
   }
 
-  function removeAgeRatingInChampSelect() {
-    if (!document.querySelector(".champion-select") && !document.querySelector(".skin-selection-carousel")) {
-      return;
+  function applySwiftplayBannerReplacement() {
+    if (!lastSwiftplayData || !lastSwiftplayData.skins) return;
+    const skins = lastSwiftplayData.skins;
+
+    // 1. Отслеживаем ручной выбор из карусели
+    try {
+      const activeCarouselSkin = document.querySelector(".quick-play-skin-select-component .thumbnail-wrapper.active-skin");
+      const selectedHitboxTile = document.querySelector(".quick-play-loadout-selection-hitbox.selected .champion-slot-tile");
+      
+      if (activeCarouselSkin && selectedHitboxTile) {
+        const original = clientSplash(selectedHitboxTile);
+        const picked = pickedSplash(activeCarouselSkin);
+        if (original && picked && champFolder(original) === champFolder(picked)) {
+          swiftplayManualBanners.set(original, picked);
+        }
+      }
+    } catch (e) {
+      log.error("Error tracking manual swiftplay selection", e);
     }
+
+    // 2. Применяем к главным баннерам лобби (за спиной игрока)
+    try {
+      const localBanner = document.querySelector('.v2-banner-component.local-player');
+      if (localBanner) {
+        skins.forEach((skinInfo, index) => {
+          const { championId } = skinInfo;
+          // Для лобби берем UNCENTERED арт
+          const bannerUrl = swiftplayHistoricUncentered.get(championId) || skinInfo.bannerUrl;
+          if (!bannerUrl) return;
+
+          if (index === 0) {
+            localBanner.querySelectorAll('img').forEach(img => {
+              if (img.src && img.src.includes('/champion-splashes/') && !img.src.includes(bannerUrl)) {
+                img.src = bannerUrl;
+              }
+            });
+            localBanner.querySelectorAll('div, [class*="backdrop"], [class*="background"]').forEach(el => {
+              const bg = el.style.backgroundImage;
+              if (bg && bg.includes('/champion-splashes/')) {
+                const newBg = `url("${bannerUrl}")`;
+                if (el.style.backgroundImage !== newBg) {
+                  el.style.setProperty('background-image', newBg, 'important');
+                }
+              }
+            });
+          }
+        });
+      }
+    } catch (e) {
+      log.error("Error applying main lobby banners", e);
+    }
+
+    // 3. Применяем к меню выбора (хитбоксы на твоем скриншоте)
+    try {
+      const loadoutHitboxes = document.querySelectorAll('.quick-play-loadout-selection-hitbox');
+      loadoutHitboxes.forEach(hitbox => {
+        const tileImg = hitbox.querySelector('.champion-slot-tile');
+        if (!tileImg) return;
+
+        const currentSrc = tileImg.getAttribute('src');
+        if (!currentSrc) return;
+
+        if (currentSrc !== tileImg.dataset.roseBanner) {
+          tileImg.dataset.roseOriginal = currentSrc;
+        }
+        const originalSrc = tileImg.dataset.roseOriginal;
+
+        // Приоритет 1: Ручной выбор из карусели
+        let targetSrc = swiftplayManualBanners.get(originalSrc);
+
+        // Приоритет 2: Исторические данные (CENTERED арт)
+        if (!targetSrc) {
+          const folder = champFolder(originalSrc);
+          if (folder) {
+            targetSrc = swiftplayHistoricCenteredByAlias.get(folder);
+          }
+          if (!targetSrc) {
+            const iconImg = hitbox.querySelector('.champion-icon');
+            if (iconImg) {
+              const match = /\/(\d+)\.png/.exec(iconImg.getAttribute('src') || iconImg.src || "");
+              if (match) {
+                const champId = parseInt(match[1], 10);
+                targetSrc = swiftplayHistoricCentered.get(champId);
+              }
+            }
+          }
+        }
+
+        // Применяем новый src
+        if (targetSrc && currentSrc !== targetSrc) {
+          tileImg.dataset.roseBanner = targetSrc;
+          tileImg.setAttribute('src', targetSrc);
+        } else if (!targetSrc && tileImg.dataset.roseBanner && currentSrc === tileImg.dataset.roseBanner) {
+          tileImg.setAttribute('src', originalSrc);
+          delete tileImg.dataset.roseBanner;
+        }
+      });
+    } catch (e) {
+      log.error("Error applying loadout hitbox banners", e);
+    }
+  }
+
+  // Запускаем цикл замены часто, чтобы перебивать рендер Ember.js
+  setInterval(() => {
+    try {
+      applySwiftplayBannerReplacement();
+    } catch (e) {}
+  }, 150);
+
+  function removeAgeRatingInChampSelect() {
+    if (!document.querySelector(".champion-select") && !document.querySelector(".skin-selection-carousel")) return;
     document.querySelectorAll(".vng-age-rating").forEach((el) => el.remove());
     document.querySelectorAll(".vng-age-rating-container").forEach((el) => el.remove());
   }
@@ -622,11 +698,7 @@
       applyOffsetVisibility(skinItem);
     });
 
-    // Mark skins as owned in Swiftplay
     markSkinsAsOwned();
-    syncSwiftplayBanners();
-
-    // Remove age rating classes when in champ select
     removeAgeRatingInChampSelect();
   }
 
@@ -642,28 +714,18 @@
       attributeFilter: ["class"],
     });
 
-    // Re-scan periodically as a safety net (LCU sometimes swaps DOM wholesale)
     const intervalId = setInterval(() => {
       scanSkinSelection();
       markSkinsAsOwned();
     }, 500);
 
-    const handleResize = () => {
-      scanSkinSelection();
-    };
+    const handleResize = () => { scanSkinSelection(); };
     window.addEventListener("resize", handleResize, { passive: true });
 
-    document.addEventListener(
-      "visibilitychange",
-      () => {
-        if (document.visibilityState === "visible") {
-          scanSkinSelection();
-        }
-      },
-      false
-    );
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") scanSkinSelection();
+    }, false);
 
-    // Return cleanup in case we ever need it
     return () => {
       observer.disconnect();
       clearInterval(intervalId);
@@ -671,9 +733,6 @@
     };
   }
 
-  // Observer lifecycle - only run during ChampSelect/FINALIZATION.
-  // See GitHub issue #22: the 500ms poll + MutationObserver steal CPU
-  // from the League game process during matches.
   let skinObserverCleanup = null;
 
   function startSkinObserverGated() {
@@ -683,158 +742,103 @@
 
   function stopSkinObserverGated() {
     if (!skinObserverCleanup) return;
-    try {
-      skinObserverCleanup();
-    } catch (e) {
-      // ignore cleanup errors
-    }
+    try { skinObserverCleanup(); } catch (e) {}
     skinObserverCleanup = null;
   }
 
   function handlePhaseChangeFromPython(data) {
-    const phase = data && data.phase;
-    if (!phase) return;
-    // Stop only during actively-playing InProgress.  markSkinsAsOwned() is
-    // Swiftplay-specific and runs during Lobby phase, so we can't restrict
-    // to ChampSelect.  See GitHub issue #22.
-    if (phase === "InProgress") {
-      stopSkinObserverGated();
-    } else {
-      startSkinObserverGated();
+      const phase = data && data.phase;
+      if (!phase) return;
+      if (phase === "InProgress") {
+        stopSkinObserverGated();
+      } else {
+        startSkinObserverGated();
+        if (phase === "Lobby" && bridge) {
+          bridge.send({ type: "request-swiftplay-state" });
+        }
+      }
     }
-  }
 
   function attachGoldenRoseListeners(navItem) {
-    // Check if listeners already attached
-    if (navItem.dataset.lppDiscordAttached === "true") {
-      return;
-    }
+    if (navItem.dataset.lppDiscordAttached === "true") return;
 
-    // Add click handler to nav item - open settings panel
-    navItem.addEventListener(
-      "click",
-      (e) => {
-        const lastActiveNavItem = document.querySelector(".main-nav-bar > * > lol-uikit-navigation-item[active]");
-        if (lastActiveNavItem) {
-          lastActiveNavItem.setAttribute("roseLastActive", true);
-        }
+    navItem.addEventListener("click", (e) => {
+      const lastActiveNavItem = document.querySelector(".main-nav-bar > * > lol-uikit-navigation-item[active]");
+      if (lastActiveNavItem) lastActiveNavItem.setAttribute("roseLastActive", true);
 
-        // Dispatch event to open settings panel
-        const event = new CustomEvent("rose-open-settings", {
-          detail: { navItem: navItem },
-          bubbles: true,
-          cancelable: true,
-        });
-        window.dispatchEvent(event);
-        log.info("Dispatched rose-open-settings event from Golden Rose button");
-      },
-      true
-    ); // Use capture phase to intercept early
+      const event = new CustomEvent("rose-open-settings", {
+        detail: { navItem: navItem },
+        bubbles: true,
+        cancelable: true,
+      });
+      window.dispatchEvent(event);
+      log.info("Dispatched rose-open-settings event from Golden Rose button");
+    }, true);
 
-    // Also prevent section click from bubbling up - wait for section to exist
     const setupSectionHandlers = () => {
       const section = navItem.querySelector(".section");
       if (section && !section.dataset.lppDiscordHandler) {
         section.dataset.lppDiscordHandler = "true";
 
-        section.addEventListener(
-          "click",
-          (e) => {
-            e.stopPropagation();
-            e.preventDefault();
+        section.addEventListener("click", (e) => {
+          e.stopPropagation();
+          e.preventDefault();
+          const event = new CustomEvent("rose-open-settings", {
+            detail: { navItem: navItem },
+            bubbles: true,
+            cancelable: true,
+          });
+          window.dispatchEvent(event);
+          log.info("Dispatched rose-open-settings event from Golden Rose section");
+          section.classList.remove("active");
+        }, true);
 
-            // Dispatch event to open settings panel
-            const event = new CustomEvent("rose-open-settings", {
-              detail: { navItem: navItem },
-              bubbles: true,
-              cancelable: true,
-            });
-            window.dispatchEvent(event);
-            log.info(
-              "Dispatched rose-open-settings event from Golden Rose section"
-            );
-
-            // Prevent active class
-            section.classList.remove("active");
-          },
-          true
-        );
-
-        // Watch for active class being added and remove it immediately
         const activeObserver = new MutationObserver((mutations) => {
           mutations.forEach((mutation) => {
-            if (
-              mutation.type === "attributes" &&
-              mutation.attributeName === "class"
-            ) {
-              if (section.classList.contains("active")) {
-                section.classList.remove("active");
-              }
+            if (mutation.type === "attributes" && mutation.attributeName === "class") {
+              if (section.classList.contains("active")) section.classList.remove("active");
             }
           });
         });
-
-        activeObserver.observe(section, {
-          attributes: true,
-          attributeFilter: ["class"],
-        });
-
-        // Store observer reference for cleanup if needed
+        activeObserver.observe(section, { attributes: true, attributeFilter: ["class"] });
         navItem.dataset.lppActiveObserver = "true";
         return true;
       }
       return false;
     };
 
-    // Try immediately, then watch for section to appear
     if (!setupSectionHandlers()) {
       const sectionObserver = new MutationObserver(() => {
-        if (setupSectionHandlers()) {
-          sectionObserver.disconnect();
-        }
+        if (setupSectionHandlers()) sectionObserver.disconnect();
       });
-
-      sectionObserver.observe(navItem, {
-        childList: true,
-        subtree: true,
-      });
-
-      // Also try after a short delay (Ember might take time to initialize)
+      sectionObserver.observe(navItem, { childList: true, subtree: true });
       setTimeout(() => {
         setupSectionHandlers();
         sectionObserver.disconnect();
       }, 500);
     }
 
-    // Mark as attached
     navItem.dataset.lppDiscordAttached = "true";
   }
 
   function injectGoldenRoseNavItem() {
     const rightNavMenu = document.querySelector(".right-nav-menu");
-    if (!rightNavMenu) {
-      return false;
-    }
+    if (!rightNavMenu) return false;
 
-    // Check if Golden Rose item already exists by checking for the golden_rose.png image
     const existingItem = rightNavMenu.querySelector(
       'lol-uikit-navigation-item .menu-item-icon[style*="golden_rose.png"]'
     );
     if (existingItem) {
-        existingItem.classList.add("rose-rgb-icon");
-        const navItem = existingItem.closest("lol-uikit-navigation-item");
-        if (navItem) {
-          attachGoldenRoseListeners(navItem);
-        }
-        return true;
-      }
-    // Create the navigation item
+      existingItem.classList.add("rose-rgb-icon");
+      const navItem = existingItem.closest("lol-uikit-navigation-item");
+      if (navItem) attachGoldenRoseListeners(navItem);
+      return true;
+    }
+
     const navItem = document.createElement("lol-uikit-navigation-item");
     navItem.id = `ember${Date.now()}`;
-    navItem.className =
-      "main-navigation-menu-item menu_item_Golden Rose ember-view";
+    navItem.className = "main-navigation-menu-item menu_item_Golden Rose ember-view";
 
-    // Create icon wrapper structure
     const iconWrapper = document.createElement("div");
     iconWrapper.className = "menu-item-icon-wrapper";
 
@@ -843,26 +847,22 @@
 
     const icon = document.createElement("div");
     icon.className = "menu-item-icon rose-rgb-icon";
-    icon.style.webkitMaskImage = `url(http://127.0.0.1:${window.__roseBridge ? window.__roseBridge.port : 50000}/asset/golden_rose.png)`;
+    icon.style.webkitMaskImage = `url(http://127.0.0.1:${
+      window.__roseBridge ? window.__roseBridge.port : 50000
+    }/asset/golden_rose.png)`;
 
     iconWrapper.appendChild(glow);
     iconWrapper.appendChild(icon);
     navItem.appendChild(iconWrapper);
 
-    // Insert at the beginning of the nav menu
     const firstChild = rightNavMenu.firstChild;
-    if (firstChild) {
-      rightNavMenu.insertBefore(navItem, firstChild);
-    } else {
-      rightNavMenu.appendChild(navItem);
-    }
+    if (firstChild) rightNavMenu.insertBefore(navItem, firstChild);
+    else rightNavMenu.appendChild(navItem);
 
-    // Add separator after the Golden Rose item
     const separator = document.createElement("div");
     separator.className = "right-nav-vertical-rule";
     rightNavMenu.insertBefore(separator, navItem.nextSibling);
 
-    // Attach Discord click listeners
     attachGoldenRoseListeners(navItem);
 
     log.info("Golden Rose navigation item injected");
@@ -875,11 +875,7 @@
     const observer = new MutationObserver(() => {
       if (injectGoldenRoseNavItem()) observer.disconnect();
     });
-
-    observer.observe(document.body, {
-      childList: true,
-      subtree: true,
-    });
+    observer.observe(document.body, { childList: true, subtree: true });
 
     const intervalId = setInterval(() => {
       if (injectGoldenRoseNavItem()) {
@@ -892,29 +888,20 @@
   let _initializing = false;
   let _initialized = false;
   let _retryCount = 0;
-  const MAX_RETRIES = 100; // Maximum number of retry attempts
+  const MAX_RETRIES = 100;
 
   async function init() {
-    // Prevent multiple concurrent initializations (but allow recursive retry)
-    if (_initialized) {
-      return;
-    }
-    // If already initializing, only proceed if this is a recursive retry call
-    // (indicated by document being ready now when it wasn't before)
+    if (_initialized) return;
+
     if (_initializing) {
-      // Allow recursive call to proceed only if document is now ready
       if (!document || !document.head) {
-        // Check retry limit to prevent unbounded retries
         if (_retryCount >= MAX_RETRIES) {
-          log.error(
-            `Init failed: Maximum retry count (${MAX_RETRIES}) reached. Document still not ready.`
-          );
+          log.error(`Init failed: Maximum retry count (${MAX_RETRIES}) reached. Document still not ready.`);
           _initializing = false;
-          _retryCount = 0; // Reset for next attempt
+          _retryCount = 0;
           return;
         }
         _retryCount++;
-        // Still not ready, schedule another retry
         requestAnimationFrame(() => {
           init().catch((err) => {
             log.error("Init failed:", err);
@@ -923,25 +910,17 @@
         });
         return;
       }
-      // Document is now ready, proceed with initialization
     } else {
-      // First call - set flag BEFORE document check to prevent race condition
       _initializing = true;
-      // Don't reset retry counter here - it should persist across retries
-      // Only reset on successful initialization
 
       if (!document || !document.head) {
-        // Check retry limit BEFORE incrementing to prevent unbounded retries
         if (_retryCount >= MAX_RETRIES) {
-          log.error(
-            `Init failed: Maximum retry count (${MAX_RETRIES}) reached. Document still not ready.`
-          );
+          log.error(`Init failed: Maximum retry count (${MAX_RETRIES}) reached. Document still not ready.`);
           _initializing = false;
-          _retryCount = 0; // Reset for next attempt
+          _retryCount = 0;
           return;
         }
         _retryCount++;
-        // Use synchronous wrapper to prevent multiple concurrent schedules
         requestAnimationFrame(() => {
           init().catch((err) => {
             log.error("Init failed:", err);
@@ -951,29 +930,27 @@
         return;
       }
     }
-    
+
     try {
-      // Wait for bridge to be available (provides port)
       const bridge = await waitForBridge();
 
-      // Subscribe to skip-base-skin messages from the shared bridge
       bridge.subscribe("skip-base-skin", handleSkipBaseSkin);
       bridge.subscribe("phase-change", handlePhaseChangeFromPython);
+      bridge.subscribe("swiftplay-state", handleSwiftplayState); // NEW: Listen to swiftplay state
+
       setupPenguWelcomeBadgeFix();
 
       interceptChampSelectWebsocket();
       injectInlineRules();
       scanSkinSelection();
-      // Default-on: first phase-change from Python will shut the observer
-      // off again if we're already in-game.  See issue #22.
       startSkinObserverGated();
       setupNavObserver();
       log.info("skin preview overrides active");
       _initialized = true;
-      _retryCount = 0; // Reset retry counter on success
+      _retryCount = 0;
     } catch (err) {
       log.error("Init failed:", err);
-      throw err; // Re-throw to propagate error to .catch() handlers
+      throw err;
     } finally {
       _initializing = false;
     }
@@ -985,18 +962,11 @@
   }
 
   if (document.readyState === "loading") {
-    document.addEventListener(
-      "DOMContentLoaded",
-      () => {
-        init().catch((err) => {
-          log.error("Init failed:", err);
-        });
-      },
-      { once: true }
-    );
+    document.addEventListener("DOMContentLoaded", () => {
+      init().catch((err) => { log.error("Init failed:", err); });
+    }, { once: true });
   } else {
-    init().catch((err) => {
-      log.error("Init failed:", err);
-    });
+    init().catch((err) => { log.error("Init failed:", err); });
   }
+  
 })();
