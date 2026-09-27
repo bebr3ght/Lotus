@@ -11,6 +11,7 @@
   const SHOW_SKIN_NAME_ID = "historic-popup-layer";
   let bridge = null;
 
+  // ОБНОВЛЕННАЯ ФУНКЦИЯ: Теперь знает обо всех окнах выбора модов и скрывает надпись
   function isOverlayOpen() {
     const overlays =[
       'lol-perks-v2-editor',           
@@ -21,9 +22,15 @@
       'lol-uikit-dialog-frame',        
       '.modal-root',
       '#rose-custom-wheel-panel-container',
+      '#lu-custom-skin-panel-container',
       '#lu-chroma-panel-container',
       '#forms-wheel-panel-container',
-      '#rose-settings-panel'
+      '#rose-settings-panel',
+      '#champion-selection-dialog',
+      '#skin-selection-dialog',
+      '#add-custom-mods-dialog',
+      '#category-mods-manage-dialog',
+      '#champion-mods-manage-dialog'
     ];
     for (const selector of overlays) {
       const el = document.querySelector(selector);
@@ -59,9 +66,9 @@
   let historicModeActive = false;
   let customModPopupActive = false;
   let currentRewardsElement = null;
-  let historicFlagImageUrl = null; // HTTP URL from Python
-  const pendingHistoricFlagRequest = new Map(); // Track pending requests
-  let isInChampSelect = false; // Track if we're in ChampSelect phase
+  let historicFlagImageUrl = null;
+  const pendingHistoricFlagRequest = new Map();
+  let isInChampSelect = false;
   let pythonChromaState = null;
   let championLocked = false;
   let customModTargetSkinId = null;
@@ -99,7 +106,6 @@
       customModTargetSkinIds.has(numericSkinId)
     );
   }
-
 
   function isHistoricHistoryMarkerActive() {
     if (!historicEntryAvailable || !Number.isFinite(historicBaseSkinId)) {
@@ -145,7 +151,7 @@
     #rose-historic-locked-label.is-collection-view,
     #rose-historic-locked-label.is-swiftplay-view {
       position: absolute;
-      bottom: 120px; /* Идеально над каруселью скинов */
+      bottom: 120px;
       left: 50%;
       transform: translateX(-50%);
     }
@@ -192,7 +198,6 @@
       historicEntryAvailable = false;
       historicBaseSkinId = null;
       log("debug", "Entered ChampSelect phase - enabling plugin");
-      // Try to update flag when entering ChampSelect
       if (historicModeActive) {
         setTimeout(() => {
           updateHistoricFlag();
@@ -205,6 +210,8 @@
       historicModeActive = false;
       historicEntryAvailable = false;
       historicBaseSkinId = null;
+      // ИСПРАВЛЕНИЕ: Скидываем залоченного чемпиона при выходе в лобби
+      championLocked = false; 
       removeHistoricSkinName();
       if (currentRewardsElement) {
         hideFlagOnElement(currentRewardsElement);
@@ -266,7 +273,6 @@
   function showSkinName(skinName) {
     const id = SHOW_SKIN_NAME_ID;
     let text = skinName;
-    // If an element with the same id already exists, directly update the content and reset the timer
     let popup = document.getElementById(id);
     if (popup) {
       const pTag = popup.querySelector("p");
@@ -277,14 +283,11 @@
       return;
     }
 
-    // Inject dialog frame styles
     injectDialogFrameStyles();
 
-    // Create container
     popup = document.createElement("div");
     popup.id = id;
 
-    // Set styles
     Object.assign(popup.style, {
       position: "fixed",
       bottom: "calc(10% + 215px)",
@@ -309,7 +312,6 @@
       zIndex: "1000000",
     });
 
-    // Create toast-body div
     const toastBody = document.createElement("div");
     toastBody.className = "toast-body";
     Object.assign(toastBody.style, {
@@ -322,7 +324,6 @@
       margin: "0 auto",
     });
 
-    // Create toast-content div
     const toastContent = document.createElement("div");
     toastContent.className = "toast-content";
     Object.assign(toastContent.style, {
@@ -332,7 +333,6 @@
       width: "100%",
     });
 
-    // Create lol-uikit-dialog-frame wrapper
     let dialogFrame;
     try {
       dialogFrame = document.createElement("lol-uikit-dialog-frame");
@@ -346,7 +346,6 @@
       display: "inline-block",
     });
 
-    // Create lol-uikit-content-block element
     let contentBlock;
     try {
       contentBlock = document.createElement("lol-uikit-content-block");
@@ -354,106 +353,40 @@
       contentBlock.setAttribute("type", "notification");
     } catch (e) {
       contentBlock = document.createElement("div");
-      contentBlock.className =
-        "lol-uikit-content-block lol-ready-check-notification-party-dodge";
+      contentBlock.className = "lol-uikit-content-block lol-ready-check-notification-party-dodge";
       contentBlock.setAttribute("type", "notification");
     }
 
-    // Set CSS custom properties
-    contentBlock.style.setProperty(
-      "--champion-preview-hover-animation-percentage",
-      "0%"
-    );
+    contentBlock.style.setProperty("--champion-preview-hover-animation-percentage", "0%");
     contentBlock.style.setProperty("--column-height", "95px");
-    contentBlock.style.setProperty(
-      "--font-display",
-      '"LoL Display","Times New Roman",Times,Baskerville,Georgia,serif'
-    );
-    contentBlock.style.setProperty(
-      "--font-body",
-      '"LoL Body",Arial,"Helvetica Neue",Helvetica,sans-serif'
-    );
-    contentBlock.style.setProperty(
-      "--plug-transform1",
-      "scale(1) rotate(0deg)"
-    );
-    contentBlock.style.setProperty(
-      "--plug-transform2",
-      "scale(1.075) rotate(1deg)"
-    );
-    contentBlock.style.setProperty(
-      "--plug-filter1",
-      "drop-shadow(0 0 0 rgb(66 60 40 / 0%))"
-    );
-    contentBlock.style.setProperty(
-      "--plug-filter2",
-      "drop-shadow(0 0 12px rgb(66 59 40 / 80%))"
-    );
+    contentBlock.style.setProperty("--font-display", '"LoL Display","Times New Roman",Times,Baskerville,Georgia,serif');
+    contentBlock.style.setProperty("--font-body", '"LoL Body",Arial,"Helvetica Neue",Helvetica,sans-serif');
+    contentBlock.style.setProperty("--plug-transform1", "scale(1) rotate(0deg)");
+    contentBlock.style.setProperty("--plug-transform2", "scale(1.075) rotate(1deg)");
+    contentBlock.style.setProperty("--plug-filter1", "drop-shadow(0 0 0 rgb(66 60 40 / 0%))");
+    contentBlock.style.setProperty("--plug-filter2", "drop-shadow(0 0 12px rgb(66 59 40 / 80%))");
     contentBlock.style.setProperty("--plug-color1", "#423828");
     contentBlock.style.setProperty("--plug-color2", "#fcf0d7");
-    contentBlock.style.setProperty(
-      "--plug-box-shadow1",
-      "0 0 0 rgb(66 58 40 / 0%)"
-    );
-    contentBlock.style.setProperty(
-      "--plug-box-shadow2",
-      "0 0 12px rgb(66 55 40 / 80%), inset 0 0 12px rgb(66 56 40 / 40%)"
-    );
+    contentBlock.style.setProperty("--plug-box-shadow1", "0 0 0 rgb(66 58 40 / 0%)");
+    contentBlock.style.setProperty("--plug-box-shadow2", "0 0 12px rgb(66 55 40 / 80%), inset 0 0 12px rgb(66 56 40 / 40%)");
     contentBlock.style.setProperty("--plug-color-button", "#857a72");
     contentBlock.style.setProperty("--plug-color-buttonDisabled", "#72655a");
     contentBlock.style.setProperty("--plug-color-buttonHover", "#a89d8f");
-    contentBlock.style.setProperty(
-      "--plug-selected-item-border",
-      "2px solid #7d644b"
-    );
-    contentBlock.style.setProperty(
-      "--plug-selected-item-box-shadow",
-      "0 0 10px rgb(194 129 68 / 50%)"
-    );
-    contentBlock.style.setProperty(
-      "--plug-smoothGlow-box-shadow0",
-      "0 0 8px rgb(66 55 40 / 40%), 0 0 12px rgb(66 54 40 / 20%)"
-    );
-    contentBlock.style.setProperty(
-      "--plug-smoothGlow-box-shadow25",
-      "0 0 10px rgb(66 55 40 / 50%), 0 0 16px rgb(66 57 40 / 10%), 0 0 30px rgb(66 55 40 / 20%)"
-    );
-    contentBlock.style.setProperty(
-      "--plug-smoothGlow-box-shadow50",
-      "0 0 12px rgb(66 56 40 / 60%), 0 0 20px rgb(66 54 40 / 30%), 0 0 30px rgb(66 55 40 / 10%)"
-    );
-    contentBlock.style.setProperty(
-      "--plug-smoothGlow-box-shadow75",
-      "0 0 10px rgb(66 55 40 / 50%), 0 0 16px rgb(66 56 40 / 10%), 0 0 30px rgb(66 54 40 / 20%)"
-    );
-    contentBlock.style.setProperty(
-      "--plug-smoothGlow-box-shadow100",
-      "0 0 8px rgb(66 58 40 / 40%), 0 0 12px rgb(66 56 40 / 20%)"
-    );
-    contentBlock.style.setProperty(
-      "--plug-search-input-border",
-      "1px solid #533e1c"
-    );
-    contentBlock.style.setProperty(
-      "--plug-search-inputFocus-border-color",
-      "#81602b"
-    );
-    contentBlock.style.setProperty(
-      "--plug-search-inputFocus-box-shadow",
-      "0 0 10px rgba(84, 58, 96, 0.3)"
-    );
+    contentBlock.style.setProperty("--plug-selected-item-border", "2px solid #7d644b");
+    contentBlock.style.setProperty("--plug-selected-item-box-shadow", "0 0 10px rgb(194 129 68 / 50%)");
+    contentBlock.style.setProperty("--plug-smoothGlow-box-shadow0", "0 0 8px rgb(66 55 40 / 40%), 0 0 12px rgb(66 54 40 / 20%)");
+    contentBlock.style.setProperty("--plug-smoothGlow-box-shadow25", "0 0 10px rgb(66 55 40 / 50%), 0 0 16px rgb(66 57 40 / 10%), 0 0 30px rgb(66 55 40 / 20%)");
+    contentBlock.style.setProperty("--plug-smoothGlow-box-shadow50", "0 0 12px rgb(66 56 40 / 60%), 0 0 20px rgb(66 54 40 / 30%), 0 0 30px rgb(66 55 40 / 10%)");
+    contentBlock.style.setProperty("--plug-smoothGlow-box-shadow75", "0 0 10px rgb(66 55 40 / 50%), 0 0 16px rgb(66 56 40 / 10%), 0 0 30px rgb(66 54 40 / 20%)");
+    contentBlock.style.setProperty("--plug-smoothGlow-box-shadow100", "0 0 8px rgb(66 58 40 / 40%), 0 0 12px rgb(66 56 40 / 20%)");
+    contentBlock.style.setProperty("--plug-search-input-border", "1px solid #533e1c");
+    contentBlock.style.setProperty("--plug-search-inputFocus-border-color", "#81602b");
+    contentBlock.style.setProperty("--plug-search-inputFocus-box-shadow", "0 0 10px rgba(84, 58, 96, 0.3)");
     contentBlock.style.setProperty("--plug-jsbutton-color", "#81602b");
-    contentBlock.style.setProperty(
-      "--plug-soft-text-glow-kda1",
-      "rgb(255 155 0) 0px 0px 17px"
-    );
-    contentBlock.style.setProperty(
-      "--plug-soft-text-glow-kda2",
-      "rgb(255 143 0 / 37%) 0px 0px 76px"
-    );
+    contentBlock.style.setProperty("--plug-soft-text-glow-kda1", "rgb(255 155 0) 0px 0px 17px");
+    contentBlock.style.setProperty("--plug-soft-text-glow-kda2", "rgb(255 143 0 / 37%) 0px 0px 76px");
     contentBlock.style.setProperty("--plug-scrollable-color", "#785a28");
 
-    // Set regular CSS properties
     Object.assign(contentBlock.style, {
       WebkitUserSelect: "none",
       position: "relative",
@@ -465,111 +398,46 @@
       paddingRight: "25px",
     });
 
-    // Create paragraph with skin name (preserving case)
     const pTag = document.createElement("p");
     pTag.textContent = text;
 
-    // Create lol-uikit-dialog-frame-sub-border element
     const subBorder = document.createElement("div");
     subBorder.className = "lol-uikit-dialog-frame-sub-border";
 
-    // Set CSS custom properties
-    subBorder.style.setProperty(
-      "--champion-preview-hover-animation-percentage",
-      "0%"
-    );
+    subBorder.style.setProperty("--champion-preview-hover-animation-percentage", "0%");
     subBorder.style.setProperty("--column-height", "95px");
-    subBorder.style.setProperty(
-      "--font-display",
-      '"LoL Display","Times New Roman",Times,Baskerville,Georgia,serif'
-    );
-    subBorder.style.setProperty(
-      "--font-body",
-      '"LoL Body",Arial,"Helvetica Neue",Helvetica,sans-serif'
-    );
+    subBorder.style.setProperty("--font-display", '"LoL Display","Times New Roman",Times,Baskerville,Georgia,serif');
+    subBorder.style.setProperty("--font-body", '"LoL Body",Arial,"Helvetica Neue",Helvetica,sans-serif');
     subBorder.style.setProperty("--plug-transform1", "scale(1) rotate(0deg)");
-    subBorder.style.setProperty(
-      "--plug-transform2",
-      "scale(1.075) rotate(1deg)"
-    );
-    subBorder.style.setProperty(
-      "--plug-filter1",
-      "drop-shadow(0 0 0 rgb(66 60 40 / 0%))"
-    );
-    subBorder.style.setProperty(
-      "--plug-filter2",
-      "drop-shadow(0 0 12px rgb(66 59 40 / 80%))"
-    );
+    subBorder.style.setProperty("--plug-transform2", "scale(1.075) rotate(1deg)");
+    subBorder.style.setProperty("--plug-filter1", "drop-shadow(0 0 0 rgb(66 60 40 / 0%))");
+    subBorder.style.setProperty("--plug-filter2", "drop-shadow(0 0 12px rgb(66 59 40 / 80%))");
     subBorder.style.setProperty("--plug-color1", "#423828");
     subBorder.style.setProperty("--plug-color2", "#fcf0d7");
-    subBorder.style.setProperty(
-      "--plug-box-shadow1",
-      "0 0 0 rgb(66 58 40 / 0%)"
-    );
-    subBorder.style.setProperty(
-      "--plug-box-shadow2",
-      "0 0 12px rgb(66 55 40 / 80%), inset 0 0 12px rgb(66 56 40 / 40%)"
-    );
+    subBorder.style.setProperty("--plug-box-shadow1", "0 0 0 rgb(66 58 40 / 0%)");
+    subBorder.style.setProperty("--plug-box-shadow2", "0 0 12px rgb(66 55 40 / 80%), inset 0 0 12px rgb(66 56 40 / 40%)");
     subBorder.style.setProperty("--plug-color-button", "#857a72");
     subBorder.style.setProperty("--plug-color-buttonDisabled", "#72655a");
     subBorder.style.setProperty("--plug-color-buttonHover", "#a89d8f");
-    subBorder.style.setProperty(
-      "--plug-selected-item-border",
-      "2px solid #7d644b"
-    );
-    subBorder.style.setProperty(
-      "--plug-selected-item-box-shadow",
-      "0 0 10px rgb(194 129 68 / 50%)"
-    );
-    subBorder.style.setProperty(
-      "--plug-smoothGlow-box-shadow0",
-      "0 0 8px rgb(66 55 40 / 40%), 0 0 12px rgb(66 54 40 / 20%)"
-    );
-    subBorder.style.setProperty(
-      "--plug-smoothGlow-box-shadow25",
-      "0 0 10px rgb(66 55 40 / 50%), 0 0 16px rgb(66 57 40 / 10%), 0 0 30px rgb(66 55 40 / 20%)"
-    );
-    subBorder.style.setProperty(
-      "--plug-smoothGlow-box-shadow50",
-      "0 0 12px rgb(66 56 40 / 60%), 0 0 20px rgb(66 54 40 / 30%), 0 0 30px rgb(66 55 40 / 10%)"
-    );
-    subBorder.style.setProperty(
-      "--plug-smoothGlow-box-shadow75",
-      "0 0 10px rgb(66 55 40 / 50%), 0 0 16px rgb(66 56 40 / 10%), 0 0 30px rgb(66 54 40 / 20%)"
-    );
-    subBorder.style.setProperty(
-      "--plug-smoothGlow-box-shadow100",
-      "0 0 8px rgb(66 58 40 / 40%), 0 0 12px rgb(66 56 40 / 20%)"
-    );
-    subBorder.style.setProperty(
-      "--plug-search-input-border",
-      "1px solid #533e1c"
-    );
-    subBorder.style.setProperty(
-      "--plug-search-inputFocus-border-color",
-      "#81602b"
-    );
-    subBorder.style.setProperty(
-      "--plug-search-inputFocus-box-shadow",
-      "0 0 10px rgba(84, 58, 96, 0.3)"
-    );
+    subBorder.style.setProperty("--plug-selected-item-border", "2px solid #7d644b");
+    subBorder.style.setProperty("--plug-selected-item-box-shadow", "0 0 10px rgb(194 129 68 / 50%)");
+    subBorder.style.setProperty("--plug-smoothGlow-box-shadow0", "0 0 8px rgb(66 55 40 / 40%), 0 0 12px rgb(66 54 40 / 20%)");
+    subBorder.style.setProperty("--plug-smoothGlow-box-shadow25", "0 0 10px rgb(66 55 40 / 50%), 0 0 16px rgb(66 57 40 / 10%), 0 0 30px rgb(66 55 40 / 20%)");
+    subBorder.style.setProperty("--plug-smoothGlow-box-shadow50", "0 0 12px rgb(66 56 40 / 60%), 0 0 20px rgb(66 54 40 / 30%), 0 0 30px rgb(66 55 40 / 10%)");
+    subBorder.style.setProperty("--plug-smoothGlow-box-shadow75", "0 0 10px rgb(66 55 40 / 50%), 0 0 16px rgb(66 56 40 / 10%), 0 0 30px rgb(66 54 40 / 20%)");
+    subBorder.style.setProperty("--plug-smoothGlow-box-shadow100", "0 0 8px rgb(66 58 40 / 40%), 0 0 12px rgb(66 56 40 / 20%)");
+    subBorder.style.setProperty("--plug-search-input-border", "1px solid #533e1c");
+    subBorder.style.setProperty("--plug-search-inputFocus-border-color", "#81602b");
+    subBorder.style.setProperty("--plug-search-inputFocus-box-shadow", "0 0 10px rgba(84, 58, 96, 0.3)");
     subBorder.style.setProperty("--plug-jsbutton-color", "#81602b");
-    subBorder.style.setProperty(
-      "--plug-soft-text-glow-kda1",
-      "rgb(255 155 0) 0px 0px 17px"
-    );
-    subBorder.style.setProperty(
-      "--plug-soft-text-glow-kda2",
-      "rgb(255 143 0 / 37%) 0px 0px 76px"
-    );
+    subBorder.style.setProperty("--plug-soft-text-glow-kda1", "rgb(255 155 0) 0px 0px 17px");
+    subBorder.style.setProperty("--plug-soft-text-glow-kda2", "rgb(255 143 0 / 37%) 0px 0px 76px");
     subBorder.style.setProperty("--plug-scrollable-color", "#785a28");
 
-    // Set regular CSS properties (subBorder will be styled by CSS rules)
     Object.assign(subBorder.style, {
       WebkitUserSelect: "none",
     });
 
-    // Create before pseudo-element
     const beforeElement = document.createElement("div");
     beforeElement.setAttribute("data-pseudo", "before");
     Object.assign(beforeElement.style, {
@@ -579,7 +447,6 @@
     });
     subBorder.insertBefore(beforeElement, subBorder.firstChild);
 
-    // Create after pseudo-element
     const afterElement = document.createElement("div");
     afterElement.setAttribute("data-pseudo", "after");
     Object.assign(afterElement.style, {
@@ -589,7 +456,6 @@
     });
     subBorder.appendChild(afterElement);
 
-    // Close button — lets the user dismiss the popup and cancel injection
     const closeBtn = document.createElement("div");
     closeBtn.className = "lol-uikit-dialog-frame-toast-close-button";
     closeBtn.style.pointerEvents = "auto";
@@ -598,7 +464,6 @@
       dismissActivePopup();
     });
 
-    // Build the nested structure
     contentBlock.appendChild(pTag);
     dialogFrame.appendChild(contentBlock);
     dialogFrame.appendChild(subBorder);
@@ -608,56 +473,32 @@
 
     popup.appendChild(toastBody);
 
-    // Find the same container as the random skin button to match stacking context
     function findNamePanelContainer() {
-      // Only try to find container when in ChampSelect
-      if (!isInChampSelect) {
-        return null;
-      }
-
-      // Find the carousel container to match its stacking context (same as random skin button)
+      if (!isInChampSelect) return null;
       const carouselContainer = document.querySelector(".skin-selection-carousel-container");
-      if (carouselContainer) {
-        return carouselContainer;
-      }
-
-      // Fallback: find the carousel itself
+      if (carouselContainer) return carouselContainer;
       const carousel = document.querySelector(".skin-selection-carousel");
-      if (carousel) {
-        return carousel;
-      }
-
-      // Last fallback: find the main champ select container and then div.visible
+      if (carousel) return carousel;
       const mainContainer = document.querySelector(".champion-select-main-container");
       if (mainContainer) {
         const visibleDiv = mainContainer.querySelector("div.visible");
-        if (visibleDiv) {
-          return visibleDiv;
-        }
+        if (visibleDiv) return visibleDiv;
       }
-
       return null;
     }
 
-    // Try to append to the same container as random skin button
     const targetContainer = findNamePanelContainer();
     if (targetContainer) {
-      // Ensure container has positioning context
       const containerComputedStyle = window.getComputedStyle(targetContainer);
       if (containerComputedStyle.position === 'static') {
         targetContainer.style.position = 'relative';
       }
 
-      // Get container's position relative to viewport
       const containerRect = targetContainer.getBoundingClientRect();
-
-      // Calculate position relative to container (convert from fixed to absolute)
-      // The original position is: bottom: calc(10% + 350px), left: 50%
       const viewportHeight = window.innerHeight;
-      const bottomOffset = viewportHeight * 0.1 + 265; // 10% + 265px
+      const bottomOffset = viewportHeight * 0.1 + 265;
       const topPosition = viewportHeight - bottomOffset;
 
-      // Update styles for absolute positioning relative to container
       popup.style.position = "absolute";
       popup.style.bottom = "auto";
       popup.style.top = `${topPosition - containerRect.top}px`;
@@ -666,23 +507,18 @@
 
       targetContainer.appendChild(popup);
     } else {
-      // Fallback: append to body if container not found
       document.body.appendChild(popup);
     }
 
-    // Auto close timer
     resetTimer(popup);
 
     function resetTimer(el) {
       if (el._timer) clearTimeout(el._timer);
-      el._timer = setTimeout(() => el.remove(), 125000); // Remove after 125 seconds
+      el._timer = setTimeout(() => el.remove(), 125000);
     }
   }
 
   const handleHistoricSkinNameUpdate = (payload) => {
-    // A custom-mod popup owns this same visual layer. Historic-state
-    // broadcasts can arrive slightly after the custom-mod selection, so do
-    // not let an inactive historic update erase the custom-mod name.
     if (customModPopupActive) return;
 
     if (payload.historicSkinName && payload.historicSkinName !== "None") {
@@ -693,14 +529,6 @@
   };
 
   function handleCustomModStateUpdate(data) {
-    log("info", "Received custom mod state", {
-      active: data?.active === true,
-      modName: data?.modName || null,
-      displayName: data?.displayName || null,
-      skinId: data?.skinId || null,
-      currentSkinId: getCurrentEffectiveSkinId(),
-    });
-
     if (data.active && data.modName) {
       customModTargetSkinId = data.skinId ? Number(data.skinId) : null;
       customModTargetSkinIds = new Set(
@@ -716,12 +544,6 @@
         ? data.displayName.trim()
         : data.modName;
       showSkinName(visibleName);
-      log("info", "Displayed custom mod popup", {
-        modName: data.modName,
-        displayName: visibleName,
-        skinId: customModTargetSkinId,
-        targetSkinIds: [...customModTargetSkinIds],
-      });
     } else {
       customModPopupActive = false;
       customModTargetSkinId = null;
@@ -729,7 +551,6 @@
       removeHistoricSkinName();
     }
   }
-
 
   function handleChromaStateUpdate(data) {
     pythonChromaState = data || null;
@@ -856,10 +677,6 @@
     }
   }
 
-  // ==============================
-  // TRANSPARENCY LABEL LOGIC 
-  // ==============================
-
   function handleHistoricLabelResponse(data) {
     const { championId, hasHistoric, skinName, viewType } = data;
     
@@ -872,12 +689,10 @@
 
     let targetContainer = document.body;
 
-    // В Коллекции: добавляем прямо в контейнер чемпиона, чтобы абсолютная позиция работала от него
     if (viewType === 'collection-view') {
         const collectionDetail = document.querySelector('.collection-champion-detail');
         if (collectionDetail) targetContainer = collectionDetail;
     } 
-    // В Swiftplay: добавляем в модальное окно выбора скинов
     else if (viewType === 'swiftplay-view') {
         const swiftplayActive = document.querySelector('.thumbnail-wrapper.active-skin');
         if (swiftplayActive) {
@@ -901,7 +716,6 @@
         `;
     }
     
-    // Перемещаем элемент в нужный контейнер (Важно для правильного `position: absolute`)
     if (wrapper.parentElement !== targetContainer) {
         targetContainer.appendChild(wrapper);
     }
@@ -917,7 +731,6 @@
     let targetViewType = null;
 
     if (!isOverlayOpen()) {
-      // 1. Check Collection Menu
       const collectionDetail = document.querySelector('.collection-champion-detail');
       if (collectionDetail && collectionDetail.offsetParent !== null) {
         const bg = document.querySelector('lol-uikit-parallax-background');
@@ -929,7 +742,6 @@
           }
         }
       }
-      // 2. Check Classic Champ Select (ONLY IF LOCKED)
       else {
         const champSelect = document.querySelector('.champion-select');
         if (champSelect && champSelect.offsetParent !== null) {
@@ -941,7 +753,6 @@
         }
       }
   
-      // 3. Check Swiftplay Lobby
       if (!targetChampId) {
         const swiftplayActive = document.querySelector('.thumbnail-wrapper.active-skin');
         if (swiftplayActive && swiftplayActive.offsetParent !== null) {
@@ -954,7 +765,6 @@
       }
     }
 
-    // If we found a valid context
     if (targetChampId && targetViewType) {
       if (currentLabelChampionId !== targetChampId || currentViewType !== targetViewType) {
         currentLabelChampionId = targetChampId;
@@ -962,7 +772,6 @@
         if (bridge) bridge.send({type: "request-historic-label", championId: targetChampId, viewType: targetViewType});
       }
     } else {
-      // Clean up if no context
       if (currentLabelChampionId !== null) {
         currentLabelChampionId = null;
         currentViewType = null;
@@ -986,10 +795,9 @@
     bridge.subscribe("local-asset-url", handleLocalAssetUrl);
     bridge.subscribe("phase-change", handlePhaseChange);
     
-    // Subscribe to champion-locked to control label visibility in Classic
     bridge.subscribe("champion-locked", (data) => {
       championLocked = data.locked === true;
-      scanHistoricLabelContext(); // Force immediate update
+      scanHistoricLabelContext(); 
     });
     
     bridge.subscribe("historic-label-response", handleHistoricLabelResponse);
@@ -1009,7 +817,6 @@
       subtree: true,
     });
 
-    // Start transparency label scanner
     setInterval(scanHistoricLabelContext, 500);
 
     log("info", "LU-HistoricMode plugin initialized");
