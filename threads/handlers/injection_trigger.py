@@ -164,7 +164,6 @@ class InjectionTrigger:
         if selected_other_mods:
             other_names = [mod.get("mod_name", "Other") for mod in selected_other_mods]
             mod_labels.append(f"OTHER: {', '.join(other_names)}")
-        
         injection_label = " + ".join(mod_labels)
         
         log.info("=" * LOG_SEPARATOR_WIDTH)
@@ -622,8 +621,9 @@ class InjectionTrigger:
 
             mod_folder_names = []
             mod_names_list = []
+            carrier_mod_folder_name = None
 
-            # 1. Извлекаем базовый скин (если скин не куплен) И генерируем Loading Name
+            # 1. Извлекаем базовый скин (только если скин не куплен)
             if base_skin_name:
                 log.info(f"[INJECT] Extracting base skin ZIP: {base_skin_name}")
                 try:
@@ -636,33 +636,20 @@ class InjectionTrigger:
                     if zp and zp.exists():
                         base_mod_folder = injector._extract_zip_to_mod(zp)
                         if base_mod_folder:
+                            carrier_mod_folder_name = base_mod_folder.name
                             mod_folder_names.append(base_mod_folder.name)
                             mod_names_list.append(f"Base Skin ({base_skin_name})")
-                            
-                            try:
-                                loading_name_mod = build_loading_name(
-                                    injector.game_dir,
-                                    injector.mods_dir,
-                                    base_mod_folder,
-                                    parse_skin_id(base_skin_name, champion_id),
-                                    localized_name=localized_name or custom_mod.get("display_name") or mod_name,
-                                )
-                                if loading_name_mod:
-                                    mod_folder_names.append(loading_name_mod)
-                                    log.info(f"[INJECT] Added loading screen name mod: {loading_name_mod}")
-                            except Exception as e:
-                                log.warning(f"[INJECT] Failed to build loading name mod: {e}")
                 except Exception as e:
                     log.error(f"[INJECT] Error extracting base skin ZIP: {e}")
 
-            # 2. Извлекаем кастомный скин через надежный системный метод
+            # 2. Извлекаем кастомный скин
             if mod_folder_name and mod_path:
                 fld = self.injection_manager.prepare_custom_mod(custom_mod, "Custom Skin")
                 if fld:
                     mod_folder_names.append(fld)
                     mod_names_list.append(mod_name or "Custom Mod")
 
-            # 3. Дополнительные моды (карты, шрифты, аннонсеры) - используем prepare_custom_mod
+            # 3. Дополнительные моды (карты, шрифты, аннонсеры)
             selected_map_mod = getattr(self.state, 'selected_map_mod', None)
             if selected_map_mod:
                 folder = self.injection_manager.prepare_custom_mod(selected_map_mod, "Map")
@@ -695,7 +682,40 @@ class InjectionTrigger:
             if not mod_folder_names:
                 return
 
-            # Гарантируем переключение скина в клиенте, чтобы моделька загрузилась
+            # 4. ИСПРАВЛЕНИЕ: Loading Name генерируется ВСЕГДА (из папки кастомки или базового скина)
+            skin_folder = mod_folder_name or carrier_mod_folder_name
+            effective_id = target_skin_id or parse_skin_id(base_skin_name or "", champion_id)
+            if skin_folder and effective_id:
+                try:
+                    loading_name_mod = build_loading_name(
+                        injector.game_dir,
+                        injector.mods_dir,
+                        injector.mods_dir / skin_folder,
+                        int(effective_id),
+                        localized_name=localized_name or custom_mod.get("display_name") or mod_name,
+                    )
+                    if loading_name_mod:
+                        mod_folder_names.append(loading_name_mod)
+                        mod_names_list.append("Loading screen name")
+                        log.info(f"[LOADNAME] Added loading screen name mod: {loading_name_mod}")
+                except Exception as e:
+                    log.debug(f"[LOADNAME] skipped for custom mod: {e}")
+
+            # 5. ИСПРАВЛЕНИЕ: Добавляем скины друзей (Party Mode)
+            party_manager = getattr(self.state, "party_manager", None)
+            if party_manager and getattr(party_manager, "enabled", False):
+                try:
+                    from party.integration.injection_hook import PartyInjectionHook
+                    party_hook = PartyInjectionHook(party_manager, self.state, self.injection_manager)
+                    if party_hook.is_enabled():
+                        party_mods = party_hook.prepare_party_mods(injector)
+                        if party_mods:
+                            mod_folder_names.extend(party_mods)
+                            mod_names_list.append("Party skins")
+                except Exception as e:
+                    log.debug(f"[PARTY] Failed to add party mods in custom mod injection: {e}")
+
+            # Переключение скина в клиенте
             if champion_id:
                 if base_skin_name:
                     self._force_base_skin(champion_id * 1000)
@@ -708,7 +728,6 @@ class InjectionTrigger:
                     else:
                         self._force_base_skin(champion_id * 1000)
 
-            # Create callback to check if game ended
             game_ended_callback = make_game_ended_callback(self.state)
 
             try:

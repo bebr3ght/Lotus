@@ -143,6 +143,7 @@ def register_autostart():
             cmd,
             capture_output=True,
             text=True,
+            errors='replace',  # <--- ДОБАВИТЬ ЭТО
             creationflags=subprocess.CREATE_NO_WINDOW
         )
         
@@ -182,6 +183,7 @@ def unregister_autostart():
             cmd,
             capture_output=True,
             text=True,
+            errors='replace',  # <--- ДОБАВИТЬ ЭТО
             creationflags=subprocess.CREATE_NO_WINDOW
         )
         
