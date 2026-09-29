@@ -2,11 +2,10 @@
 ; This creates a proper Windows installer that registers the app
 
 #define MyAppName "Lotus"
-#define MyAppVersion "1.3.1"
-#define MyAppVersionInfo "1.3.1.0"
+#define MyAppVersion "1.4.2"
+#define MyAppVersionInfo "1.4.2.0"
 #define MyAppPublisher "Rose Team + Lotus Edited"
-#define MyAppURL "https://github.com/Alban1911/Rose + https://github.com/bebr3ght/Lotus/"
-#define MyAppExeName "/github.com/Alban1911/Rose + https://github.com/Alban1911/Rose + https://github.com/bebr3ght/Lotus/"
+#define MyAppURL "https://github.com/Alban1911/Rose + https://github.com/bebr3ght/Lotu
 #define MyAppExeName "Lotus.exe"
 #define MyAppDescription "Effortless skin changer for League of Legends"
 ; Must match config.SINGLE_INSTANCE_MUTEX_NAME (used by the app to enforce single-instance)
@@ -27,7 +26,7 @@ DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 AllowNoIcons=yes
 OutputDir=installer
-OutputBaseFilename=Lotus_Setup
+OutputBaseFilename=Lotus_Setup_{#MyAppVersion}
 SetupIconFile=assets\icon.ico
 Compression=lzma
 SolidCompression=yes

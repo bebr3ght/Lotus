@@ -13,6 +13,22 @@
   const PANEL_ID = "rose-settings-panel";
   const FLYOUT_ID = "rose-settings-flyout";
 
+  // Rose's menu language (ROSE-I18n); English until it has loaded
+  const t = (text, vars) =>
+    window.RoseI18n
+      ? window.RoseI18n.t(text, vars)
+      : text.replace(/\{(\w+)\}/g, (m, k) => (vars && k in vars ? String(vars[k]) : m));
+  // A finished English text from Rose (error message...), translated when it is a known one
+  const tAny = (text) => (window.RoseI18n ? window.RoseI18n.tAny(text) : text);
+
+  // Codes the language picker shows, like the flags of a language menu
+  const LANGUAGE_BADGES = {
+    en: "GB", fr: "FR", de: "DE", es_ES: "ES", es_MX: "MX", pt_BR: "BR", it: "IT",
+    pl: "PL", ro: "RO", hu: "HU", cs: "CZ", el: "GR", ru: "RU", tr: "TR", ar: "AE",
+    ja: "JP", ko: "KR", zh_CN: "CN", zh_TW: "TW", th: "TH", vi: "VN", id: "ID",
+  };
+  const languageBadge = (language) => LANGUAGE_BADGES[language] || String(language || "").slice(0, 2).toUpperCase();
+
   /**
    * Escape HTML special characters to prevent XSS (CWE-79)
    * @param {string} str - String to escape
@@ -453,15 +469,106 @@
       color: #f0e6d2;
     }
     
+    /* Box on the first line of its label, so boxes side by side stay aligned
+       when a label wraps (other languages) */
     #${FLYOUT_ID} .settings-checkbox-wrapper {
       display: flex;
-      align-items: center;
+      align-items: flex-start;
       margin-top: 8px;
     }
+    /* Long labels (other languages) wrap instead of being cut */
     #${FLYOUT_ID} .settings-checkbox-wrapper span {
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
+      min-width: 0;
+      padding-top: 1px;
+      line-height: 1.2;
+      overflow-wrap: anywhere;
+    }
+    #${FLYOUT_ID} .settings-checkbox-wrapper input {
+      flex-shrink: 0;
+      margin-top: 0;
+    }
+
+    /* Language picker: a code badge in the corner of Settings */
+    #${FLYOUT_ID} .rose-language-picker {
+      position: absolute;
+      top: 50%;
+      right: 0;
+      transform: translateY(-50%);
+      z-index: 5;
+    }
+    #${FLYOUT_ID} .rose-language-badge {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      height: 22px;
+      padding: 0 8px;
+      background: #1e2328;
+      border: 1px solid #785a28;
+      color: #cdbe91;
+      font-family: "Beaufort for LOL", serif;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      cursor: pointer;
+      transition: border-color 0.2s, color 0.2s;
+    }
+    #${FLYOUT_ID} .rose-language-badge::after {
+      content: "";
+      width: 4px;
+      height: 4px;
+      border-right: 1px solid currentColor;
+      border-bottom: 1px solid currentColor;
+      transform: translateY(-2px) rotate(45deg);
+    }
+    #${FLYOUT_ID} .rose-language-badge:hover,
+    #${FLYOUT_ID} .rose-language-picker.open .rose-language-badge {
+      border-color: #c8aa6e;
+      color: #f0e6d2;
+    }
+    /* The list opens in <body>, above the Settings panel (z-index 10000-10001) */
+    .rose-language-menu {
+      position: fixed;
+      z-index: 10050;
+      width: 230px;
+      max-height: 300px;
+      overflow-y: auto;
+      padding: 4px 0;
+      background: #010a13;
+      border: 1px solid #785a28;
+      box-shadow: 0 6px 18px rgba(0, 0, 0, 0.7);
+      box-sizing: border-box;
+    }
+    .rose-language-menu::-webkit-scrollbar {
+      width: 6px;
+    }
+    .rose-language-menu::-webkit-scrollbar-thumb {
+      background: #785a28;
+    }
+    .rose-language-menu .rose-language-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 6px 12px;
+      color: #a09b8c;
+      font-family: "Beaufort for LOL", serif;
+      font-size: 12px;
+      text-align: left;
+      cursor: pointer;
+    }
+    .rose-language-menu .rose-language-item:hover {
+      background: rgba(200, 170, 110, 0.1);
+      color: #f0e6d2;
+    }
+    .rose-language-menu .rose-language-item.selected {
+      background: rgba(200, 170, 110, 0.16);
+      color: #f0e6d2;
+    }
+    .rose-language-menu .rose-language-code {
+      flex: 0 0 34px;
+      color: #c8aa6e;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.1em;
     }
     
     /* Style for the "Add custom mods" dropdown button - match League UI button styling */
@@ -1507,20 +1614,38 @@
     button.setAttribute("margin-right", "10px");
     resetStopInjectionButton(button);
     _stopInjectionButtons.add(button);
-    button.title = "Stop Rose's injection, then reconnect without mods (use this if a mod crashes your game)";
     button.addEventListener("click", () => {
       if (!bridge || button.hasAttribute("disabled")) return;
       bridge.send({ type: "stop-injection" });
       button.setAttribute("disabled", "true");
-      button.textContent = "Mods disabled";
+      labelStopInjectionButton(button);
     });
     container.appendChild(button);
   }
 
+  function labelStopInjectionButton(button) {
+    button.title = t("Stop Rose's injection, then reconnect without mods (use this if a mod crashes your game)");
+    button.textContent = button.hasAttribute("disabled") ? t("Mods disabled") : t("Disable Rose mods");
+  }
+
   function resetStopInjectionButton(button) {
     button.removeAttribute("disabled");
-    button.textContent = "Disable Rose mods";
+    labelStopInjectionButton(button);
   }
+
+  // Menus on screen follow a language change
+  window.addEventListener("rose-i18n-changed", () => {
+    _stopInjectionButtons.forEach(labelStopInjectionButton);
+    const navItem = document.querySelector("lol-uikit-navigation-item.menu_item_Golden.Rose");
+    if (settingsPanel && document.getElementById(PANEL_ID) && navItem) {
+      createSettingsFlyout(navItem);
+    }
+    if (diagnosticsDialog) {
+      // Closes the open one, then opens it again
+      openDiagnosticsDialog();
+      openDiagnosticsDialog();
+    }
+  });
 
   // The client reuses the reconnect screen, so re-enable the button for each new game
   function handleReconnectPhaseChange(payload) {
@@ -1669,7 +1794,7 @@
       const saveButton = document.getElementById("save-button");
       if (saveButton) {
         const originalText = saveButton.textContent;
-        saveButton.textContent = "Saved!";
+        saveButton.textContent = t("Saved!");
         setTimeout(() => {
           saveButton.textContent = originalText;
         }, 2000);
@@ -1696,7 +1821,7 @@
       const saveButton = document.getElementById("save-button");
       if (saveButton) {
         const originalText = saveButton.textContent;
-        saveButton.textContent = payload.error || "Error saving settings";
+        saveButton.textContent = payload.error ? tAny(payload.error) : t("Error saving settings");
         saveButton.style.background = "#8b0000";
         setTimeout(() => {
           saveButton.textContent = originalText;
@@ -1715,7 +1840,84 @@
     return path.trim().length > 0;
   }
 
+  // Language of Rose's menus: a code badge in the corner of Settings, applied as soon as it is picked
+  function createLanguagePicker() {
+    const i18n = window.RoseI18n;
+    const setting = i18n.setting || "auto";
+    const languages = i18n.languages || {};
+
+    const picker = document.createElement("div");
+    picker.className = "rose-language-picker";
+
+    const badge = document.createElement("button");
+    badge.type = "button";
+    badge.className = "rose-language-badge";
+    badge.textContent = languageBadge(i18n.language);
+    badge.title = `${t("Language:")} ${setting === "auto" ? t("Auto (client language)") : languages[setting] || setting}`;
+    picker.appendChild(badge);
+
+    const menu = document.createElement("div");
+    menu.className = "rose-language-menu";
+    [["auto", t("Auto (client language)")], ...Object.entries(languages)].forEach(([value, name]) => {
+      const item = document.createElement("div");
+      item.className = "rose-language-item";
+      if (value === setting) item.classList.add("selected");
+      const code = document.createElement("span");
+      code.className = "rose-language-code";
+      code.textContent = value === "auto" ? "AUTO" : languageBadge(value);
+      const label = document.createElement("span");
+      label.textContent = name;
+      item.append(code, label);
+      item.addEventListener("click", (e) => {
+        e.stopPropagation();
+        close();
+        if (value !== setting && bridge) bridge.send({ type: "language-save", language: value });
+      });
+      menu.appendChild(item);
+    });
+
+    const onOutside = (e) => {
+      if (!picker.contains(e.target) && !menu.contains(e.target)) close();
+    };
+    const onKey = (e) => {
+      if (e.key === "Escape") close();
+    };
+    // The list opens in <body>, above the whole panel: League's dropdowns
+    // further down the panel would cover it otherwise
+    function open() {
+      const rect = badge.getBoundingClientRect();
+      menu.style.top = `${Math.round(rect.bottom + 6)}px`;
+      menu.style.right = `${Math.round(window.innerWidth - rect.right)}px`;
+      document.body.appendChild(menu);
+      picker.classList.add("open");
+      document.addEventListener("mousedown", onOutside, true);
+      document.addEventListener("keydown", onKey, true);
+      window.addEventListener("resize", close);
+      const selected = menu.querySelector(".selected");
+      if (selected) menu.scrollTop = selected.offsetTop - (menu.clientHeight - selected.offsetHeight) / 2;
+    }
+    function close() {
+      picker.classList.remove("open");
+      menu.remove();
+      document.removeEventListener("mousedown", onOutside, true);
+      document.removeEventListener("keydown", onKey, true);
+      window.removeEventListener("resize", close);
+    }
+    badge.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (picker.classList.contains("open")) close();
+      else open();
+    });
+    return picker;
+  }
+
+  // The language list lives in <body>: it goes with the panel it was opened from
+  function closeLanguageMenu() {
+    document.querySelectorAll(".rose-language-menu").forEach((menu) => menu.remove());
+  }
+
   function createSettingsFlyout(navItem) {
+    closeLanguageMenu();
     // Remove existing panel if any
     const existingPanel = document.getElementById(PANEL_ID);
     if (existingPanel) {
@@ -1884,7 +2086,7 @@
       const btn = document.createElement("button");
       btn.type = "button";
       btn.className = "rose-tooltip-icon";
-      btn.setAttribute("aria-label", ariaLabel || "Info");
+      btn.setAttribute("aria-label", ariaLabel || t("Info"));
 
       // prevent accidental focus/drag interactions with nearby controls
       btn.addEventListener("click", (e) => {
@@ -1926,7 +2128,7 @@
 
     const title = document.createElement("div");
     title.className = "settings-title";
-    title.textContent = "Settings";
+    title.textContent = t("Settings");
     title.style.marginBottom = "0";
     title.style.width = "auto";
     titleRow.appendChild(title);
@@ -1942,6 +2144,23 @@
     versionBadge.textContent = currentSettings.version ? `v${currentSettings.version}` : "";
     titleRow.appendChild(versionBadge);
 
+    if (window.RoseI18n) {
+      // The title alone is centered on the panel: the version hangs to its right
+      // and the language picker sits in the corner
+      titleRow.style.position = "relative";
+      titleRow.style.alignSelf = "stretch";
+      title.style.width = "auto";
+      title.style.position = "relative";
+      versionBadge.style.position = "absolute";
+      versionBadge.style.left = "100%";
+      versionBadge.style.bottom = "3px";
+      versionBadge.style.marginLeft = "8px";
+      versionBadge.style.fontWeight = "normal";
+      versionBadge.style.whiteSpace = "nowrap";
+      title.appendChild(versionBadge);
+      titleRow.appendChild(createLanguagePicker());
+    }
+
     form.appendChild(titleRow);
 
     // Injection threshold section
@@ -1951,11 +2170,11 @@
     const thresholdLabel = document.createElement("label");
     thresholdLabel.className = "settings-label";
     const thresholdLabelText = document.createElement("span");
-    thresholdLabelText.textContent = "Injection Threshold (seconds):";
+    thresholdLabelText.textContent = t("Injection Threshold (seconds):");
     thresholdLabel.appendChild(
       createTooltipButton(
-        "Injection threshold is the time window during which the app considers your last hovered skin as the one to inject.\n\nFor example, if your injection threshold is set to 1 second, whichever skin you were hovering 1 second before champ select ends will be the one injected.\n\nIf your PC or connection is on the slower side, you may need to fine-tune this value.",
-        "Injection threshold info"
+        t("Injection threshold is the time window during which the app considers your last hovered skin as the one to inject.\n\nFor example, if your injection threshold is set to 1 second, whichever skin you were hovering 1 second before champ select ends will be the one injected.\n\nIf your PC or connection is on the slower side, you may need to fine-tune this value."),
+        t("Injection threshold info")
       )
     );
     thresholdLabel.appendChild(thresholdLabelText);
@@ -2075,11 +2294,11 @@
     const timeoutLabel = document.createElement("label");
     timeoutLabel.className = "settings-label";
     const timeoutLabelText = document.createElement("span");
-    timeoutLabelText.textContent = "Monitor Auto-Resume Timeout (seconds):";
+    timeoutLabelText.textContent = t("Monitor Auto-Resume Timeout (seconds):");
     timeoutLabel.appendChild(
       createTooltipButton(
-        "Auto-resume is a safety feature.\n\nIf the injection process takes longer than the value you set, the app will automatically cancel the injection and let the game start normally.\n\nThis prevents the injection from looping and blocking the game from launching.\n\nIf you use a lot of custom mods, you may need to adjust this value.",
-        "Auto-resume info"
+        t("Auto-resume is a safety feature.\n\nIf the injection process takes longer than the value you set, the app will automatically cancel the injection and let the game start normally.\n\nThis prevents the injection from looping and blocking the game from launching.\n\nIf you use a lot of custom mods, you may need to adjust this value."),
+        t("Auto-resume info")
       )
     );
     timeoutLabel.appendChild(timeoutLabelText);
@@ -2192,7 +2411,7 @@
     autostartWrapper.appendChild(autostartCheckbox);
 
     const autostartText = document.createElement("span");
-    autostartText.textContent = "Start with Windows";
+    autostartText.textContent = t("Start with Windows");
     autostartWrapper.appendChild(autostartText);
     autostartSection.appendChild(autostartWrapper);
     checkboxRow.appendChild(autostartSection);
@@ -2211,8 +2430,8 @@
     hideEmptyCategoriesWrapper.appendChild(hideEmptyCategoriesCheckbox);
 
     const hideEmptyCategoriesText = document.createElement("span");
-    hideEmptyCategoriesText.textContent = "Hide empty categories";
-    hideEmptyCategoriesWrapper.title = "Hide empty categories in the custom mods wheel";
+    hideEmptyCategoriesText.textContent = t("Hide empty categories");
+    hideEmptyCategoriesWrapper.title = t("Hide empty categories in the custom mods wheel");
     hideEmptyCategoriesWrapper.appendChild(hideEmptyCategoriesText);
     customWheelSection.appendChild(hideEmptyCategoriesWrapper);
     checkboxRow.appendChild(customWheelSection);
@@ -2224,7 +2443,7 @@
 
     const pathLabel = document.createElement("label");
     pathLabel.className = "settings-label";
-    pathLabel.textContent = "League of Legends Game Path:";
+    pathLabel.textContent = t("League of Legends Game Path:");
     pathSection.appendChild(pathLabel);
 
     const pathInputWrapper = document.createElement("div");
@@ -2261,12 +2480,461 @@
       closeSettingsPanel();
       window.dispatchEvent(new CustomEvent("rose-open-custom-wheel"));
     });
+    
     form.appendChild(customModsButton);
+    // Add / Manage custom mods dropdowns share one row, half width each
+    const customModsRow = document.createElement("div");
+    customModsRow.style.display = "flex";
+    customModsRow.style.gap = "8px";
+    customModsRow.style.marginTop = "8px";
+    customModsRow.style.width = "100%";
+
+    // Add custom mods dropdown
+    const modsDropdownContainer = document.createElement("div");
+    modsDropdownContainer.style.flex = "1";
+    modsDropdownContainer.style.minWidth = "0";
+
+    const modsDropdown = document.createElement("lol-uikit-framed-dropdown");
+    modsDropdown.id = "add-custom-mods-dropdown";
+    modsDropdown.className = "lol-publishing-locale-preference-dropdown";
+    modsDropdown.setAttribute("tabindex", "0");
+    modsDropdown.style.width = "100%";
+
+    // Add placeholder option for header display (hidden in dropdown menu)
+    const placeholderOption = document.createElement("lol-uikit-dropdown-option");
+    placeholderOption.setAttribute("slot", "lol-uikit-dropdown-option");
+    placeholderOption.setAttribute("value", "");
+    placeholderOption.className = "framed-dropdown-type placeholder-option";
+    placeholderOption.textContent = t("Add custom mods");
+    placeholderOption.style.color = "#7d7d7d";
+    placeholderOption.style.opacity = "0.7";
+    placeholderOption.style.pointerEvents = "none";
+    placeholderOption.style.cursor = "default";
+    placeholderOption.setAttribute("selected", ""); // Show in header
+    // Prevent any click events on the placeholder
+    placeholderOption.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+      return false;
+    }, true); // Use capture phase to catch early
+    modsDropdown.appendChild(placeholderOption);
+
+    const categories = [
+      { id: "skins", name: "Skins" },
+      { id: "maps", name: "Maps" },
+      { id: "fonts", name: "Fonts" },
+      { id: "announcers", name: "Announcers" },
+      { id: "ui", name: "UI" },
+      { id: "voiceover", name: "Voiceover" },
+      { id: "loading_screen", name: "Loading Screen" },
+      { id: "vfx", name: "VFX" },
+      { id: "sfx", name: "SFX" },
+      { id: "others", name: "Others" },
+    ];
+
+    categories.forEach((category) => {
+      const option = document.createElement("lol-uikit-dropdown-option");
+      option.setAttribute("slot", "lol-uikit-dropdown-option");
+      option.setAttribute("value", category.id);
+      option.className = "framed-dropdown-type";
+      option.textContent = t(category.name);
+      modsDropdown.appendChild(option);
+    });
+
+    // Function to aggressively remove focus and glow effects
+    const removeFocusAndGlow = () => {
+      // Blur the dropdown element
+      if (document.activeElement === modsDropdown || modsDropdown.contains(document.activeElement)) {
+        modsDropdown.blur();
+      }
+
+      // Blur any focused elements within the dropdown
+      const focusedElement = modsDropdown.querySelector(':focus');
+      if (focusedElement) {
+        focusedElement.blur();
+      }
+
+      // Remove focus-related attributes and classes
+      modsDropdown.removeAttribute('tabindex');
+      modsDropdown.setAttribute('tabindex', '0');
+
+      // Blur elements in shadow DOM if accessible
+      const shadowRoot = modsDropdown.shadowRoot;
+      if (shadowRoot) {
+        const shadowFocused = shadowRoot.activeElement;
+        if (shadowFocused) {
+          shadowFocused.blur();
+        }
+        // Remove focus from all focusable elements in shadow DOM
+        shadowRoot.querySelectorAll('*').forEach(el => {
+          if (el === shadowRoot.activeElement || el.matches(':focus')) {
+            el.blur();
+          }
+        });
+      }
+
+      // Do not blur document.activeElement globally here. The delayed cleanup
+      // runs after opening dialogs too, so the active element may already be
+      // the champion search input. Blurring it makes the first click appear
+      // to be ignored and removes the caret from the input.
+    };
+
+    // Function to reset dropdown to placeholder and close it
+    const resetDropdown = () => {
+      // Remove active class to close dropdown
+      modsDropdown.classList.remove("active");
+      // Remove selected from all category options
+      modsDropdown.querySelectorAll('lol-uikit-dropdown-option[value!=""]').forEach(opt => {
+        opt.removeAttribute("selected");
+      });
+      // Reset to placeholder option for header display
+      const placeholder = modsDropdown.querySelector('.placeholder-option');
+      if (placeholder) {
+        placeholder.setAttribute("selected", "");
+        // Force the dropdown to use placeholder value
+        if (modsDropdown.setAttribute) {
+          modsDropdown.setAttribute("value", "");
+        }
+      }
+
+      // Aggressively remove focus and glow effects
+      removeFocusAndGlow();
+
+      // Force reset again after a short delay to catch any framework updates
+      setTimeout(() => {
+        const placeholder = modsDropdown.querySelector('.placeholder-option');
+        if (placeholder && !placeholder.hasAttribute('selected')) {
+          placeholder.setAttribute("selected", "");
+        }
+        modsDropdown.querySelectorAll('lol-uikit-dropdown-option[value!=""]').forEach(opt => {
+          opt.removeAttribute("selected");
+        });
+        // Remove focus again after framework updates
+        removeFocusAndGlow();
+      }, 10);
+    };
+
+    // Handle dropdown selection change - prevent showing selected value
+    modsDropdown.addEventListener("change", (e) => {
+      const selectedValue = e.target.value || e.detail?.value;
+      if (selectedValue) {
+        handleCategorySelection(selectedValue);
+        // Immediately reset to placeholder before UI updates
+        resetDropdown();
+      }
+    });
+
+    // Handle click on options - prevent showing selected value
+    modsDropdown.querySelectorAll('lol-uikit-dropdown-option').forEach((option) => {
+      option.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const categoryId = option.getAttribute("value");
+        // Ignore placeholder option (empty value)
+        if (categoryId) {
+          // Prevent the option from being selected
+          option.removeAttribute("selected");
+          handleCategorySelection(categoryId);
+          // Immediately reset to placeholder
+          resetDropdown();
+          // Remove focus immediately and after delays
+          setTimeout(() => removeFocusAndGlow(), 0);
+          setTimeout(() => removeFocusAndGlow(), 50);
+          setTimeout(() => removeFocusAndGlow(), 100);
+          setTimeout(() => removeFocusAndGlow(), 200);
+        }
+      }, true); // Use capture phase to intercept early
+    });
+
+    // Watch for any selected attribute changes and reset to placeholder
+    const observer = new MutationObserver((mutations) => {
+      mutations.forEach((mutation) => {
+        if (mutation.type === 'attributes' && mutation.attributeName === 'selected') {
+          const target = mutation.target;
+          // If a category option (not placeholder) gets selected, reset it
+          if (target.getAttribute('value') && target.getAttribute('value') !== '') {
+            const placeholder = modsDropdown.querySelector('.placeholder-option');
+            if (placeholder && !placeholder.hasAttribute('selected')) {
+              // Remove selected from category option
+              target.removeAttribute('selected');
+              // Set placeholder as selected
+              placeholder.setAttribute('selected', '');
+            }
+          }
+        }
+      });
+    });
+
+    // Observe all dropdown options for selected attribute changes
+    modsDropdown.querySelectorAll('lol-uikit-dropdown-option').forEach((option) => {
+      observer.observe(option, { attributes: true, attributeFilter: ['selected'] });
+    });
+
+    modsDropdownContainer.appendChild(modsDropdown);
+    customModsRow.appendChild(modsDropdownContainer);
+    form.appendChild(customModsRow);
+
+
+    // Inject shadow DOM styles to override :host .ui-dropdown color
+    let retryCount = 0;
+    const MAX_RETRIES = 20;
+    const injectShadowStyles = () => {
+      const root = modsDropdown.shadowRoot;
+      if (!root) {
+        // Shadow root might not be ready yet, try again (up to MAX_RETRIES times)
+        if (retryCount < MAX_RETRIES) {
+          retryCount++;
+          setTimeout(injectShadowStyles, 50);
+        }
+        return;
+      }
+
+      // Check if style already injected
+      if (root.querySelector('style[data-rose-dropdown-color]')) {
+        return;
+      }
+
+      const rootStyle = document.createElement("style");
+      rootStyle.setAttribute("data-rose-dropdown-color", "true");
+      rootStyle.textContent = `
+        :host .ui-dropdown {
+          color: #CDBE91 !important;
+          font-size: 12px !important;
+          font-weight: normal !important;
+          line-height: 16px !important;
+          letter-spacing: 0.025em !important;
+          -webkit-font-smoothing: subpixel-antialiased !important;
+        }
+        
+        /* Remove all glow effects when not focused */
+        :host:not(:focus):not(:focus-within) .ui-dropdown,
+        :host:not(:focus):not(:focus-within) * {
+          filter: none !important;
+          -webkit-filter: none !important;
+          box-shadow: none !important;
+          text-shadow: none !important;
+          outline: none !important;
+        }
+      `;
+      root.appendChild(rootStyle);
+    };
+
+    // Try to inject styles immediately and retry if shadow root isn't ready
+    injectShadowStyles();
+
+    // Remove focus/shine effect after clicking - use the comprehensive function
+    modsDropdown.addEventListener("click", (e) => {
+      // Only remove focus if clicking outside of options (on the button itself)
+      if (!e.target.closest('lol-uikit-dropdown-option')) {
+        setTimeout(() => removeFocusAndGlow(), 100);
+      }
+    });
+
+    // Remove focus when mouse leaves the dropdown area
+    modsDropdown.addEventListener("mouseleave", () => {
+      // Only remove focus if dropdown is not active/open
+      if (!modsDropdown.classList.contains('active')) {
+        removeFocusAndGlow();
+      }
+    });
+
+    // Also blur when dropdown closes
+    modsDropdown.addEventListener("change", () => {
+      setTimeout(() => removeFocusAndGlow(), 50);
+      setTimeout(() => removeFocusAndGlow(), 150);
+    });
+
+    // Watch for when dropdown closes (active class removed) and remove focus
+    const activeObserver = new MutationObserver((mutations) => {
+      mutations.forEach((mutation) => {
+        if (mutation.type === 'attributes' && mutation.attributeName === 'class') {
+          // If active class was removed, ensure focus is removed
+          if (!modsDropdown.classList.contains('active')) {
+            removeFocusAndGlow();
+            // Also remove focus after a delay to catch any late updates
+            setTimeout(() => removeFocusAndGlow(), 50);
+            setTimeout(() => removeFocusAndGlow(), 150);
+          }
+        }
+      });
+    });
+    activeObserver.observe(modsDropdown, { attributes: true, attributeFilter: ['class'] });
+
+    // Manage custom mods dropdown
+    const manageDropdownContainer = document.createElement("div");
+    manageDropdownContainer.style.flex = "1";
+    manageDropdownContainer.style.minWidth = "0";
+
+    const manageDropdown = document.createElement("lol-uikit-framed-dropdown");
+    manageDropdown.id = "manage-custom-mods-dropdown";
+    manageDropdown.className = "lol-publishing-locale-preference-dropdown";
+    manageDropdown.setAttribute("tabindex", "0");
+    manageDropdown.style.width = "100%";
+
+    const managePlaceholderOption = document.createElement("lol-uikit-dropdown-option");
+    managePlaceholderOption.setAttribute("slot", "lol-uikit-dropdown-option");
+    managePlaceholderOption.setAttribute("value", "");
+    managePlaceholderOption.setAttribute("selected", "");
+    managePlaceholderOption.className = "placeholder-option framed-dropdown-type";
+    managePlaceholderOption.textContent = t("Manage custom mods");
+    managePlaceholderOption.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+      return false;
+    }, true);
+    manageDropdown.appendChild(managePlaceholderOption);
+
+    const manageCategories = [
+      { id: "skins", name: "Skins" },
+      { id: "maps", name: "Maps" },
+      { id: "fonts", name: "Fonts" },
+      { id: "announcers", name: "Announcers" },
+      { id: "ui", name: "UI" },
+      { id: "voiceover", name: "Voiceover" },
+      { id: "loading_screen", name: "Loading Screen" },
+      { id: "vfx", name: "VFX" },
+      { id: "sfx", name: "SFX" },
+      { id: "others", name: "Others" },
+    ];
+    manageCategories.forEach((category) => {
+      const option = document.createElement("lol-uikit-dropdown-option");
+      option.setAttribute("slot", "lol-uikit-dropdown-option");
+      option.setAttribute("value", category.id);
+      option.className = "framed-dropdown-type";
+      option.textContent = t(category.name);
+      manageDropdown.appendChild(option);
+    });
+
+    const removeManageFocusAndGlow = () => {
+      if (document.activeElement === manageDropdown || manageDropdown.contains(document.activeElement)) {
+        manageDropdown.blur();
+      }
+      const focusedEl = manageDropdown.querySelector(':focus');
+      if (focusedEl) focusedEl.blur();
+      manageDropdown.removeAttribute('tabindex');
+      manageDropdown.setAttribute('tabindex', '0');
+      const manageShadowRoot = manageDropdown.shadowRoot;
+      if (manageShadowRoot && manageShadowRoot.activeElement) manageShadowRoot.activeElement.blur();
+    };
+
+    const resetManageDropdown = () => {
+      manageDropdown.classList.remove("active");
+      manageDropdown.querySelectorAll('lol-uikit-dropdown-option[value!=""]').forEach(opt => opt.removeAttribute("selected"));
+      const managePh = manageDropdown.querySelector('.placeholder-option');
+      if (managePh) {
+        managePh.setAttribute("selected", "");
+        manageDropdown.setAttribute("value", "");
+      }
+      removeManageFocusAndGlow();
+      setTimeout(() => {
+        const ph = manageDropdown.querySelector('.placeholder-option');
+        if (ph && !ph.hasAttribute('selected')) ph.setAttribute("selected", "");
+        manageDropdown.querySelectorAll('lol-uikit-dropdown-option[value!=""]').forEach(opt => opt.removeAttribute("selected"));
+        removeManageFocusAndGlow();
+      }, 10);
+    };
+
+    manageDropdown.addEventListener("change", (e) => {
+      const selectedValue = e.target.value || e.detail?.value;
+      if (selectedValue) {
+        handleManageCategorySelection(selectedValue);
+        resetManageDropdown();
+      }
+    });
+
+    manageDropdown.querySelectorAll('lol-uikit-dropdown-option').forEach((option) => {
+      option.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const categoryId = option.getAttribute("value");
+        if (categoryId) {
+          option.removeAttribute("selected");
+          handleManageCategorySelection(categoryId);
+          resetManageDropdown();
+          [0, 50, 100, 200].forEach(d => setTimeout(removeManageFocusAndGlow, d));
+        }
+      }, true);
+    });
+
+    const manageSelectedObserver = new MutationObserver((mutations) => {
+      mutations.forEach((mutation) => {
+        if (mutation.type === 'attributes' && mutation.attributeName === 'selected') {
+          const target = mutation.target;
+          if (target.getAttribute('value')) {
+            const ph = manageDropdown.querySelector('.placeholder-option');
+            if (ph && !ph.hasAttribute('selected')) {
+              target.removeAttribute('selected');
+              ph.setAttribute('selected', '');
+            }
+          }
+        }
+      });
+    });
+    manageDropdown.querySelectorAll('lol-uikit-dropdown-option').forEach(opt =>
+      manageSelectedObserver.observe(opt, { attributes: true, attributeFilter: ['selected'] })
+    );
+
+    manageDropdownContainer.appendChild(manageDropdown);
+    customModsRow.appendChild(manageDropdownContainer);
+
+    let manageRetryCount = 0;
+    const injectManageShadowStyles = () => {
+      const root = manageDropdown.shadowRoot;
+      if (!root) {
+        if (manageRetryCount < MAX_RETRIES) { manageRetryCount++; setTimeout(injectManageShadowStyles, 50); }
+        return;
+      }
+      if (root.querySelector('style[data-rose-dropdown-color]')) return;
+      const s = document.createElement("style");
+      s.setAttribute("data-rose-dropdown-color", "true");
+      s.textContent = `
+        :host .ui-dropdown {
+          color: #CDBE91 !important;
+          font-size: 12px !important;
+          font-weight: normal !important;
+          line-height: 16px !important;
+          letter-spacing: 0.025em !important;
+          -webkit-font-smoothing: subpixel-antialiased !important;
+        }
+        :host:not(:focus):not(:focus-within) .ui-dropdown,
+        :host:not(:focus):not(:focus-within) * {
+          filter: none !important;
+          -webkit-filter: none !important;
+          box-shadow: none !important;
+          text-shadow: none !important;
+          outline: none !important;
+        }
+      `;
+      root.appendChild(s);
+    };
+    injectManageShadowStyles();
+
+    manageDropdown.addEventListener("click", (e) => {
+      if (!e.target.closest('lol-uikit-dropdown-option')) setTimeout(removeManageFocusAndGlow, 100);
+    });
+    manageDropdown.addEventListener("mouseleave", () => {
+      if (!manageDropdown.classList.contains('active')) removeManageFocusAndGlow();
+    });
+    manageDropdown.addEventListener("change", () => {
+      [50, 150].forEach(d => setTimeout(removeManageFocusAndGlow, d));
+    });
+
+    const manageActiveObserver = new MutationObserver((mutations) => {
+      mutations.forEach((mutation) => {
+        if (mutation.type === 'attributes' && mutation.attributeName === 'class') {
+          if (!manageDropdown.classList.contains('active')) {
+            removeManageFocusAndGlow();
+            [50, 150].forEach(d => setTimeout(removeManageFocusAndGlow, d));
+          }
+        }
+      });
+    });
+    manageActiveObserver.observe(manageDropdown, { attributes: true, attributeFilter: ['class'] });
 
     // Open logs folder button
     const logsButton = document.createElement("lol-uikit-flat-button-secondary");
     logsButton.id = "logs-folder-button";
-    logsButton.textContent = "Open Logs Folder";
+    logsButton.textContent = t("Open Logs Folder");
     logsButton.style.marginTop = "8px";
     logsButton.style.width = "100%";
     logsButton.addEventListener("click", () => {
@@ -2277,7 +2945,7 @@
     // Troubleshooting button (opens a small dialog with compact errors)
     const troubleshootButton = document.createElement("lol-uikit-flat-button-secondary");
     troubleshootButton.id = "troubleshoot-button";
-    troubleshootButton.textContent = "Troubleshooting";
+    troubleshootButton.textContent = t("Troubleshooting");
     troubleshootButton.style.marginTop = "8px";
     troubleshootButton.style.width = "100%";
     troubleshootButton.addEventListener("click", () => {
@@ -2289,7 +2957,7 @@
     // Open Pengu Loader UI button
     const penguUIButton = document.createElement("lol-uikit-flat-button-secondary");
     penguUIButton.id = "pengu-ui-button";
-    penguUIButton.textContent = "Open Pengu Loader UI";
+    penguUIButton.textContent = t("Open Pengu Loader UI");
     penguUIButton.style.marginTop = "8px";
     penguUIButton.style.width = "100%";
     penguUIButton.addEventListener("click", () => {
@@ -2300,9 +2968,11 @@
     // Save button (moved to last position)
     const saveButton = document.createElement("lol-uikit-flat-button-secondary");
     saveButton.id = "save-button";
-    saveButton.textContent = "Save";
+    saveButton.textContent = t("Save");
     saveButton.style.marginTop = "8px";
-    saveButton.style.width = "21%";
+    // At least its usual size, wider when the text is longer (other languages)
+    saveButton.style.minWidth = "21%";
+    saveButton.style.maxWidth = "100%";
     saveButton.addEventListener("click", () => {
       saveSettings();
     });
@@ -2765,7 +3435,7 @@
     // Title
     const title = document.createElement("div");
     title.className = "settings-title";
-    title.textContent = "Add Custom Mods";
+    title.textContent = t("Add Custom Mods");
     flyoutContent.appendChild(title);
 
     // Category buttons container
@@ -2789,7 +3459,7 @@
 
     categories.forEach((category) => {
       const categoryButton = document.createElement("lol-uikit-flat-button-secondary");
-      categoryButton.textContent = category.name;
+      categoryButton.textContent = t(category.name);
       categoryButton.style.width = "100%";
       categoryButton.style.padding = "12px";
       categoryButton.addEventListener("click", () => {
@@ -2872,7 +3542,7 @@
     const backButton = document.createElement("button");
     backButton.className = "back-button";
     backButton.innerHTML = '<svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"></polyline></svg>';
-    backButton.setAttribute("aria-label", "Go back");
+    backButton.setAttribute("aria-label", t("Go back"));
     backButton.addEventListener("click", () => {
       closeChampionSelection();
     });
@@ -2882,8 +3552,8 @@
     const titleWrapper = document.createElement("div");
     titleWrapper.className = "dialog-title-wrapper";
     titleWrapper.textContent = window.__roseChampionSelectionMode === "manage"
-      ? "Manage Mods - Select Champion"
-      : "Select Champion";
+      ? t("Manage Mods - Select Champion")
+      : t("Select Champion");
     header.appendChild(titleWrapper);
 
     flyoutContent.appendChild(header);
@@ -2906,7 +3576,7 @@
     searchInput.type = "search";
     searchInput.name = "champion_search";
     searchInput.id = "champion-search-input";
-    searchInput.placeholder = "Search champions...";
+    searchInput.placeholder = t("Search champions...");
     searchInput.autocomplete = "off";
     searchInput.autocorrect = "off";
     searchInput.autocapitalize = "off";
@@ -2919,7 +3589,7 @@
     // Loading indicator
     const loadingIndicator = document.createElement("div");
     loadingIndicator.id = "champion-loading";
-    loadingIndicator.textContent = "Loading champions...";
+    loadingIndicator.textContent = t("Loading champions...");
     loadingIndicator.style.color = "#cdbe91";
     loadingIndicator.style.textAlign = "center";
     loadingIndicator.style.padding = "20px";
@@ -2980,7 +3650,7 @@
     championsGrid.innerHTML = "";
 
     if (champions.length === 0) {
-      championsGrid.innerHTML = `<div style="grid-column: 1 / -1; color: #cdbe91; text-align: center; padding: 20px; font-family: 'Beaufort for LOL', serif;">No champions found matching your search.</div>`;
+      championsGrid.innerHTML = `<div style="grid-column: 1 / -1; color: #cdbe91; text-align: center; padding: 20px; font-family: 'Beaufort for LOL', serif;">${escapeHtml(t("No champions found matching your search."))}</div>`;
       return;
     }
 
@@ -3063,7 +3733,7 @@
     const backButton = document.createElement("button");
     backButton.className = "back-button";
     backButton.innerHTML = '<svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"></polyline></svg>';
-    backButton.setAttribute("aria-label", "Go back");
+    backButton.setAttribute("aria-label", t("Go back"));
     backButton.addEventListener("click", (e) => {
       e.stopPropagation();
       closeSkinSelection();
@@ -3074,7 +3744,7 @@
     // Title text
     const titleWrapper = document.createElement("div");
     titleWrapper.className = "dialog-title-wrapper";
-    titleWrapper.textContent = "Select Skins & Chromas";
+    titleWrapper.textContent = t("Select Skins & Chromas");
     header.appendChild(titleWrapper);
 
     flyoutContent.appendChild(header);
@@ -3082,7 +3752,7 @@
     // Loading indicator
     const loadingIndicator = document.createElement("div");
     loadingIndicator.id = "skin-loading";
-    loadingIndicator.textContent = "Loading skins...";
+    loadingIndicator.textContent = t("Loading skins...");
     loadingIndicator.style.color = "#cdbe91";
     loadingIndicator.style.textAlign = "center";
     loadingIndicator.style.padding = "20px";
@@ -3111,13 +3781,13 @@
 
     const selectionCount = document.createElement("span");
     selectionCount.id = "skin-selection-count";
-    selectionCount.textContent = "0 targets selected";
+    selectionCount.textContent = t("{count} targets selected", { count: 0 });
     selectionActions.appendChild(selectionCount);
 
     const confirmButton = document.createElement("button");
     confirmButton.id = "skin-selection-confirm";
     confirmButton.type = "button";
-    confirmButton.textContent = "Confirm & Select Mod";
+    confirmButton.textContent = t("Confirm & Select Mod");
     confirmButton.disabled = true;
     confirmButton.addEventListener("click", (e) => {
       e.stopPropagation();
@@ -3173,7 +3843,7 @@
     const selectionCount = document.getElementById("skin-selection-count");
     if (selectionCount) {
       const count = selectedSkinIds.size;
-      selectionCount.textContent = `${count} target${count === 1 ? "" : "s"} selected`;
+      selectionCount.textContent = count === 1 ? t("{count} target selected", { count }) : t("{count} targets selected", { count });
     }
 
     const confirmButton = document.getElementById("skin-selection-confirm");
@@ -3276,7 +3946,7 @@
     const backButton = document.createElement("button");
     backButton.className = "back-button";
     backButton.innerHTML = '<svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"></polyline></svg>';
-    backButton.setAttribute("aria-label", "Go back");
+    backButton.setAttribute("aria-label", t("Go back"));
     backButton.addEventListener("click", (e) => {
       e.stopPropagation();
       dismiss();
@@ -3296,7 +3966,7 @@
     listContainer.style.overflowX = "hidden";
     listContainer.style.maxHeight = "60vh";
     listContainer.style.marginTop = "12px";
-    listContainer.innerHTML = `<div style="color: #cdbe91; text-align: center; padding: 20px; font-family: 'Beaufort for LOL', serif;">Loading mods...</div>`;
+    listContainer.innerHTML = `<div style="color: #cdbe91; text-align: center; padding: 20px; font-family: 'Beaufort for LOL', serif;">${escapeHtml(t("Loading mods..."))}</div>`;
     flyoutContent.appendChild(listContainer);
 
     flyoutFrame.appendChild(flyoutContent);
@@ -3356,7 +4026,7 @@
       const renameButton = document.createElement("button");
       renameButton.type = "button";
       renameButton.className = "mod-rename-button";
-      renameButton.textContent = "Rename";
+      renameButton.textContent = t("Rename");
       renameButton.addEventListener("click", (e) => {
         e.stopPropagation();
         promptRenameMod(displayLabel, (newName) => onRename(renameButton, row, newName));
@@ -3367,7 +4037,7 @@
     const deleteButton = document.createElement("button");
     deleteButton.type = "button";
     deleteButton.className = "mod-delete-button";
-    deleteButton.textContent = "Delete";
+    deleteButton.textContent = t("Delete");
     deleteButton.addEventListener("click", (e) => {
       e.stopPropagation();
       confirmDeleteMod(displayLabel, () => onDelete(deleteButton, row));
@@ -3397,7 +4067,7 @@
     box.addEventListener("click", (e) => e.stopPropagation());
 
     const label = document.createElement("div");
-    label.textContent = "Rename mod";
+    label.textContent = t("Rename mod");
     label.style.cssText = "color:#c8aa6e;font-family:'Beaufort for LOL',serif;font-size:16px;font-weight:bold;margin-bottom:12px;text-align:center;";
     box.appendChild(label);
 
@@ -3414,7 +4084,7 @@
     const saveButton = document.createElement("button");
     saveButton.type = "button";
     saveButton.className = "mod-save-button";
-    saveButton.textContent = "Save";
+    saveButton.textContent = t("Save");
     const submit = () => {
       const value = input.value.trim();
       if (!value) return;
@@ -3427,7 +4097,7 @@
     const cancelButton = document.createElement("button");
     cancelButton.type = "button";
     cancelButton.className = "mod-rename-button";
-    cancelButton.textContent = "Cancel";
+    cancelButton.textContent = t("Cancel");
     cancelButton.addEventListener("click", () => dlg.remove());
     actionsRow.appendChild(cancelButton);
 
@@ -3466,7 +4136,7 @@
     message.style.color = "#cdbe91";
     message.style.fontFamily = '"Beaufort for LOL", serif';
     message.style.marginBottom = "16px";
-    message.textContent = `Delete mod "${modName}"? This cannot be undone.`;
+    message.textContent = t('Delete mod "{name}"? This cannot be undone.', { name: modName });
     box.appendChild(message);
 
     const actions = document.createElement("div");
@@ -3477,14 +4147,14 @@
     const cancelButton = document.createElement("button");
     cancelButton.type = "button";
     cancelButton.className = "mod-rename-button";
-    cancelButton.textContent = "Cancel";
+    cancelButton.textContent = t("Cancel");
     cancelButton.addEventListener("click", () => confirmDialog.remove());
     actions.appendChild(cancelButton);
 
     const deleteButton = document.createElement("button");
     deleteButton.type = "button";
     deleteButton.className = "mod-delete-button";
-    deleteButton.textContent = "Delete";
+    deleteButton.textContent = t("Delete");
     deleteButton.addEventListener("click", () => {
       confirmDialog.remove();
       onConfirm();
@@ -3499,7 +4169,7 @@
   function openChampionModsList(championId) {
     createModsListDialog(
       "champion-mods-manage-dialog",
-      "Manage Mods - Loading...",
+      t("Manage Mods - Loading..."),
       () => openChampionSelection("manage"),
       () => { delete window.__roseManageChampionId; }
     );
@@ -3527,14 +4197,14 @@
     const titleWrapper = dialog.querySelector(".dialog-title-wrapper");
     if (titleWrapper) {
       titleWrapper.textContent = payload.championName
-        ? `Manage Mods - ${payload.championName}`
-        : "Manage Mods";
+        ? t("Manage Mods - {name}", { name: payload.championName })
+        : t("Manage Mods");
     }
 
     listContainer.innerHTML = "";
     const mods = payload.mods || [];
     if (mods.length === 0) {
-      listContainer.innerHTML = `<div style="color: #cdbe91; text-align: center; padding: 20px; font-family: 'Beaufort for LOL', serif;">No custom mods installed for this champion.</div>`;
+      listContainer.innerHTML = `<div style="color: #cdbe91; text-align: center; padding: 20px; font-family: 'Beaufort for LOL', serif;">${escapeHtml(t("No custom mods installed for this champion."))}</div>`;
       return;
     }
 
@@ -3549,7 +4219,7 @@
         { name: mod.modName, displayName: mod.displayName, thumbnailUrl: mod.thumbnailUrl },
         (deleteButton, row) => {
           deleteButton.disabled = true;
-          deleteButton.textContent = "Deleting...";
+          deleteButton.textContent = t("Deleting...");
           if (bridge) bridge.send({
             type: "delete-champion-mod",
             championId: window.__roseManageChampionId,
@@ -3559,7 +4229,7 @@
         },
         (renameButton, row, newName) => {
           renameButton.disabled = true;
-          renameButton.textContent = "Saving...";
+          renameButton.textContent = t("Saving...");
           if (bridge) bridge.send({
             type: "rename-champion-mod",
             championId: window.__roseManageChampionId,
@@ -3604,7 +4274,7 @@
     const categoryMeta = MANAGE_MOD_CATEGORIES.find((c) => c.id === category);
     createModsListDialog(
       "category-mods-manage-dialog",
-      `Manage Mods - ${categoryMeta ? categoryMeta.name : category}`,
+      t("Manage Mods - {name}", { name: categoryMeta ? t(categoryMeta.name) : category }),
       null,
       () => { delete window.__roseManageCategory; }
     );
@@ -3625,7 +4295,7 @@
     listContainer.innerHTML = "";
     const mods = payload.mods || [];
     if (mods.length === 0) {
-      listContainer.innerHTML = `<div style="color: #cdbe91; text-align: center; padding: 20px; font-family: 'Beaufort for LOL', serif;">No custom mods installed in this category.</div>`;
+      listContainer.innerHTML = `<div style="color: #cdbe91; text-align: center; padding: 20px; font-family: 'Beaufort for LOL', serif;">${escapeHtml(t("No custom mods installed in this category."))}</div>`;
       return;
     }
 
@@ -3635,7 +4305,7 @@
         { name: mod.name, displayName: mod.displayName },
         (deleteButton) => {
           deleteButton.disabled = true;
-          deleteButton.textContent = "Deleting...";
+          deleteButton.textContent = t("Deleting...");
           if (bridge) bridge.send({
             type: "delete-category-mod",
             category: window.__roseManageCategory,
@@ -3644,7 +4314,7 @@
         },
         (renameButton, row, newName) => {
           renameButton.disabled = true;
-          renameButton.textContent = "Saving...";
+          renameButton.textContent = t("Saving...");
           if (bridge) bridge.send({
             type: "rename-category-mod",
             category: window.__roseManageCategory,
@@ -3694,16 +4364,16 @@
     if (!championsGrid) return;
 
     if (payload.error) {
-      championsGrid.innerHTML = `<div style="grid-column: 1 / -1; color: #ff6b6b; text-align: center; padding: 20px; font-family: 'Beaufort for LOL', serif;">${escapeHtml(payload.error)}</div>`;
+      championsGrid.innerHTML = `<div style="grid-column: 1 / -1; color: #ff6b6b; text-align: center; padding: 20px; font-family: 'Beaufort for LOL', serif;">${escapeHtml(tAny(payload.error))}</div>`;
       return;
     }
 
     const champions = payload.champions || [];
     if (champions.length === 0) {
       const emptyText = window.__roseChampionSelectionMode === "manage"
-        ? "No champions have custom skins yet."
-        : "No champions found. Please ensure League of Legends client is running.";
-      championsGrid.innerHTML = `<div style="grid-column: 1 / -1; color: #cdbe91; text-align: center; padding: 20px; font-family: 'Beaufort for LOL', serif;">${emptyText}</div>`;
+        ? t("No champions have custom skins yet.")
+        : t("No champions found. Please ensure League of Legends client is running.");
+      championsGrid.innerHTML = `<div style="grid-column: 1 / -1; color: #cdbe91; text-align: center; padding: 20px; font-family: 'Beaufort for LOL', serif;">${escapeHtml(emptyText)}</div>`;
       return;
     }
 
@@ -3738,7 +4408,7 @@
       } else {
         skinsListContainer.innerHTML = "";
       }
-      skinsListContainer.innerHTML = `<div style="color: #ff6b6b; text-align: center; padding: 20px; font-family: 'Beaufort for LOL', serif;">${escapeHtml(payload.error)}</div>`;
+      skinsListContainer.innerHTML = `<div style="color: #ff6b6b; text-align: center; padding: 20px; font-family: 'Beaufort for LOL', serif;">${escapeHtml(tAny(payload.error))}</div>`;
       return;
     }
 
@@ -3750,7 +4420,7 @@
     if (header && payload.championName) {
       const titleWrapper = header.querySelector(".dialog-title-wrapper");
       if (titleWrapper) {
-        titleWrapper.textContent = `Select Skins & Chromas - ${payload.championName}`;
+        titleWrapper.textContent = t("Select Skins & Chromas - {name}", { name: payload.championName });
       }
     }
 
@@ -3766,7 +4436,7 @@
     }
 
     if (skins.length === 0) {
-      skinsListContainer.innerHTML = `<div style="color: #cdbe91; text-align: center; padding: 20px; font-family: 'Beaufort for LOL', serif;">No skins found for this champion.</div>`;
+      skinsListContainer.innerHTML = `<div style="color: #cdbe91; text-align: center; padding: 20px; font-family: 'Beaufort for LOL', serif;">${escapeHtml(t("No skins found for this champion."))}</div>`;
       return;
     }
 
@@ -3805,14 +4475,14 @@
 
       const img = document.createElement("img");
       img.src = getTilePath(skin);
-      img.alt = skin.name || `Skin ${baseSkinId}`;
+      img.alt = skin.name || t("Skin {id}", { id: baseSkinId });
       img.loading = "lazy";
       img.onerror = function () { this.style.display = "none"; };
       front.appendChild(img);
 
       const nameEl = document.createElement("div");
       nameEl.className = "skin-name";
-      nameEl.textContent = skin.name || `Skin ${baseSkinId}`;
+      nameEl.textContent = skin.name || t("Skin {id}", { id: baseSkinId });
       front.appendChild(nameEl);
 
       front.addEventListener("click", () => handleSkinSelection(championId, baseSkinId));
@@ -3821,8 +4491,8 @@
         const chromaButton = document.createElement("button");
         chromaButton.type = "button";
         chromaButton.className = "skin-chroma-button";
-        chromaButton.textContent = `Chromas ${chromas.length}`;
-        chromaButton.setAttribute("aria-label", `Show ${chromas.length} chromas`);
+        chromaButton.textContent = t("Chromas {count}", { count: chromas.length });
+        chromaButton.setAttribute("aria-label", t("Show {count} chromas", { count: chromas.length }));
         chromaButton.addEventListener("click", (event) => {
           event.preventDefault();
           event.stopPropagation();
@@ -3843,7 +4513,7 @@
         backButton.type = "button";
         backButton.className = "skin-card-back-close";
         backButton.textContent = "\u2039";
-        backButton.setAttribute("aria-label", "Back to skin");
+        backButton.setAttribute("aria-label", t("Back to skin"));
         backButton.addEventListener("click", (event) => {
           event.preventDefault();
           event.stopPropagation();
@@ -3852,7 +4522,7 @@
         backHeader.appendChild(backButton);
 
         const backTitle = document.createElement("span");
-        backTitle.textContent = `${skin.name || "Skin"} - Chromas`;
+        backTitle.textContent = t("{name} - Chromas", { name: skin.name || t("Skin") });
         backHeader.appendChild(backTitle);
         back.appendChild(backHeader);
 
@@ -3868,7 +4538,7 @@
 
           const optionImg = document.createElement("img");
           optionImg.src = getTilePath(optionSkin);
-          optionImg.alt = optionSkin.name || `Skin ${optionId}`;
+          optionImg.alt = optionSkin.name || t("Skin {id}", { id: optionId });
           optionImg.loading = "lazy";
           optionImg.onerror = function () { this.style.display = "none"; };
           option.appendChild(optionImg);
@@ -3876,8 +4546,8 @@
           const optionName = document.createElement("span");
           optionName.className = "skin-option-name";
           optionName.textContent = optionIndex === 0
-            ? "Base skin"
-            : (optionSkin.name || `Chroma ${optionId}`);
+            ? t("Base skin")
+            : (optionSkin.name || t("Chroma {id}", { id: optionId }));
           option.appendChild(optionName);
 
           option.addEventListener("click", (event) => {
@@ -4002,7 +4672,7 @@
     panel.style.position = "absolute";
 
     const title = document.createElement("div");
-    title.textContent = "Troubleshooting";
+    title.textContent = t("Troubleshooting");
     title.style.color = "#cdbe91";
     title.style.fontFamily = "'Beaufort for LOL', serif";
     title.style.fontSize = "16px";
@@ -4012,7 +4682,7 @@
     // Top-right close button
     const closeBtn = document.createElement("button");
     closeBtn.type = "button";
-    closeBtn.setAttribute("aria-label", "Close");
+    closeBtn.setAttribute("aria-label", t("Close"));
     closeBtn.textContent = "×";
     closeBtn.style.position = "absolute";
     closeBtn.style.top = "6px";
@@ -4046,7 +4716,7 @@
     body.style.maxHeight = "220px";
     body.style.overflow = "auto";
     body.style.lineHeight = "1.35";
-    body.textContent = "Loading…";
+    body.textContent = t("Loading…");
     panel.appendChild(body);
 
     const foot = document.createElement("div");
@@ -4095,8 +4765,8 @@
     const errors = Array.isArray(diagnosticsState.errors) ? diagnosticsState.errors : [];
     if (errors.length === 0) {
       body.innerHTML = `
-        <div style="opacity:0.85; margin-bottom:8px;">No recent errors.</div>
-        <div style="opacity:0.75;">If something feels off, open the logs folder and share the latest log in a discord ticket.</div>
+        <div style="opacity:0.85; margin-bottom:8px;">${escapeHtml(t("No recent errors."))}</div>
+        <div style="opacity:0.75;">${escapeHtml(t("If something feels off, open the logs folder and share the latest log in a discord ticket."))}</div>
       `.trim();
     } else {
       const clamp = (n, min, max) => Math.max(min, Math.min(max, n));
@@ -4139,22 +4809,22 @@
 
           let fixText;
           if (thresholdAtMax) {
-            fixText = `Fix: you're already at the maximum Injection Threshold. This usually means the injection is extremely slow. Try lighter mods, close heavy apps, move League/mods to an SSD, and consider adding antivirus exclusions for the League and Rose folders. Then retry.`;
+            fixText = t("Fix: you're already at the maximum Injection Threshold. This usually means the injection is extremely slow. Try lighter mods, close heavy apps, move League/mods to an SSD, and consider adding antivirus exclusions for the League and Rose folders. Then retry.");
           } else if (hasTrackerData) {
-            fixText = `Fix: based on ${stats.confirmed_count} game(s), base skin confirmation takes up to ${stats.p90_ms}ms (p90). Recommended threshold: ${recS}s. Use the "Apply recommended" button below, or increase "Injection Threshold" manually.`;
+            fixText = t('Fix: based on {games} game(s), base skin confirmation takes up to {ms}ms (p90). Recommended threshold: {seconds}s. Use the "Apply recommended" button below, or increase "Injection Threshold" manually.', { games: stats.confirmed_count, ms: stats.p90_ms, seconds: recS });
           } else {
-            fixText = `Fix: increase "Injection Threshold (seconds)" and click Save. If the warning is still there, increase it again and Save again. Once the warning is gone, retry your skin selection.`;
+            fixText = t('Fix: increase "Injection Threshold (seconds)" and click Save. If the warning is still there, increase it again and Save again. Once the warning is gone, retry your skin selection.');
           }
 
           return {
             title:
               code === "BASE_SKIN_VERIFY_FAILED"
-                ? "Base skin verification failed (selected skin may not apply)"
-                : "Base skin forcing took too long (skin may not appear)",
+                ? t("Base skin verification failed (selected skin may not apply)")
+                : t("Base skin forcing took too long (skin may not appear)"),
             details: [
               code === "BASE_SKIN_VERIFY_FAILED"
-                ? `What it means: the client didn't confirm the base skin change in time.`
-                : `What it means: forcing the base skin took too long, so the selected skin may not show.`,
+                ? t("What it means: the client didn't confirm the base skin change in time.")
+                : t("What it means: forcing the base skin took too long, so the selected skin may not show."),
               fixText,
             ],
           };
@@ -4166,12 +4836,12 @@
             Number.isFinite(curMonitorTimeout) &&
             curMonitorTimeout >= (600 - 1e-6);
           return {
-            title: "Injection exceeded the timeout (process was stopped)",
+            title: t("Injection exceeded the timeout (process was stopped)"),
             details: [
-              `What it means: injection took longer than the allowed time, so ROSE stopped the process.`,
+              t("What it means: injection took longer than the allowed time, so ROSE stopped the process."),
               timeoutAtMax
-                ? `Fix: you're already at the maximum Monitor Auto-Resume Timeout. This usually means the injection is extremely slow. Try lighter mods, close heavy apps, move League/mods to an SSD, and consider adding antivirus exclusions for the League and Rose folders. Then retry.`
-                : `Fix: increase "Monitor Auto-Resume Timeout (seconds)" and click Save. If the warning is still there, increase it again and Save again. Once the warning is gone, try again.`,
+                ? t("Fix: you're already at the maximum Monitor Auto-Resume Timeout. This usually means the injection is extremely slow. Try lighter mods, close heavy apps, move League/mods to an SSD, and consider adding antivirus exclusions for the League and Rose folders. Then retry.")
+                : t('Fix: increase "Monitor Auto-Resume Timeout (seconds)" and click Save. If the warning is still there, increase it again and Save again. Once the warning is gone, try again.'),
             ],
           };
         }
@@ -4180,30 +4850,30 @@
           code === 'LOW_DISK_SPACE' || /Low Disk Space/i.test(raw) || /not enough disk space/i.test(raw);
         if (isLowDiskSpace) {
           return {
-            title: 'Not enough disk space for injection',
+            title: t('Not enough disk space for injection'),
             details: [
-              'What it means: Rose could not create the overlay for the selected skin.',
-              'Fix: free up space on the drive containing Rose injection files, then retry. Map mods can require several GB.',
+              t('What it means: Rose could not create the overlay for the selected skin.'),
+              t('Fix: free up space on the drive containing Rose injection files, then retry. Map mods can require several GB.'),
             ],
           };
         }
 
         if (code === 'LTK_PATCHER_EOL') {
           return {
-            title: 'LTK patcher is outdated (end of life reached)',
+            title: t('LTK patcher is outdated (end of life reached)'),
             details: [
-              'What it means: your ltk_patcher_dll.dll no longer supports the current game build, so skins cannot be injected.',
-              "Fix: update LTK Manager, copy its new ltk_patcher_host.exe and ltk_patcher_dll.dll into Rose's tools folder, then restart Rose.",
+              t('What it means: your ltk_patcher_dll.dll no longer supports the current game build, so skins cannot be injected.'),
+              t("Fix: update LTK Manager, copy its new ltk_patcher_host.exe and ltk_patcher_dll.dll into Rose's tools folder, then restart Rose."),
             ],
           };
         }
 
         if (code === 'LTK_PATCHER_MISSING') {
           return {
-            title: 'LTK patcher files are missing',
+            title: t('LTK patcher files are missing'),
             details: [
-              'What it means: Rose needs ltk_patcher_host.exe and ltk_patcher_dll.dll to inject skins.',
-              "Fix: copy both files from your LTK Manager install into Rose's tools folder, then restart Rose.",
+              t('What it means: Rose needs ltk_patcher_host.exe and ltk_patcher_dll.dll to inject skins.'),
+              t("Fix: copy both files from your LTK Manager install into Rose's tools folder, then restart Rose."),
             ],
           };
         }
@@ -4211,25 +4881,25 @@
         if (code === 'LTK_PATCHER_FAILED') {
           const detail = String(e?.detail || '').trim();
           return {
-            title: 'LTK patcher failed during injection',
+            title: t('LTK patcher failed during injection'),
             details: [
-              detail ? `What happened: ${detail}` : 'What happened: the LTK patcher reported an error.',
-              'Fix: make sure your LTK patcher files are up to date, then retry. Full output is in rose_runoverlay_*.log in the Rose logs folder.',
+              detail ? t('What happened: {detail}', { detail }) : t('What happened: the LTK patcher reported an error.'),
+              t('Fix: make sure your LTK patcher files are up to date, then retry. Full output is in rose_runoverlay_*.log in the Rose logs folder.'),
             ],
           };
         }
 
         // Fallback: show raw error text as-is.
         return {
-          title: raw || "(unknown error)",
+          title: raw ? tAny(raw) : t("(unknown error)"),
           details: [],
         };
       };
 
       const headerHtml = `
         <div style="display:flex; flex-direction:column; gap:4px; margin-bottom:10px;">
-          <div style="font-weight:700;">Errors (most recent first)</div>
-          <div style="opacity:0.75;">Tip: after changing a setting, click <span style="font-weight:700;">Save</span>, then retry.</div>
+          <div style="font-weight:700;">${escapeHtml(t("Errors (most recent first)"))}</div>
+          <div style="opacity:0.75;">${escapeHtml(t("Tip: after changing a setting, click {save}, then retry.")).replace("{save}", `<span style="font-weight:700;">${escapeHtml(t("Save"))}</span>`)}</div>
         </div>
       `.trim();
 
@@ -4250,14 +4920,14 @@
                 <span style="font-weight:800; color:#c89b3c;">${idx + 1}.</span>
                 ${tsHtml}
                 <span style="font-weight:700; flex:1;">${title}</span>
-                <button class="rose-diagnostics-delete" data-key="${escapeHtml(e?.key || e?.text || "")}" title="Delete this error" style="
+                <button class="rose-diagnostics-delete" data-key="${escapeHtml(e?.key || e?.text || "")}" title="${escapeHtml(t("Delete this error"))}" style="
                   border:none; background:none; color:#cdbe91; cursor:pointer; padding:0 2px; font-size:14px; line-height:1;
                 ">&#x2715;</button>
               </div>
               ${
                 detailsHtml
                   ? `<ul style="margin:0; padding-left:18px;">${detailsHtml}</ul>`
-                  : `<div style="opacity:0.8;">${escapeHtml(String(e?.text || "").trim() || "No additional details.")}</div>`
+                  : `<div style="opacity:0.8;">${escapeHtml(tAny(String(e?.text || "").trim()) || t("No additional details."))}</div>`
               }
             </div>
           `.trim();
@@ -4273,7 +4943,7 @@
     foot.innerHTML = "";
     if (errors.length > 0) {
       const clearAll = document.createElement("button");
-      clearAll.textContent = "Clear all";
+      clearAll.textContent = t("Clear all");
       clearAll.style.cssText = `
         padding:2px 10px; border:1px solid #463714; background:#1e2328;
         color:#cdbe91; cursor:pointer; font-family:'Beaufort for LOL',serif; font-size:12px;
@@ -4308,18 +4978,19 @@
     const curThresholdVal = typeof currentSettings?.threshold === "number" ? currentSettings.threshold : null;
     const needsIncrease = recS !== null && curThresholdVal !== null && curThresholdVal < parseFloat(recS) - 0.001;
     const games = stats.confirmed_count;
-    const label = `${games} game${games > 1 ? "s" : ""}`;
+    const label = games > 1 ? t("{count} games", { count: games }) : t("{count} game", { count: games });
 
     let html;
     if (needsIncrease) {
-      html = `<span style="color:#c8aa6e;">Based on ${label}, we recommend <span style="color:#c89b3c; font-weight:700;">${recS}s</span></span>`;
+      const recommended = `<span style="color:#c89b3c; font-weight:700;">${recS}s</span>`;
+      html = `<span style="color:#c8aa6e;">${escapeHtml(t("Based on {games}, we recommend {value}", { games: label })).replace("{value}", recommended)}</span>`;
       html += ` <button id="rose-apply-recommended-btn" style="
         margin-left:4px; padding:1px 8px; border:1px solid #463714; background:#1e2328;
         color:#cdbe91; cursor:pointer; font-family:'Beaufort for LOL',serif; font-size:11px;
         vertical-align:middle;
-      ">Apply</button>`;
+      ">${escapeHtml(t("Apply"))}</button>`;
     } else {
-      html = `<span style="color:#5b9a32;">Your threshold looks good (based on ${label})</span>`;
+      html = `<span style="color:#5b9a32;">${escapeHtml(t("Your threshold looks good (based on {games})", { games: label }))}</span>`;
     }
 
     el.innerHTML = html;
@@ -4329,7 +5000,7 @@
       applyBtn.addEventListener("click", () => {
         if (bridge) {
           bridge.send({ type: "diagnostics-apply-recommended" });
-          applyBtn.textContent = "Applied!";
+          applyBtn.textContent = t("Applied!");
           applyBtn.disabled = true;
           applyBtn.style.opacity = "0.6";
           setTimeout(() => {
@@ -4349,6 +5020,7 @@
   }
 
   function closeSettingsPanel() {
+    closeLanguageMenu();
     if (!settingsPanel) return;
 
     // Disable selected nav item

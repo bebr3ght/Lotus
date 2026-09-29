@@ -10,9 +10,11 @@ import threading
 import time
 from typing import Optional
 
+from injection.game.game_monitor import make_game_ended_callback
 from lcu import LCU
-from lcu.core.lockfile import SWIFTPLAY_MODES, SWIFTPLAY_QUEUE_ID
+from lcu.core.lockfile import SWIFTPLAY_MODES, SWIFTPLAY_QUEUE_IDS
 from state import SharedState
+from utils.core.historic import clear_historic_entry, get_historic_skin_for_champion, write_historic_entry
 from utils.core.logging import get_logger, log_action
 
 log = get_logger()
@@ -52,6 +54,9 @@ class SwiftplayHandler:
         self._last_sync_active_ids: Optional[frozenset] = None
         self._last_injected_tracking: dict = {}  # snapshot of tracking at last successful extraction
         self._user_changed_since_inject: set = set()  # champion IDs explicitly changed by user after last injection
+        # Champions the user set to a non-default skin this lobby session: their
+        # choice wins over the saved (historic) skin, like in champ select
+        self._historic_declined: set = set()
     
     def detect_swiftplay_in_lobby(self) -> tuple[Optional[str], Optional[int]]:
         """Detect lobby game mode using multiple API endpoints."""
@@ -108,8 +113,8 @@ class SwiftplayHandler:
                     log.debug(f"[phase] Error checking {endpoint}: {e}")
                     continue
 
-            # Queue ID 480 fallback when game_mode is None/unknown
-            if queue_id == SWIFTPLAY_QUEUE_ID and (not game_mode or game_mode.upper() not in SWIFTPLAY_MODES):
+            # Swiftplay/Quickplay queue ID fallback when game_mode is None/unknown/CLASSIC
+            if queue_id in SWIFTPLAY_QUEUE_IDS and (not game_mode or game_mode.upper() not in SWIFTPLAY_MODES):
                 game_mode = "SWIFTPLAY"
 
             result = (game_mode, queue_id)
@@ -318,14 +323,13 @@ class SwiftplayHandler:
                     active_ids.add(cid_int)
                     
                     with self.state.swiftplay_lock:
-                        # === НОВАЯ ЛОГИКА ЗДЕСЬ ===
                         # Проверяем, нужно ли восстанавливать скин из истории.
                         # Это происходит, если для чемпиона еще нет записи, ИЛИ если текущая запись - это базовый скин.
                         current_tracked_skin = self.state.swiftplay_skin_tracking.get(cid_int)
-                        is_base_skin = (current_tracked_skin == cid_int * 1000)
+                        is_base_skin_track = (current_tracked_skin == cid_int * 1000)
                         is_user_changed = cid_int in self._user_changed_since_inject
 
-                        if current_tracked_skin is None or (is_base_skin and not is_user_changed):
+                        if current_tracked_skin is None or (is_base_skin_track and not is_user_changed):
                             try:
                                 from utils.core.historic import get_historic_skin_for_champion, is_custom_mod_path, get_custom_mod_path
                                 historic_val = get_historic_skin_for_champion(cid_int)
@@ -334,7 +338,7 @@ class SwiftplayHandler:
                                     if is_custom_mod_path(historic_val):
                                         mod_path = get_custom_mod_path(historic_val)
                                         parts = mod_path.replace("\\", "/").split("/")
-                                        if len(parts) >= 2 and parts[0] == "skins":
+                                        if len(path_parts) >= 2 and path_parts[0] == "skins":
                                             historic_id = int(parts[1])
                                     else:
                                         historic_id = int(historic_val)
@@ -346,12 +350,11 @@ class SwiftplayHandler:
                                         log.info(f"[Swiftplay] Auto-selected historic skin {historic_id} for champion {cid_int}, overwriting base skin.")
                                 # Если записи в истории нет, но и в трекинге тоже, добавляем базовый скин из лобби
                                 elif current_tracked_skin is None and sid is not None:
-                                     self.state.swiftplay_skin_tracking[cid_int] = int(sid)
-                                     changed = True
+                                    self.state.swiftplay_skin_tracking[cid_int] = int(sid)
+                                    changed = True
 
                             except Exception as e:
                                 log.debug(f"[Swiftplay] Failed to load historic skin for {cid_int}: {e}")
-                        # ==========================
 
             if active_ids:
                 self._last_sync_active_ids = frozenset(active_ids)
@@ -372,9 +375,55 @@ class SwiftplayHandler:
         except Exception as e:
             log.debug(f"[phase] Error syncing tracking with lobby: {e}")
     
-    def mark_champion_changed(self, champion_id: int):
+    def mark_champion_changed(self, champion_id: int, skin_id: Optional[int] = None):
         """Mark a champion as explicitly changed by the user since last injection."""
         self._user_changed_since_inject.add(champion_id)
+        if skin_id is not None and skin_id != champion_id * 1000:
+            self._historic_declined.add(champion_id)
+
+    def _apply_historic_skins(self, active_ids: Optional[set]) -> None:
+        """Give champions left on their default skin their saved (historic) skin.
+
+        Like Historic mode in champ select: it applies while the lobby shows
+        the default skin, and a champion the user set to another skin this
+        session keeps that choice. Caller holds swiftplay_lock.
+        """
+        tracking = self.state.swiftplay_skin_tracking
+        for champion_id in active_ids or ():
+            if champion_id in self._historic_declined:
+                continue
+            current = tracking.get(champion_id)
+            if current is not None and current != champion_id * 1000:
+                continue
+            try:
+                saved = int(get_historic_skin_for_champion(champion_id))
+            except (TypeError, ValueError):
+                continue  # no entry, or a custom mod path (not injected here)
+            if saved != current:
+                tracking[champion_id] = saved
+                log.info(f"[HISTORIC] Swiftplay: using saved skin {saved} for champion {champion_id}")
+
+    def _forget_declined_historic_skins(self, tracking: dict) -> None:
+        """A champion the user set back to its default skin is queued with it:
+        forget its saved skin, as champ select does when the default skin is played."""
+        for champion_id in self._historic_declined:
+            if tracking.get(champion_id) == champion_id * 1000:
+                clear_historic_entry(champion_id)
+
+    def _remember_injected_skins(self) -> None:
+        """Save the skins this game used, like champ select does for Historic mode."""
+        for champion_id, skin_id in self._last_injected_tracking.items():
+            try:
+                champion_id, skin_id = int(champion_id), int(skin_id)
+            except (TypeError, ValueError):
+                continue
+            custom_mod = getattr(self.state, 'selected_custom_mod', None)
+            if custom_mod and custom_mod.get("champion_id") == champion_id and custom_mod.get("relative_path"):
+                write_historic_entry(champion_id, f"path:{custom_mod['relative_path']}")
+                log.info(f"[HISTORIC] Stored custom mod for Swiftplay champ {champion_id}")
+            elif skin_id != champion_id * 1000:
+                write_historic_entry(champion_id, skin_id)
+                log.info(f"[HISTORIC] Stored last injected ID {skin_id} for champion {champion_id} (Swiftplay)")
 
     def force_base_skins_if_needed(self):
         """Force base skins for all tracked champions.
@@ -383,6 +432,11 @@ class SwiftplayHandler:
         the Find-Match button, so the PUT happens while the lobby is
         still editable.
         """
+        # Saved skins count too: an unowned one needs the base skin in the client
+        active_ids = self._last_sync_active_ids or self._get_active_lobby_champion_ids()
+        with self.state.swiftplay_lock:
+            self._apply_historic_skins(active_ids)
+
         tracking = self.state.swiftplay_skin_tracking
         if not tracking:
             log.debug("[phase] force_base_skins: no tracked skins, nothing to force")
@@ -463,6 +517,7 @@ class SwiftplayHandler:
                 self._last_sync_active_ids = None
                 self._last_injected_tracking = {}
                 self._user_changed_since_inject = set()
+                self._historic_declined = set()
 
                 # Ensure Swiftplay flag and queue ID are cleared
                 self.state.is_swiftplay_mode = False
@@ -500,194 +555,230 @@ class SwiftplayHandler:
             return None
 
     def trigger_swiftplay_injection(self):
-            """Trigger injection system for Swiftplay mode with all tracked skins and custom mods"""
-            with self.state.swiftplay_lock:
-                try:
-                    log.info("[phase] Swiftplay matchmaking detected - triggering injection for all tracked skins")
-                    
-                    if self._last_injected_tracking:
-                        for cid, prev_skin in self._last_injected_tracking.items():
-                            if cid in self._user_changed_since_inject:
-                                continue
-                            current = self.state.swiftplay_skin_tracking.get(cid)
-                            if current is not None and current == int(cid) * 1000 and prev_skin != current:
-                                log.info(f"[phase] Restoring previous skin for champion {cid}: {current} → {prev_skin}")
-                                self.state.swiftplay_skin_tracking[cid] = prev_skin
-    
-                    if not self.state.swiftplay_skin_tracking:
-                        log.warning("[phase] No tracked skins - cannot trigger injection")
-                        return
-    
-                    # Always fetch fresh lobby state to avoid injecting removed champions
-                    active_champion_ids = self._get_active_lobby_champion_ids()
-                    
-                    if active_champion_ids:
-                        self._last_sync_active_ids = frozenset(active_champion_ids)
-                        stale = set(self.state.swiftplay_skin_tracking) - active_champion_ids
-                        if stale:
-                            for stale_cid in stale:
-                                self.state.swiftplay_skin_tracking.pop(stale_cid, None)
-                        filtered_tracking = dict(self.state.swiftplay_skin_tracking)
-                    else:
-                        filtered_tracking = dict(self.state.swiftplay_skin_tracking)
-    
-                    if not filtered_tracking:
-                        return
-    
-                    from utils.core.utilities import is_base_skin
-                    chroma_id_map = self.skin_scraper.cache.chroma_id_map if self.skin_scraper and self.skin_scraper.cache else None
-    
-                    if not self.injection_manager:
-                        return
-    
-                    self.injection_manager._ensure_initialized()
-                    if not self.injection_manager.injector:
-                        return
-    
-                    # --- ИСПРАВЛЕНИЕ ТУТ: Используем корректный метод очистки ---
-                    self.injection_manager.injector._clean_mods_dir()
-                    self.injection_manager.injector._clean_overlay_dir()
-    
-                    extracted_mods = []
-                    
-                    # РАЗДЕЛЯЕМ OTHER-МОДЫ НА FORCER И ОБЫЧНЫЕ
-                    other_mods = getattr(self.state, 'selected_other_mods', [])
-                    if not other_mods:
-                        old_other = getattr(self.state, 'selected_other_mod', None)
-                        if old_other: other_mods = [old_other]
-                    
-                    regular_other_mods = []
-                    forcer_mods = []
-                    for o_mod in other_mods:
-                        is_forcer = o_mod.get("is_map_forcer", False) or 'forcer' in o_mod.get("mod_name", "").lower()
-                        if is_forcer:
-                            forcer_mods.append(o_mod)
-                        else:
-                            regular_other_mods.append(o_mod)
-                    
-                    # 1. Извлекаем скины чемпионов
-                    for champion_id, skin_id in filtered_tracking.items():
-                        try:
-                            custom_skin_mod = getattr(self.state, 'selected_custom_mod', None)
-                            
-                            # Auto-select custom mod from history if not explicitly selected
-                            if not custom_skin_mod or custom_skin_mod.get("champion_id") != champion_id:
-                                try:
-                                    from utils.core.historic import get_historic_skin_for_champion, is_custom_mod_path, get_custom_mod_path
-                                    historic_val = get_historic_skin_for_champion(champion_id)
-                                    if historic_val and is_custom_mod_path(historic_val):
-                                        historic_mod_path = get_custom_mod_path(historic_val)
-                                        from injection.mods.storage import ModStorageService
-                                        from pathlib import Path
-                                        mod_storage = ModStorageService()
-                                        path_parts = historic_mod_path.replace("\\", "/").split("/")
-                                        if len(path_parts) >= 2 and path_parts[0] == "skins":
-                                            historic_skin_id = int(path_parts[1])
-                                            entries = mod_storage.list_mods_for_skin(historic_skin_id)
-                                            for entry in entries:
-                                                relative_path = str(entry.path.relative_to(mod_storage.mods_root)).replace("\\", "/")
-                                                if relative_path == historic_mod_path:
-                                                    mod_source = Path(entry.path)
-                                                    mod_folder_name = mod_source.name if mod_source.is_dir() else mod_source.stem
-                                                    custom_skin_mod = {
-                                                        "skin_id": historic_skin_id,
-                                                        "champion_id": champion_id,
-                                                        "mod_name": entry.mod_name,
-                                                        "mod_path": str(entry.path),
-                                                        "mod_folder_name": mod_folder_name,
-                                                        "relative_path": historic_mod_path,
-                                                    }
-                                                    log.info(f"[HISTORIC] Swiftplay auto-selected custom mod: {entry.mod_name}")
-                                                    break
-                                except Exception as e:
-                                    log.debug(f"[HISTORIC] Failed to auto-load custom mod for swiftplay: {e}")
+        """Trigger injection system for Swiftplay mode with all tracked skins and custom mods"""
+        with self.state.swiftplay_lock:
+            try:
+                log.info("[phase] Swiftplay matchmaking detected - triggering injection for all tracked skins")
+                log.info(f"[phase] Skin tracking dictionary: {self.state.swiftplay_skin_tracking}")
 
-                            if custom_skin_mod and custom_skin_mod.get("champion_id") == champion_id:
-                                mod_folder = self.injection_manager.prepare_custom_mod(custom_skin_mod, f"Custom Skin ({champion_id})")
-                                if mod_folder: extracted_mods.append(mod_folder)
-                            
-                            is_base = is_base_skin(skin_id, chroma_id_map)
-                            if is_base:
-                                injection_name = f"skin_{skin_id}"
-                                chroma_id_param = None
-                            else:
-                                injection_name = f"chroma_{skin_id}"
-                                chroma_id_param = skin_id
-    
-                            zip_path = self.injection_manager.injector._resolve_zip(
-                                injection_name, chroma_id=chroma_id_param, skin_name=injection_name,
-                                champion_name=None, champion_id=champion_id
-                            )
-    
-                            if zip_path and zip_path.exists():
-                                base_mod_folder = self.injection_manager.injector._extract_zip_to_mod(zip_path)
-                                if base_mod_folder:
-                                    extracted_mods.append(base_mod_folder.name)
-                                    
-                                    # Получаем локализованное имя скина для Swiftplay
-                                    skin_name_for_loadname = None
-                                    chroma_id_map = getattr(self.skin_scraper.cache, "chroma_id_map", {}) if self.skin_scraper and self.skin_scraper.cache else {}
-                                    if int(skin_id) in chroma_id_map:
-                                        skin_name_for_loadname = chroma_id_map[int(skin_id)].get('name')
-                                    else:
-                                        if self.skin_scraper and self.skin_scraper.cache:
-                                            skin_data = self.skin_scraper.cache.get_skin_by_id(int(skin_id))
-                                            if skin_data:
-                                                skin_name_for_loadname = skin_data.get('skinName')
-                                    
-                                    try:
-                                        from injection.loadingname.loading_name import build as build_loading_name, parse_skin_id
-                                        loading_name_mod = build_loading_name(
-                                            self.injection_manager.injector.game_dir,
-                                            self.injection_manager.injector.mods_dir,
-                                            base_mod_folder,
-                                            parse_skin_id(injection_name, champion_id),
-                                            localized_name=skin_name_for_loadname,
-                                        )
-                                        if loading_name_mod:
-                                            extracted_mods.append(loading_name_mod)
-                                            log.info(f"[Swiftplay] Added loading screen name mod: {loading_name_mod} (Name: {skin_name_for_loadname})")
-                                    except Exception as e:
-                                        log.error(f"[Swiftplay] Failed to build loading name mod: {e}", exc_info=True)
-                        except Exception as e:
-                            log.error(f"[phase] Error extracting skin {skin_id}: {e}")
-    
-                    # 2. Извлекаем глобальные моды
-                    map_mod = getattr(self.state, 'selected_map_mod', None)
-                    if map_mod:
-                        fld = self.injection_manager.prepare_custom_mod(map_mod, "Map")
-                        if fld: extracted_mods.append(fld)
-    
-                    font_mod = getattr(self.state, 'selected_font_mod', None)
-                    if font_mod:
-                        fld = self.injection_manager.prepare_custom_mod(font_mod, "Font")
-                        if fld: extracted_mods.append(fld)
-    
-                    announcer_mod = getattr(self.state, 'selected_announcer_mod', None)
-                    if announcer_mod:
-                        fld = self.injection_manager.prepare_custom_mod(announcer_mod, "Announcer")
-                        if fld: extracted_mods.append(fld)
-    
-                    for o_mod in regular_other_mods:
-                        fld = self.injection_manager.prepare_custom_mod(o_mod, "Other")
-                        if fld: extracted_mods.append(fld)
-    
-                    for f_mod in forcer_mods:
-                        fld = self.injection_manager.prepare_custom_mod(f_mod, "System Forcer")
-                        if fld: extracted_mods.append(fld)
-    
-                    extracted_mods = list(dict.fromkeys(extracted_mods))
-    
-                    if not extracted_mods:
-                        log.warning("[phase] No mods extracted - cannot inject")
-                        return
-                    self.state.swiftplay_extracted_mods = extracted_mods
-                    self._last_injected_tracking = dict(filtered_tracking)
-                    self._user_changed_since_inject.clear()
-                    log.info(f"[phase] Extracted {len(extracted_mods)} mod(s) - will inject: {', '.join(extracted_mods)}")
-    
-                except Exception as e:
-                    log.warning(f"[phase] Error extracting Swiftplay skins/mods: {e}")
+                if self._last_injected_tracking:
+                    for cid, prev_skin in self._last_injected_tracking.items():
+                        if cid in self._user_changed_since_inject:
+                            continue
+                        current = self.state.swiftplay_skin_tracking.get(cid)
+                        if current is not None and current == int(cid) * 1000 and prev_skin != current:
+                            log.info(f"[phase] Restoring previous skin for champion {cid}: {current} → {prev_skin}")
+                            self.state.swiftplay_skin_tracking[cid] = prev_skin
+
+                # Champions currently in lobby slots
+                active_champion_ids = (
+                    set(self._last_sync_active_ids) if self._last_sync_active_ids
+                    else self._get_active_lobby_champion_ids()
+                )
+                self._apply_historic_skins(active_champion_ids)
+
+                if not self.state.swiftplay_skin_tracking:
+                    log.warning("[phase] No tracked skins - cannot trigger injection")
+                    return
+
+                # Filter tracking dict to only include champions currently in lobby slots
+                if active_champion_ids:
+                    stale = set(self.state.swiftplay_skin_tracking) - active_champion_ids
+                    if stale:
+                        for stale_cid in stale:
+                            self.state.swiftplay_skin_tracking.pop(stale_cid, None)
+                        log.info(f"[phase] Pruned {len(stale)} stale champion(s) from tracking: {stale}")
+                    filtered_tracking = dict(self.state.swiftplay_skin_tracking)
+                else:
+                    log.debug("[phase] Could not determine active lobby champions - injecting all tracked skins")
+                    filtered_tracking = dict(self.state.swiftplay_skin_tracking)
+                self._forget_declined_historic_skins(filtered_tracking)
+
+                if not filtered_tracking:
+                    log.warning("[phase] No tracked skins for active champions - cannot trigger injection")
+                    return
+
+                total_skins = len(filtered_tracking)
+                log.info(f"[phase] Will inject {total_skins} skin(s) from tracking dictionary")
+
+                from utils.core.utilities import is_base_skin
+                chroma_id_map = self.skin_scraper.cache.chroma_id_map if self.skin_scraper and self.skin_scraper.cache else None
+
+                if not self.injection_manager:
+                    log.error("[phase] Injection manager not available")
+                    return
+
+                self.injection_manager._ensure_initialized()
+
+                if not self.injection_manager.injector:
+                    log.error("[phase] Injector not initialized")
+                    return
+
+                # Clean mods directory
+                self.injection_manager.injector._clean_mods_dir()
+                self.injection_manager.injector._clean_overlay_dir()
+
+                extracted_mods = []
+
+                # РАЗДЕЛЯЕМ OTHER-МОДЫ НА FORCER И ОБЫЧНЫЕ
+                other_mods = getattr(self.state, 'selected_other_mods', [])
+                if not other_mods:
+                    old_other = getattr(self.state, 'selected_other_mod', None)
+                    if old_other:
+                        other_mods = [old_other]
+
+                regular_other_mods = []
+                forcer_mods = []
+                for o_mod in other_mods:
+                    is_forcer = o_mod.get("is_map_forcer", False) or 'forcer' in o_mod.get("mod_name", "").lower()
+                    if is_forcer:
+                        forcer_mods.append(o_mod)
+                    else:
+                        regular_other_mods.append(o_mod)
+
+                # 1. Извлекаем скины чемпионов
+                for champion_id, skin_id in filtered_tracking.items():
+                    try:
+                        custom_skin_mod = getattr(self.state, 'selected_custom_mod', None)
+
+                        # Auto-select custom mod from history if not explicitly selected
+                        if not custom_skin_mod or custom_skin_mod.get("champion_id") != champion_id:
+                            try:
+                                from utils.core.historic import is_custom_mod_path, get_custom_mod_path
+                                historic_val = get_historic_skin_for_champion(champion_id)
+                                if historic_val and is_custom_mod_path(historic_val):
+                                    historic_mod_path = get_custom_mod_path(historic_val)
+                                    from injection.mods.storage import ModStorageService
+                                    from pathlib import Path
+                                    mod_storage = ModStorageService()
+                                    path_parts = historic_mod_path.replace("\\", "/").split("/")
+                                    if len(path_parts) >= 2 and path_parts[0] == "skins":
+                                        historic_skin_id = int(path_parts[1])
+                                        entries = mod_storage.list_mods_for_skin(historic_skin_id)
+                                        for entry in entries:
+                                            relative_path = str(entry.path.relative_to(mod_storage.mods_root)).replace("\\", "/")
+                                            if relative_path == historic_mod_path:
+                                                mod_source = Path(entry.path)
+                                                mod_folder_name = mod_source.name if mod_source.is_dir() else mod_source.stem
+                                                custom_skin_mod = {
+                                                    "skin_id": historic_skin_id,
+                                                    "champion_id": champion_id,
+                                                    "mod_name": entry.mod_name,
+                                                    "mod_path": str(entry.path),
+                                                    "mod_folder_name": mod_folder_name,
+                                                    "relative_path": historic_mod_path,
+                                                }
+                                                log.info(f"[HISTORIC] Swiftplay auto-selected custom mod: {entry.mod_name}")
+                                                break
+                            except Exception as e:
+                                log.debug(f"[HISTORIC] Failed to auto-load custom mod for swiftplay: {e}")
+
+                        if custom_skin_mod and custom_skin_mod.get("champion_id") == champion_id:
+                            mod_folder = self.injection_manager.prepare_custom_mod(custom_skin_mod, f"Custom Skin ({champion_id})")
+                            if mod_folder:
+                                extracted_mods.append(mod_folder)
+
+                        is_base = is_base_skin(skin_id, chroma_id_map)
+                        if is_base:
+                            injection_name = f"skin_{skin_id}"
+                            chroma_id_param = None
+                        else:
+                            injection_name = f"chroma_{skin_id}"
+                            chroma_id_param = skin_id
+
+                        zip_path = self.injection_manager.injector._resolve_zip(
+                            injection_name,
+                            chroma_id=chroma_id_param,
+                            skin_name=injection_name,
+                            champion_name=None,
+                            champion_id=champion_id
+                        )
+
+                        if zip_path and zip_path.exists():
+                            base_mod_folder = self.injection_manager.injector._extract_zip_to_mod(zip_path)
+                            if base_mod_folder:
+                                extracted_mods.append(base_mod_folder.name)
+                                log.info(f"[phase] Extracted {injection_name} to mods directory")
+
+                                # Получаем локализованное имя скина для Swiftplay
+                                skin_name_for_loadname = None
+                                chroma_id_map_local = getattr(self.skin_scraper.cache, "chroma_id_map", {}) if self.skin_scraper and self.skin_scraper.cache else {}
+                                if int(skin_id) in chroma_id_map_local:
+                                    skin_name_for_loadname = chroma_id_map_local[int(skin_id)].get('name')
+                                else:
+                                    if self.skin_scraper and self.skin_scraper.cache:
+                                        skin_data = self.skin_scraper.cache.get_skin_by_id(int(skin_id))
+                                        if skin_data:
+                                            skin_name_for_loadname = skin_data.get('skinName')
+
+                                try:
+                                    from injection.loadingname.loading_name import build as build_loading_name, parse_skin_id
+                                    loading_name_mod = build_loading_name(
+                                        self.injection_manager.injector.game_dir,
+                                        self.injection_manager.injector.mods_dir,
+                                        base_mod_folder,
+                                        parse_skin_id(injection_name, champion_id),
+                                        localized_name=skin_name_for_loadname,
+                                    )
+                                    if loading_name_mod:
+                                        extracted_mods.append(loading_name_mod)
+                                        log.info(f"[Swiftplay] Added loading screen name mod: {loading_name_mod} (Name: {skin_name_for_loadname})")
+                                except Exception as e:
+                                    log.error(f"[Swiftplay] Failed to build loading name mod: {e}", exc_info=True)
+                        else:
+                            log.warning(f"[phase] Skin ZIP not found: {injection_name}")
+                    except Exception as e:
+                        log.error(f"[phase] Error extracting skin {skin_id}: {e}")
+                        import traceback
+                        log.debug(f"[phase] Traceback: {traceback.format_exc()}")
+
+                # 2. Извлекаем глобальные моды
+                map_mod = getattr(self.state, 'selected_map_mod', None)
+                if map_mod:
+                    fld = self.injection_manager.prepare_custom_mod(map_mod, "Map")
+                    if fld:
+                        extracted_mods.append(fld)
+
+                font_mod = getattr(self.state, 'selected_font_mod', None)
+                if font_mod:
+                    fld = self.injection_manager.prepare_custom_mod(font_mod, "Font")
+                    if fld:
+                        extracted_mods.append(fld)
+
+                announcer_mod = getattr(self.state, 'selected_announcer_mod', None)
+                if announcer_mod:
+                    fld = self.injection_manager.prepare_custom_mod(announcer_mod, "Announcer")
+                    if fld:
+                        extracted_mods.append(fld)
+
+                for o_mod in regular_other_mods:
+                    fld = self.injection_manager.prepare_custom_mod(o_mod, "Other")
+                    if fld:
+                        extracted_mods.append(fld)
+
+                for f_mod in forcer_mods:
+                    fld = self.injection_manager.prepare_custom_mod(f_mod, "System Forcer")
+                    if fld:
+                        extracted_mods.append(fld)
+
+                extracted_mods = list(dict.fromkeys(extracted_mods))
+
+                if not extracted_mods:
+                    log.warning("[phase] No mods extracted - cannot inject")
+                    return
+
+                # Store extracted mods for later injection
+                self.state.swiftplay_extracted_mods = extracted_mods
+                # New mods need a new overlay, even if the last game's flag is stale
+                self._overlay_done = False
+                self._last_injected_tracking = dict(filtered_tracking)
+                self._user_changed_since_inject.clear()
+                log.info(f"[phase] Extracted {len(extracted_mods)} mod(s) - will inject on GameStart: {', '.join(extracted_mods)}")
+
+            except Exception as e:
+                log.warning(f"[phase] Error extracting Swiftplay skins/mods: {e}")
+                import traceback
+                log.debug(f"[phase] Traceback: {traceback.format_exc()}")
     
     def run_swiftplay_overlay(self):
         """Run overlay injection for Swiftplay mode with previously extracted mods"""
@@ -727,44 +818,17 @@ class SwiftplayHandler:
                     from config import get_config_float
                     user_timeout = int(get_config_float("General", "monitor_auto_resume_timeout", 120.0))
 
-                    # === ДОБАВЛЯЕМ КОЛЛБЭК ОКОНЧАНИЯ ИГРЫ ===
-                    has_been_in_progress = False
-
-                    def game_ended_callback():
-                        nonlocal has_been_in_progress
-                        phase = self.state.phase
-                        if phase == "InProgress":
-                            has_been_in_progress = True
-                            return False
-                        if phase in ("Reconnect", "GameStart"):
-                            return False
-                        return has_been_in_progress and phase not in ("InProgress", "Reconnect", "GameStart")
-                    # ========================================
-                    
                     result = self.injection_manager.injector._mk_run_overlay(
                         extracted_mods,
                         timeout=user_timeout,
-                        stop_callback=game_ended_callback, # <--- ПЕРЕДАЕМ КОЛЛБЭК СЮДА
+                        stop_callback=make_game_ended_callback(self.state),
                         injection_manager=self.injection_manager
                     )
 
                     if result == 0:
-                        log.info(f"[phase] Successfully injected {len(extracted_mods)} skin(s) for Swiftplay")
+                        log.info(f"[phase] Successfully injected {len(extracted_mods)} mod(s) for Swiftplay")
                         self._overlay_done = True
-                        
-                        # Save injected skins to history
-                        try:
-                            from utils.core.historic import write_historic_entry
-                            for cid, sid in self._last_injected_tracking.items():
-                                custom_mod = getattr(self.state, 'selected_custom_mod', None)
-                                if custom_mod and custom_mod.get("champion_id") == cid and custom_mod.get("relative_path"):
-                                    write_historic_entry(int(cid), f"path:{custom_mod['relative_path']}")
-                                    log.debug(f"[HISTORIC] Stored custom mod for Swiftplay champ {cid}")
-                                else:
-                                    write_historic_entry(int(cid), int(sid))
-                                    log.debug(f"[HISTORIC] Stored skin {sid} for Swiftplay champ {cid}")
-                        except Exception as e:
-                            log.debug(f"[HISTORIC] Failed to save Swiftplay history: {e}")
+                        self._remember_injected_skins()
                     else:
                         log.warning(f"[phase] Injection completed with non-zero exit code: {result}")
                 except Exception as e:

@@ -7,7 +7,7 @@ Handles phase-specific logic and UI management
 
 import logging
 from lcu import LCU
-from lcu.core.lockfile import SWIFTPLAY_QUEUE_ID
+from lcu.core.lockfile import SWIFTPLAY_QUEUE_IDS
 from state import SharedState
 from ui.chroma.selector import get_chroma_selector
 from utils.core.logging import get_logger, log_action
@@ -59,10 +59,10 @@ class PhaseHandler:
                         self.swiftplay_handler._injection_triggered = True
         
         elif phase == "ChampSelect":
-            # Queue ID 480 fallback - handles race condition where game_mode_detector
+            # Swiftplay/Quickplay queue ID fallback - handles race condition where game_mode_detector
             # hasn't set is_swiftplay_mode yet when we enter ChampSelect
-            if not self.state.is_swiftplay_mode and self.state.current_queue_id == SWIFTPLAY_QUEUE_ID:
-                log.info("[phase] ChampSelect - queue ID 480 detected, setting Swiftplay mode")
+            if not self.state.is_swiftplay_mode and self.state.current_queue_id in SWIFTPLAY_QUEUE_IDS:
+                log.info(f"[phase] ChampSelect - queue ID {self.state.current_queue_id} detected, setting Swiftplay mode")
                 self.state.is_swiftplay_mode = True
                 # Ensure handler state is initialized
                 if self.swiftplay_handler:
@@ -158,10 +158,14 @@ class PhaseHandler:
                 self._request_ui_destruction()
                 self._reset_state()
 
-        if phase == "Lobby" and previous_phase != "Lobby":
+        # Handle returning to Lobby from a Swiftplay game flow (dodge, decline, etc.)
+        # Only cleanup if we're NOT returning to a Swiftplay/Quickplay lobby.
+        # If the queue is still one of them, user wants to requeue with same skins — preserve tracking.
+        if phase == "Lobby" and previous_phase in _SWIFTPLAY_ACTIVE_PHASES:
             if self.state.is_swiftplay_mode and self.swiftplay_handler:
-                if self.state.current_queue_id == SWIFTPLAY_QUEUE_ID:
-                    log.info(f"[phase] Returned to Lobby from {previous_phase} - preserving skin tracking, resetting injection flags")
+                # Check if we're still in a Swiftplay/Quickplay lobby
+                if self.state.current_queue_id in SWIFTPLAY_QUEUE_IDS:
+                    log.info(f"[phase] Returned to Lobby from {previous_phase} - still in Swiftplay queue ({self.state.current_queue_id}), preserving skin tracking, resetting injection flags")
                     self.swiftplay_handler._injection_triggered = False
                     self.swiftplay_handler._overlay_done = False
                     self.swiftplay_handler._last_matchmaking_state = None
@@ -237,4 +241,3 @@ class PhaseHandler:
         # via cleanup_swiftplay_exit() which also handles the associated
         # tracking/mods state atomically.  Clearing the flag alone would
         # leave orphaned swiftplay_extracted_mods / swiftplay_skin_tracking.
-

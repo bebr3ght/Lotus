@@ -18,6 +18,7 @@ from utils.core.logging import get_logger, log_action
 from utils.core.utilities import is_default_skin
 from injection.config.base_skin_tracker import start_tracking as _start_skin_tracking
 from injection.loadingname.loading_name import build as build_loading_name, parse_skin_id
+from injection.game.game_monitor import make_game_ended_callback
 
 log = get_logger()
 
@@ -170,6 +171,15 @@ class InjectionTrigger:
         log.info(f"PREPARING INJECTION >>> {injection_label} <<<")
         log.info(f"   Loadout Timer: #{ticker_id}")
         log.info("=" * LOG_SEPARATOR_WIDTH)
+
+        # Friends get the skin injected now, not what the client shows once the
+        # base skin is forced below
+        party_manager = getattr(self.state, "party_manager", None)
+        if party_manager and getattr(party_manager, "enabled", False):
+            try:
+                party_manager.freeze_my_selection()
+            except Exception as e:
+                log.debug(f"[PARTY] Could not keep our selection for friends: {e}")
         
         try:
             lcu_skin_id = self.state.selected_skin_id
@@ -297,16 +307,26 @@ class InjectionTrigger:
             
             is_default = effective_skin_id is not None and is_default_skin(effective_skin_id)
             if is_default and not historic_active and not random_active:
-                log.info(f"[INJECT] skipping injection for default skin (skinId={effective_skin_id}) - no mods selected")
-                if self.injection_manager:
-                    self.injection_manager.resume_if_suspended()
-                return
+                if self.injection_manager and self._has_party_skins():
+                    # Our champion keeps its default skin, but friends' skins still need an overlay
+                    log.info(f"[INJECT] default skin (skinId={effective_skin_id}) - injecting party members' skins only")
+                    self._inject_party_skins_only()
+                else:
+                    log.info(f"[INJECT] skipping injection for default skin (skinId={effective_skin_id}) - no mods selected")
+                    if self.injection_manager:
+                        self.injection_manager.resume_if_suspended()
+                champ_id = self.state.locked_champ_id or self.state.hovered_champ_id
+                if champ_id:
+                    from utils.core.historic import clear_historic_entry
+                    clear_historic_entry(int(champ_id))
+                    log.info(f"[HISTORIC] Cleared historic entry for champion {champ_id} (default skin played)")
 
             elif effective_skin_id in owned_skin_ids and not is_default:
                 self._force_owned_skin(effective_skin_id)
                 if self.injection_manager:
                     self.injection_manager.inject_skin_immediately(
                         name,
+                        stop_callback=make_game_ended_callback(self.state),
                         champion_name=cname,
                         champion_id=locked_champ_id,
                         localized_name=resolved_loading_name,
@@ -316,6 +336,7 @@ class InjectionTrigger:
                 if self.injection_manager:
                     self.injection_manager.inject_skin_immediately(
                         name,
+                        stop_callback=make_game_ended_callback(self.state),
                         champion_name=cname,
                         champion_id=locked_champ_id,
                         localized_name=resolved_loading_name,
@@ -384,17 +405,8 @@ class InjectionTrigger:
                 if actual_lcu_skin_id is None or actual_lcu_skin_id != base_skin_id:
                     self._force_base_skin(base_skin_id)
             
-            has_been_in_progress = False
-
-            def game_ended_callback():
-                nonlocal has_been_in_progress
-                phase = self.state.phase
-                if phase == "InProgress":
-                    has_been_in_progress = True
-                    return False
-                if phase in ("Reconnect", "GameStart"):
-                    return False
-                return has_been_in_progress and phase not in ("InProgress", "Reconnect", "GameStart")
+            # Create callback to check if game ended
+            game_ended_callback = make_game_ended_callback(self.state)
             
             log.info(f"[INJECT] Starting injection: {name}")
             champ_id_for_history = self.state.locked_champ_id
@@ -442,11 +454,43 @@ class InjectionTrigger:
                 except Exception as e:
                     log.error(f"[INJECT] injection thread error: {e}")
             
-            threading.Thread(target=run_injection, daemon=True, name="InjectionThread").start()
-        
+            injection_thread = threading.Thread(target=run_injection, daemon=True, name="InjectionThread")
+            injection_thread.start()
+
         except Exception as e:
             log.error(f"[INJECT] injection error: {e}")
-    
+
+    def _has_party_skins(self) -> bool:
+        """Check if party mode has friends' skins to inject for this game"""
+        party_manager = getattr(self.state, "party_manager", None)
+        if not party_manager or not getattr(party_manager, "enabled", False):
+            return False
+        try:
+            from party.integration.injection_hook import PartyInjectionHook
+            return PartyInjectionHook(party_manager, self.state, self.injection_manager).has_party_skins()
+        except Exception as e:
+            log.debug(f"[INJECT] Party injection hook not used: {e}")
+            return False
+
+    def _inject_party_skins_only(self):
+        """Inject only party members' skins (our own champion keeps its default skin)"""
+        game_ended_callback = make_game_ended_callback(self.state)
+
+        def run_injection():
+            try:
+                if not self.lcu.ok:
+                    log.warning(f"[INJECT] LCU not available, skipping injection")
+                    return
+                if self.injection_manager.inject_party_skins_only(stop_callback=game_ended_callback):
+                    log.info("[INJECT] Party members' skins injected")
+                else:
+                    log.warning("[INJECT] Party members' skins were not injected")
+            except Exception as e:
+                log.error(f"[INJECT] party injection thread error: {e}")
+
+        injection_thread = threading.Thread(target=run_injection, daemon=True, name="PartyInjectionThread")
+        injection_thread.start()
+
     def _force_base_skin(self, base_skin_id: int):
         log.info(f"[INJECT] Forcing base skin (skinId={base_skin_id})")
         if self.state.ui_skin_thread:
@@ -461,6 +505,7 @@ class InjectionTrigger:
             pass
         
         base_skin_set_successfully = False
+        t_force0 = time.perf_counter()
         
         try:
             sess = self.lcu.session or {}
@@ -481,10 +526,77 @@ class InjectionTrigger:
             if not base_skin_set_successfully:
                 base_skin_set_successfully = self.lcu.set_my_selection_skin(base_skin_id)
 
+            # Log timing and start tracking for WebSocket confirmation.
+            # The real benchmark is how long until the server confirms the skin
+            # change via a session event — not just the API call duration.
+            dt_force_s = None
+            threshold_s = None
             if base_skin_set_successfully:
-                _start_skin_tracking(base_skin_id)
+                try:
+                    if self.injection_manager is not None:
+                        threshold_s = float(getattr(self.injection_manager, "injection_threshold", 0.0))
+                    else:
+                        from config import get_config_float
+                        threshold_s = float(get_config_float("General", "injection_threshold", 0.5))
+
+                    dt_force_s = float(time.perf_counter() - t_force0)
+                    log.info(f"[INJECT] Base skin force time: {dt_force_s:.3f}s (threshold: {threshold_s:.3f}s)")
+
+                    # Start tracking for WebSocket confirmation
+                    _start_skin_tracking(base_skin_id)
+                except Exception as e:
+                    log.warning("[INJECT] Could not start base skin confirmation tracking: %s", e, exc_info=True)
+            
+            # Verify the change
+            if base_skin_set_successfully:
                 if not getattr(self.state, 'random_mode_active', False):
                     time.sleep(BASE_SKIN_VERIFICATION_WAIT_S)
+                    verify_sess = self.lcu.session or {}
+                    verify_team = verify_sess.get("myTeam") or []
+                    for player in verify_team:
+                        if player.get("cellId") == my_cell:
+                            current_skin = player.get("selectedSkinId")
+                            if current_skin != base_skin_id:
+                                log.warning(f"[INJECT] Base skin verification failed: {current_skin} != {base_skin_id}")
+                                try:
+                                    from injection.config.base_skin_tracker import get_stats as _get_skin_stats
+                                    stats = _get_skin_stats()
+                                    rec_ms = stats.get("recommended_threshold_ms")
+                                    hint = "Retry your skin selection. If the warning persists, increase Injection Threshold."
+                                    if rec_ms is not None:
+                                        hint = (
+                                            f"Based on your history, base skin confirmation takes up to "
+                                            f"{stats.get('p90_ms', '?')}ms (p90). "
+                                            f"Recommended threshold: {rec_ms}ms ({rec_ms / 1000:.2f}s). "
+                                            f"Increase Injection Threshold in Settings."
+                                        )
+                                    elif isinstance(dt_force_s, (int, float)) and isinstance(threshold_s, (int, float)):
+                                        hint = (
+                                            f"Base skin force time: {float(dt_force_s):.3f}s, "
+                                            f"injection threshold: {float(threshold_s):.3f}s. "
+                                            f"Increase Injection Threshold until the warning is gone, then retry."
+                                        )
+                                    report_issue(
+                                        "BASE_SKIN_VERIFY_FAILED",
+                                        "warning",
+                                        "Base skin verification failed (selected skin may not apply).",
+                                        hint=hint,
+                                        details={
+                                            "expected_skin_id": str(base_skin_id),
+                                            "actual_skin_id": str(current_skin),
+                                        },
+                                        dedupe_window_s=60.0,
+                                    )
+                                except Exception as e:
+                                    log.debug("[INJECT] Could not report base skin verification issue: %s", e)
+                            else:
+                                log.info(f"[INJECT] Base skin verified: {current_skin}")
+                            break
+                else:
+                    log.info(f"[INJECT] Skipping base skin verification wait in random mode")
+            else:
+                log.warning(f"[INJECT] Failed to force base skin - injection may fail")
+        
         except Exception as e:
             log.error(f"[INJECT] Error forcing base skin: {e}")
     
@@ -596,17 +708,8 @@ class InjectionTrigger:
                     else:
                         self._force_base_skin(champion_id * 1000)
 
-            has_been_in_progress = False
-
-            def game_ended_callback():
-                nonlocal has_been_in_progress
-                phase = self.state.phase
-                if phase == "InProgress":
-                    has_been_in_progress = True
-                    return False
-                if phase in ("Reconnect", "GameStart"):
-                    return False
-                return has_been_in_progress and phase not in ("InProgress", "Reconnect", "GameStart")
+            # Create callback to check if game ended
+            game_ended_callback = make_game_ended_callback(self.state)
 
             try:
                 from config import get_config_float

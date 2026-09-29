@@ -343,6 +343,7 @@
     .skin-selection-carousel-container {
       clip-path: inset(-200px -9999px -9999px -9999px) !important;
     }
+
     @keyframes rose-rgb-glow {
       0% {
         background-color: hsl(340, 35%, 72%);
@@ -381,6 +382,18 @@
 
     body lol-uikit-navigation-item.menu_item_Golden:hover .menu-item-icon-wrapper .menu-item-icon.rose-rgb-icon {
       transform: scale(1.08) !important;
+    }
+
+    /* Rift Classic (JADE) champ select uses a separate skins-pane carousel */
+    .skins-pane .skins-pane__locked-overlay,
+    .skins-pane .skins-pane__locked-icon {
+      display: none !important;
+    }
+
+    .skins-pane .skins-pane__skin-card,
+    .skins-pane .skins-pane__skin-image {
+      filter: grayscale(0) saturate(1) contrast(1) !important;
+      -webkit-filter: grayscale(0) saturate(1) contrast(1) !important;
     }
   `;
 
@@ -501,6 +514,7 @@
     return match ? match[1].replace("_splash_tile_", "_splash_centered_") : null;
   }
 
+  // The splash the client itself set, even after we replaced it
   function clientSplash(img) {
     const src = img.getAttribute("src");
     return img.dataset.roseBanner && src === img.dataset.roseBanner ? img.dataset.roseOriginal : src;
@@ -569,9 +583,15 @@
       } catch (e) {
         log.error(`Failed to fetch splash for champ ${champId}`, e);
       }
-    }
+    } // End of for loop
+  } // End of handleSwiftplayState
 
-    applySwiftplayBannerReplacement();
+  function removeAgeRatingInChampSelect() {
+    if (!document.querySelector(".champion-select") && !document.querySelector(".skin-selection-carousel")) {
+      return;
+    }
+    document.querySelectorAll(".vng-age-rating").forEach((el) => el.remove());
+    document.querySelectorAll(".vng-age-rating-container").forEach((el) => el.remove());
   }
 
   function applySwiftplayBannerReplacement() {
@@ -683,10 +703,40 @@
     } catch (e) {}
   }, 150);
 
-  function removeAgeRatingInChampSelect() {
-    if (!document.querySelector(".champion-select") && !document.querySelector(".skin-selection-carousel")) return;
-    document.querySelectorAll(".vng-age-rating").forEach((el) => el.remove());
-    document.querySelectorAll(".vng-age-rating-container").forEach((el) => el.remove());
+  // Rift Classic shows the client's "Disabled" subtitle for unowned skins even after Rose unlocks them.
+  const CLASSIC_ENABLED_LABELS = {
+    pt: "Habilitada",
+    es: "Habilitada",
+    en: "Enabled",
+    fr: "Activée",
+    de: "Aktiviert",
+    it: "Abilitata",
+    pl: "Włączona",
+    ro: "Activată",
+    tr: "Etkin",
+    ru: "Доступен",
+  };
+  let classicEnabledLabel = CLASSIC_ENABLED_LABELS.en;
+
+  function loadClassicEnabledLabel() {
+    fetch("/riotclient/region-locale")
+      .then((response) => (response.ok ? response.json() : null))
+      .then((data) => {
+        const language = String((data && data.locale) || "")
+          .slice(0, 2)
+          .toLowerCase();
+        classicEnabledLabel = CLASSIC_ENABLED_LABELS[language] || CLASSIC_ENABLED_LABELS.en;
+      })
+      .catch((error) => log.warn("could not read client locale for Rift Classic labels", error));
+  }
+
+  function relabelClassicLockedSkin() {
+    const subtitle = document.querySelector(".skins-pane .skins-pane__sub-title");
+    if (!subtitle) return;
+    const centerLocked = document.querySelector(".skins-pane .skins-pane__skin-card--center-tile .skins-pane__locked-overlay");
+    if (centerLocked && subtitle.textContent.trim() !== classicEnabledLabel) {
+      subtitle.textContent = classicEnabledLabel;
+    }
   }
 
   function scanSkinSelection() {
@@ -698,6 +748,7 @@
       applyOffsetVisibility(skinItem);
     });
 
+    relabelClassicLockedSkin();
     markSkinsAsOwned();
     removeAgeRatingInChampSelect();
   }
@@ -941,6 +992,7 @@
       setupPenguWelcomeBadgeFix();
 
       interceptChampSelectWebsocket();
+      loadClassicEnabledLabel();
       injectInlineRules();
       scanSkinSelection();
       startSkinObserverGated();

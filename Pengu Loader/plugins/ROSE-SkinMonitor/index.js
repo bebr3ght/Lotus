@@ -11,7 +11,8 @@ const LOG_PREFIX = "[SkinMonitor]";
 const STATE_EVENT = "lu-skin-monitor-state";
 const SKIN_SELECTORS = [
   ".skin-name-text", // Classic Champ Select
-  ".skin-name",      // Swiftplay lobby
+  ".skins-pane__skin-title", // Rift Classic (JADE) Champ Select
+  ".skin-name", // Swiftplay lobby
 ];
 const POLL_INTERVAL_MS = 250;
 const RETRY_BASE_MS = 1000;

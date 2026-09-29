@@ -9,7 +9,12 @@ websocket-client==1.7.0
 websockets==12.0
 Pillow==10.4.0
 pystray==0.19.5
+<<<<<<< HEAD
 zstandard==0.22.0
+=======
+xxhash==4.0.1
+zstandard==0.25.0
+>>>>>>> main
 
 # Build requirements
 pyinstaller==6.3.0
