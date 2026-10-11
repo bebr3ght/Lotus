@@ -8,6 +8,7 @@
 console.log("[SkinMonitor] Plugin loaded");
 
 const LOG_PREFIX = "[SkinMonitor]";
+let skinSyncErrorLogged = false;
 const STATE_EVENT = "lu-skin-monitor-state";
 const SKIN_SELECTORS = [
   ".skin-name-text", // Classic Champ Select
@@ -21,8 +22,9 @@ const RETRY_MAX_MS = 30000;
 let BRIDGE_PORT = 50000;
 let BRIDGE_URL = `ws://127.0.0.1:${BRIDGE_PORT}`;
 const BRIDGE_PORT_STORAGE_KEY = "rose_bridge_port";
+// Every port Rose's bridge can take (BRIDGE_FIRST_PORT, BRIDGE_PORT_COUNT in pengu/core/skin_monitor.py)
 const DISCOVERY_START_PORT = 50000;
-const DISCOVERY_END_PORT = 50010;
+const DISCOVERY_END_PORT = 50099;
 
 async function loadBridgePort() {
   try {
@@ -134,6 +136,7 @@ let retryDelay = RETRY_BASE_MS;
 
 const _subscribers = new Map();
 const _readyCallbacks = new Set();
+const _disconnectCallbacks = new Set();
 
 function subscribe(type, cb) {
   if (!_subscribers.has(type)) _subscribers.set(type, new Set());
@@ -147,6 +150,12 @@ function onReady(cb) {
   _readyCallbacks.add(cb);
   if (bridgeReady) cb();
 }
+
+// Called when an open connection to Rose closes (not on failed reconnect attempts)
+function onDisconnect(cb) {
+  _disconnectCallbacks.add(cb);
+}
+
 function _notifySubscribers(data) {
   if (!data || !data.type) return;
   const subs = _subscribers.get(data.type);
@@ -158,6 +167,14 @@ function _notifySubscribers(data) {
 function _notifyReady() {
   for (const cb of _readyCallbacks) {
     try { cb(); } catch (e) { console.warn(`${LOG_PREFIX} onReady callback error:`, e); }
+  }
+}
+
+function _notifyDisconnect() {
+  for (const cb of _disconnectCallbacks) {
+    try { cb(); } catch (e) {
+      console.warn(`${LOG_PREFIX} onDisconnect callback error:`, e);
+    }
   }
 }
 
@@ -180,7 +197,13 @@ function resyncSkinAfterConnect() {
       originalName: name,
       timestamp: Date.now(),
     });
-  } catch {}
+  } catch (e) {
+    // Rose would inject without knowing the hovered skin: say why, once
+    if (!skinSyncErrorLogged) {
+      skinSyncErrorLogged = true;
+      console.warn(`${LOG_PREFIX} Could not send the hovered skin to Rose:`, e);
+    }
+  }
 }
 
 function publishSkinState(payload) {
@@ -257,7 +280,9 @@ function setupBridgeSocket() {
     return;
   }
 
+  let opened = false;
   bridgeSocket.addEventListener("open", () => {
+    opened = true;
     bridgeReady = true;
     retryDelay = RETRY_BASE_MS;
     if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
@@ -326,7 +351,12 @@ function setupBridgeSocket() {
     console.log(`${LOG_PREFIX} Bridge message: ${event.data}`);
   });
 
-  bridgeSocket.addEventListener("close", () => { bridgeReady = false; scheduleBridgeRetry(); });
+  bridgeSocket.addEventListener("close", () => {
+    bridgeReady = false;
+    if (opened) _notifyDisconnect();
+    scheduleBridgeRetry();
+  });
+
   bridgeSocket.addEventListener("error", (error) => {
     if (!bridgeErrorLogged) { console.warn(`${LOG_PREFIX} Bridge socket error`, error); bridgeErrorLogged = true; }
     bridgeReady = false;
@@ -453,13 +483,38 @@ function installFindMatchObserver() {
 // ====== SWIFTPLAY SMART PANEL (FULL TEXT & STABLE HIDE) ======
 let isSmartPanelOpen = false; // По умолчанию скрыта!
 
+// При открытом меню панель и кнопка остаются на экране, но уходят на нижний
+// слой и перестают перехватывать клики (меню должно кликаться свободно).
+const SMART_PANEL_BASE_Z = 1000;
+
+// Меню клиента живут в собственном слое: lol-uikit-dialog-frame, например,
+// имеет inline z-index: 0. Чтобы гарантированно оказаться ПОД меню, нужен
+// слой ниже нуля, поэтому берём минимальный z-index из открытых меню и
+// вычитаем единицу.
+function resolveBehindZIndex() {
+    let lowest = 0;
+    for (const el of getOpenOverlayElements()) {
+        const parsed = Number.parseInt(getComputedStyle(el).zIndex, 10);
+        const z = Number.isFinite(parsed) ? parsed : 0;
+        if (z < lowest) lowest = z;
+    }
+    return lowest - 1;
+}
+
+function applySmartPanelLayer(el, interactiveWhenFree = true) {
+    if (!el) return;
+    const behind = isOverlayOpen();
+    el.style.zIndex = behind ? resolveBehindZIndex() : SMART_PANEL_BASE_Z;
+    el.style.pointerEvents = behind ? 'none' : (interactiveWhenFree ? 'auto' : 'none');
+    el.setAttribute('data-behind', behind ? 'true' : 'false');
+}
+
 function updateSwiftplaySmartPanel(data) {
   let panel = document.getElementById('rose-swiftplay-smart-panel');
   
   const inLobby = isActuallyInLobby();
-  const overlayActive = isOverlayOpen();
   
-  if (!data.active || !inLobby || overlayActive || !data.skins || data.skins.length === 0) {
+  if (!data.active || !inLobby || !data.skins || data.skins.length === 0) {
       if (panel) panel.style.display = 'none';
       return;
   }
@@ -544,17 +599,17 @@ function updateSwiftplaySmartPanel(data) {
       `;
   }).join('');
   
-  if (!isOverlayOpen() && isSmartPanelOpen) {
+  if (isSmartPanelOpen) {
       panel.style.display = 'flex';
   } else {
       panel.style.display = 'none';
   }
+  applySmartPanelLayer(panel, false);
 }
 
 // ====== КНОПКА ПЕРЕКЛЮЧАТЕЛЯ ======
 function ensurePanelToggleButton() {
     const inLobby = isActuallyInLobby();
-    const overlayActive = isOverlayOpen();
     let btn = document.getElementById('rose-smart-panel-toggle');
 
     // При выходе из лобби уничтожаем кнопку
@@ -599,8 +654,10 @@ function ensurePanelToggleButton() {
             
             const panel = document.getElementById('rose-swiftplay-smart-panel');
             if (panel) {
-                panel.style.display = (isSmartPanelOpen && !isOverlayOpen()) ? 'flex' : 'none';
+                panel.style.display = isSmartPanelOpen ? 'flex' : 'none';
+                applySmartPanelLayer(panel, false);
             }
+            applySmartPanelLayer(btn, true);
             if (isSmartPanelOpen && window.__roseBridge && window.__roseBridge.ready) {
                 window.__roseBridge.send({type: "request-swiftplay-state"});
             }
@@ -609,11 +666,7 @@ function ensurePanelToggleButton() {
         document.body.appendChild(btn);
     }
 
-    if (overlayActive) {
-        btn.style.display = 'none';
-        return;
-    }
-
+    // Кнопка не прячется при открытом меню, а уходит на нижний слой
     // Синхронизация состояния (решает проблему "кнопка OFF, панель ON" при переоткрытии лобби)
     btn.style.color = isSmartPanelOpen ? '#0acbe6' : '#c8aa6e';
     btn.style.background = 'transparent';
@@ -628,6 +681,7 @@ function ensurePanelToggleButton() {
         }
     }
     btn.style.display = 'flex';
+    applySmartPanelLayer(btn, true);
 }
 
 // ====== КОНТРОЛЛЕР ВИДИМОСТИ ======
@@ -639,28 +693,44 @@ function isActuallyInLobby() {
 let isPanelRequested = false;
 let panelRequestTimer = null;
 
+const OVERLAY_SELECTORS = [
+    'lol-perks-v2-editor',
+    'lol-perks-v2-main-view',
+    '.perks-editor-modal',
+    'lol-uikit-full-page-modal',
+    'lol-uikit-dialog-frame',
+    '.champion-customization-flyout',
+    '.quick-play-champion-select-component',
+    '.quick-play-skin-select-component',
+    '.quick-play-loadout-container',
+    '#rose-custom-wheel-panel-container',
+    '#lu-custom-skin-panel-container',
+    '#lu-chroma-panel-container',
+    '#forms-wheel-panel-container',
+    '#rose-settings-panel',
+    '#champion-selection-dialog',
+    '#skin-selection-dialog',
+    '#add-custom-mods-dialog',
+    '#category-mods-manage-dialog',
+    '#champion-mods-manage-dialog'
+];
+
+// Видимые (не пустые, не скрытые) элементы-меню — их реальные слои нужны,
+// чтобы встать под самый нижний из них.
+function getOpenOverlayElements() {
+    const open = [];
+    for (const selector of OVERLAY_SELECTORS) {
+        const el = document.querySelector(selector);
+        if (el && (el.offsetWidth > 0 || el.offsetHeight > 0)) open.push(el);
+    }
+    return open;
+}
+
 function isOverlayOpen() {
     if (typeof isGlobalMode !== 'undefined' && isGlobalMode) return false;
-    
-    const overlays = [
-        'lol-perks-v2-editor',           
-        'lol-perks-v2-main-view',        
-        '.perks-editor-modal',
-        'lol-uikit-full-page-modal',
-        'lol-uikit-dialog-frame',
-        '.quick-play-champion-select-component',
-        '.quick-play-skin-select-component',
-        '.quick-play-loadout-container',
-        '#rose-custom-wheel-panel-container',
-        '#lu-chroma-panel-container',
-        '#forms-wheel-panel-container',
-        '#rose-settings-panel'
-    ];
 
-    for (const selector of overlays) {
-        const el = document.querySelector(selector);
-        if (el && (el.offsetWidth > 0 || el.offsetHeight > 0)) return true;
-    }
+    const open = getOpenOverlayElements();
+    if (open.length) return true;
 
     const flyouts = document.querySelectorAll('lol-uikit-flyout-frame');
     for (const f of flyouts) {
@@ -676,7 +746,6 @@ setInterval(() => {
     const panel = document.getElementById('rose-swiftplay-smart-panel');
     const btn = document.getElementById('rose-smart-panel-toggle');
     const inLobby = isActuallyInLobby();
-    const overlayActive = isOverlayOpen();
 
     if (!inLobby) {
         if (panel) panel.remove();
@@ -691,7 +760,7 @@ setInterval(() => {
 
     ensurePanelToggleButton();
 
-    const shouldShowPanel = !overlayActive && isSmartPanelOpen;
+    const shouldShowPanel = isSmartPanelOpen;
 
     if (shouldShowPanel) {
         if ((!panel || panel.style.display === 'none') && !isPanelRequested) {
@@ -708,6 +777,9 @@ setInterval(() => {
             panel.style.display = 'none';
         }
     }
+
+    // Открытое меню не прячет панель — только опускает её под меню
+    if (panel) applySmartPanelLayer(panel, false);
 }, 150);
 
 function setupPhaseSubscription() {
@@ -745,6 +817,7 @@ async function start() {
       subscribe,
       unsubscribe,
       onReady,
+      onDisconnect,
       get port() { return BRIDGE_PORT; },
       get ready() { return bridgeReady; },
     });

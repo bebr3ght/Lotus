@@ -277,12 +277,21 @@ def _resolve_pengu_dir() -> Path:
         # IMPORTANT: preserve the runtime `datastore` file.
         # Pengu Loader stores plugin/user settings there via `DataStore.*`. Overwriting it on
         # app update would wipe user preferences (e.g., enabled plugins, selected borders/icons).
-        shutil.copytree(
-            bundled_dir,
-            runtime_dir,
-            dirs_exist_ok=True,
-            ignore=shutil.ignore_patterns("datastore"),
-        )
+        try:
+            shutil.copytree(
+                bundled_dir,
+                runtime_dir,
+                dirs_exist_ok=True,
+                ignore=shutil.ignore_patterns("datastore"),
+            )
+        except shutil.Error as exc:
+            # copytree copies what it can and lists the rest. A running client
+            # keeps core.dll loaded, so it can't be replaced: the hook runs the
+            # loader already here. Running the bundled copy instead made Rose
+            # take this one for another loader and leave its hook on at exit.
+            if not ((runtime_dir / "Pengu Loader.exe").is_file() and (runtime_dir / "core.dll").is_file()):
+                raise
+            log.warning("Some Pengu Loader files are in use and were not updated: %s", exc)
 
         # If this is a fresh runtime directory (no datastore yet), seed it once from bundled.
         bundled_datastore = bundled_dir / "datastore"
@@ -311,6 +320,10 @@ def _resolve_pengu_dir() -> Path:
 PENGU_DIR = _resolve_pengu_dir()
 PENGU_EXE = PENGU_DIR / "Pengu Loader.exe"
 _PENGU_LOG = PENGU_DIR / "pengu.log"
+# The CLI normally answers in well under a second. A hung client, a locked
+# handle or a slow disk can block it forever, and on the cleanup path that
+# leaves Rose unable to exit with the game still suspended.
+_CLI_TIMEOUT_S = 15.0
 _LEAGUE_PROCESSES: set[str] = {
     'LeagueClient.exe', 'LeagueClientUx.exe',
     'LeagueClientUxRender.exe', 'League of Legends.exe',
@@ -407,9 +420,18 @@ def _run_cli_result(args: Sequence[str], ok_codes: Iterable[int] = (0,)) -> Opti
         result = subprocess.run(
             command, cwd=str(PENGU_DIR), text=True, capture_output=True,
             check=False, creationflags=_CREATE_NO_WINDOW,
+            timeout=_CLI_TIMEOUT_S,
         )
     except FileNotFoundError:
         log.error('Pengu Loader executable is missing at %s', PENGU_EXE)
+        return None
+    except subprocess.TimeoutExpired:
+        # TimeoutExpired derives from SubprocessError, not OSError, so the
+        # handler below would not catch it and the exception would abort the
+        # remaining cleanup steps (ADR-007).
+        log.error(
+            'Pengu Loader CLI timed out after %.0fs: %s', _CLI_TIMEOUT_S, command
+        )
         return None
     except OSError as exc:
         log.error('Failed to launch Pengu Loader CLI %s: %s', command, exc)
@@ -529,6 +551,12 @@ def activate() -> bool:
 
 def deactivate() -> bool:
     with _operation_lock:
+        other = _hook_of_another_loader()
+        if other is not None:
+            # --uninstall only removes a hook that runs our core.dll, but it would
+            # still switch off the config.ini the other loader's core.dll reads
+            log.info('The Pengu hook runs another loader (%s); leaving it on.', other)
+            return True
         _close_loader_menu()
         result = _run_cli_result(['--uninstall', '--silent'])
         if result is None or not result.succeeded:
@@ -538,6 +566,11 @@ def deactivate() -> bool:
         if status is not PenguStatus.INACTIVE:
             log.error('Pengu deactivation command succeeded, but status is %s.', status.value)
             return False
+        # --uninstall and --status only know a hook that runs this loader's
+        # core.dll: one left on the bundled copy stayed while both said done
+        core = _registered_pengu_core()
+        if core is not None and _is_bundled_copy(core) and core.parent.resolve() != PENGU_DIR.resolve():
+            return _remove_hook(core)
         return True
 
 
@@ -601,7 +634,8 @@ def _ensure_loader_config() -> None:
     core.dll skips hooking unless disabled=0 and loads plugins from
     loaderpath. The loader writes both on --install only, so an active hook
     can be left switched off (another account's loader wrote its own
-    config.ini, or an older Rose garbled loaderpath).
+    config.ini, an older Rose garbled loaderpath, or another Rose's loader
+    deactivated while ours held the hook).
     """
     loader_dir = str(PENGU_DIR)
     parser = configparser.ConfigParser(interpolation=None)
@@ -732,15 +766,17 @@ def cleanup_if_dirty() -> bool:
     return recover_stale_session(adopt_active=True)
 
 
+_IFEO_KEY = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\LeagueClientUx.exe"
+
+
 def _registered_pengu_core() -> Optional[Path]:
     """Read the configured loader without starting a CLI process."""
     if not _is_windows():
         return None
     try:
         import winreg
-        key_path = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\LeagueClientUx.exe"
         # The 64-bit view, where Pengu registers it, whatever Rose's own bitness
-        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, key_path, 0,
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, _IFEO_KEY, 0,
                             winreg.KEY_READ | winreg.KEY_WOW64_64KEY) as key:
             debugger, _ = winreg.QueryValueEx(key, "Debugger")
         match = re.fullmatch(r'rundll32(?:\.exe)?\s+"([^"]+)",\s*#6000\s*', debugger, re.IGNORECASE)
@@ -754,10 +790,42 @@ def _registered_pengu_core() -> Optional[Path]:
     return None
 
 
+def _is_bundled_copy(core: Path) -> bool:
+    """The core.dll bundled with this Rose: it ran that copy when it couldn't
+    update the runtime one (older versions did whenever the client was open)."""
+    bundled = _get_bundled_pengu_dir()
+    return bundled is not None and core.parent.resolve() == bundled.resolve()
+
+
+def _hook_of_another_loader() -> Optional[Path]:
+    """The core.dll the registered hook runs when it isn't ours (another Rose,
+    a standalone Pengu), or None."""
+    core = _registered_pengu_core()
+    if core is None or core.parent.resolve() == PENGU_DIR.resolve() or _is_bundled_copy(core):
+        return None
+    return core
+
+
+def _remove_hook(core: Path) -> bool:
+    """Remove the hook's Debugger value, as the loader's --uninstall does."""
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, _IFEO_KEY, 0,
+                            winreg.KEY_SET_VALUE | winreg.KEY_WOW64_64KEY) as key:
+            winreg.DeleteValue(key, "Debugger")
+    except FileNotFoundError:
+        return True
+    except OSError as exc:
+        log.error('Could not remove the Pengu hook left on %s: %s', core, exc)
+        return False
+    log.info('Removed the Pengu hook left on the bundled loader: %s', core)
+    return True
+
+
 def _external_pengu_with_rose_plugins() -> Optional[Path]:
     """Keep an already configured standalone Pengu installation in place."""
-    core = _registered_pengu_core()
-    if core is None or core.parent.resolve() == PENGU_DIR.resolve():
+    core = _hook_of_another_loader()
+    if core is None:
         return None
     external = core.parent
     if ((external / 'Pengu Loader.exe').is_file()
@@ -842,26 +910,25 @@ def activate_on_start(league_path: Optional[str] = None) -> bool:
                 PENGU_EXE, league_path,
             )
 
-        restart_needed = initial is PenguStatus.INACTIVE and _process_running(('LeagueClientUx.exe',))
-        rose_activated = False
+        # A running client loads Rose's plugins only when it starts, so it restarts
+        # whatever state an earlier Rose left the loader in
+        restart_needed = _process_running(('LeagueClientUx.exe',))
         activated_now = False
-        was_active_before_rose = initial is PenguStatus.ACTIVE
         if initial is PenguStatus.INACTIVE:
             log.info('Activating Pengu through official CLI (restart League: %s).', restart_needed)
             if not activate():
                 return False
-            rose_activated = True
             activated_now = True
+        elif stale_rose_owned:
+            log.info('Adopted the active Pengu session from the previous Rose process (restart League: %s).',
+                     restart_needed)
         else:
-            if stale_rose_owned:
-                log.info('Adopted the active Pengu session from the previous Rose process.')
-                rose_activated = True
-                was_active_before_rose = False
-            else:
-                log.info('Pengu was already active before Rose; preserving it.')
+            # --status only reports this loader's own core.dll as active, so an
+            # earlier Rose left it on: it's Rose's, and goes when Rose quits
+            log.info("Rose's Pengu Loader was already active; adopting it (restart League: %s).", restart_needed)
         _ensure_loader_config()
 
-        if not _write_session(was_active_before_rose, rose_activated):
+        if not _write_session(was_active=False, rose_activated=True):
             if activated_now:
                 log.error('Could not persist session state; reverting activation.')
                 deactivate()
@@ -885,6 +952,12 @@ def restore_after_rose() -> bool:
         should_deactivate = (
             _session_requires_deactivation(session) if session is not None else True
         )
+        other = _hook_of_another_loader() if should_deactivate else None
+        if other is not None:
+            # Another loader took the hook over: not ours to switch off (see
+            # deactivate), and the client runs its plugins, not ours
+            log.info('The Pengu hook runs another loader (%s); leaving it on.', other)
+            should_deactivate = False
         if should_deactivate:
             restart_needed = _is_league_running()
             if not _is_available():

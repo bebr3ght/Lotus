@@ -53,6 +53,11 @@
   let emittedHistoricSelectionKeys = new Set();
   let rightPaneMode = "summary";
 
+  // Ids the user explicitly turned off ("None" / unselect). A late response can
+  // still carry the backend's historic selection; these keys stop it from
+  // re-activating a mod the user just deselected.
+  const explicitlyDisabledKeys = new Set();
+
   let bridge = null;
   let isSwiftplayMode = false;
 
@@ -101,6 +106,87 @@
   function isActuallyInLobby() {
     const lobbyBanners = document.querySelector('.v2-banner-component.local-player');
     return !!(lobbyBanners && lobbyBanners.offsetParent !== null);
+  }
+
+  // Menus (runes/perks editor, settings, other Rose panels and dialogs) live on
+  // a higher layer. The Custom mods button stays on screen but drops below them
+  // and stops taking clicks, instead of being drawn on top of the menu.
+  const MENU_OVERLAY_SELECTORS = [
+    "lol-perks-v2-editor",
+    "lol-perks-v2-main-view",
+    ".perks-editor-modal",
+    "lol-uikit-full-page-modal",
+    "lol-uikit-dialog-frame",
+    ".champion-customization-flyout",
+    ".modal-root",
+    "#rose-settings-panel",
+    "#lu-custom-skin-panel-container",
+    "#lu-chroma-panel-container",
+    "#forms-wheel-panel-container",
+    "#champion-selection-dialog",
+    "#skin-selection-dialog",
+    "#add-custom-mods-dialog",
+    "#category-mods-manage-dialog",
+    "#champion-mods-manage-dialog",
+  ];
+
+  function getOpenMenuElements() {
+    const open = [];
+    for (const selector of MENU_OVERLAY_SELECTORS) {
+      const el = document.querySelector(selector);
+      if (el && (el.offsetWidth > 0 || el.offsetHeight > 0)) open.push(el);
+    }
+    return open;
+  }
+
+  function isMenuOverlayOpen() {
+    return getOpenMenuElements().length > 0;
+  }
+
+  // Меню клиента живут в собственном слое: lol-uikit-dialog-frame, например,
+  // имеет inline z-index: 0. Чтобы гарантированно оказаться ПОД меню, нужен
+  // слой ниже нуля — берём минимальный z-index открытых меню и вычитаем 1.
+  function resolveBehindZIndex() {
+    let lowest = 0;
+    for (const el of getOpenMenuElements()) {
+      const parsed = Number.parseInt(getComputedStyle(el).zIndex, 10);
+      const z = Number.isFinite(parsed) ? parsed : 0;
+      if (z < lowest) lowest = z;
+    }
+    return lowest - 1;
+  }
+
+  // Кнопка живёт внутри .champion-select, а тот может быть stacking context.
+// Тогда её собственный z-index не сравним со слоем меню — меню окажется под
+// ней в любом случае. Поэтому на время открытого меню кнопка переносится в
+// body (корень стека) и там честно опускается ниже слоя меню.
+function detachButtonToBody() {
+    if (!button || button.parentNode === document.body) return;
+    const rect = button.getBoundingClientRect();
+    button.__csRect = rect;
+    document.body.appendChild(button);
+    button.style.position = "fixed";
+    button.style.left = `${Math.round(rect.left)}px`;
+    button.style.top = `${Math.round(rect.top)}px`;
+    button.style.right = "auto";
+    button.style.bottom = "auto";
+  }
+
+  function applyButtonLayer() {
+    if (!button) return;
+    const behind = isMenuOverlayOpen();
+
+    if (behind) {
+      detachButtonToBody();
+      button.style.setProperty("z-index", String(resolveBehindZIndex()), "important");
+      button.style.setProperty("pointer-events", "none", "important");
+      button.setAttribute("data-behind-menu", "true");
+      return;
+    }
+
+    button.style.setProperty("z-index", "50", "important");
+    button.style.setProperty("pointer-events", "auto", "important");
+    button.removeAttribute("data-behind-menu");
   }
 
   function getCurrentSkinContext() {
@@ -166,6 +252,7 @@
     pendingSelectionRequest = null;
     latestSkinModsRequestId = null;
     currentSkinMods = [];
+    explicitlyDisabledKeys.clear();
   }
 
   function handlePhaseChange(data) {
@@ -210,6 +297,24 @@
       selectedCategoryIds[key] = [];
     }
     return selectedCategoryIds[key];
+  }
+
+  // The backend keeps re-reporting its historic selection until the deselect
+  // reaches it. Remember what the user just turned off so an in-flight
+  // response cannot switch the mod back on.
+  function markExplicitlyDisabled(scope, id) {
+    if (id === null || id === undefined || id === "") return;
+    explicitlyDisabledKeys.add(`${scope}:${String(id).replace(/\\/g, "/")}`);
+  }
+
+  function unmarkExplicitlyDisabled(scope, id) {
+    if (id === null || id === undefined || id === "") return;
+    explicitlyDisabledKeys.delete(`${scope}:${String(id).replace(/\\/g, "/")}`);
+  }
+
+  function isExplicitlyDisabled(scope, id) {
+    if (id === null || id === undefined || id === "") return false;
+    return explicitlyDisabledKeys.has(`${scope}:${String(id).replace(/\\/g, "/")}`);
   }
 
   function cleanModName(raw) {
@@ -344,7 +449,7 @@
       if (mode === "picker") panel._pickerView.classList.add("active");
       else panel._pickerView.classList.remove("active");
     }
-    if (panel._backBtn) panel._backBtn.style.display = mode === "picker" ? "inline-block" : "none";
+    if (panel._backBtn) panel._backBtn.classList.toggle("is-visible", mode === "picker");
 
     if (panel._rightTitle) {
       if (mode === "picker") {
@@ -444,9 +549,13 @@
 
 .${pnl} .rose-wheel-back-button, .${pnl} .mod-select-button {
   background: transparent !important; border: 1px solid #c8aa6e !important; color: #c8aa6e !important; cursor: pointer !important; transition: all 0.2s ease !important; flex-shrink: 0 !important;
-  border-radius: 0 !important; display: flex !important; align-items: center !important; justify-content: center !important; outline: none !important;
+  border-radius: 0 !important; align-items: center !important; justify-content: center !important; outline: none !important;
 }
+.${pnl} .mod-select-button { display: flex !important; }
 .${pnl} .rose-wheel-back-button { padding: 4px 10px !important; font-size: 11px !important; font-weight: 700 !important; text-transform: uppercase !important; }
+/* The Back button only exists inside a category picker; hidden on the category list. */
+.${pnl} .rose-wheel-back-button { display: none !important; }
+.${pnl} .rose-wheel-back-button.is-visible { display: inline-flex !important; }
 .${pnl} .mod-select-button { width: 26px !important; height: 26px !important; font-size: 20px !important; padding: 0 !important; line-height: 1 !important; }
 .${pnl} .rose-wheel-back-button:hover, .${pnl} .mod-select-button:hover { background: rgba(200, 170, 110, 0.15) !important; box-shadow: 0 0 8px rgba(200, 170, 110, 0.3) !important; color: #f0e6d2 !important; border-color: #f0e6d2 !important; }
 `;
@@ -489,6 +598,8 @@
       btn.style.pointerEvents = "auto";
       btn.style.opacity = "1";
       btn.removeAttribute("data-hidden");
+      // A menu may be open (runes, settings): stay visible, just go behind it.
+      applyButtonLayer();
     } else {
       btn.style.setProperty("display", "none", "important");
       btn.style.visibility = "hidden";
@@ -564,9 +675,17 @@
         modId: null,
         expectedModId: selectedModId,
       });
-      listItem.classList.remove("selected-row");
+      markExplicitlyDisabled("skins", modId);
+      // Drop it locally right away: waiting for the round trip let a
+      // skin-mods-response restore the mod before the deselect landed.
+      selectedModId = null;
+      selectedModSkinId = null;
+      const allItems = listItem.parentElement.querySelectorAll("li");
+      allItems.forEach(i => i.classList.remove("selected-row"));
+      updateNoneRow(panel?._modList, true);
     } else {
       const { championId, skinId } = getCurrentSkinContext();
+      unmarkExplicitlyDisabled("skins", modId);
       sendSkinModSelection({
         championId,
         skinId,
@@ -577,7 +696,6 @@
       allItems.forEach(i => i.classList.remove("selected-row"));
       listItem.classList.add("selected-row");
     }
-    updateNoneRow(panel?._modList, !selectedModId);
     refreshSummaryValues();
     refreshButtonBadgeFromSelections();
   }
@@ -609,8 +727,8 @@
     const nothingSelected = !isSelectedModForSkin(getCurrentSkinContext().skinId);
     if (nothingSelected) noneLi.classList.add("selected-row");
     noneLi.addEventListener("click", () => {
-      if (selectedModId) {
-        const { championId, skinId } = getCurrentSkinContext();
+      const { championId, skinId } = getCurrentSkinContext();
+      if (selectedModId && isSelectedModForSkin(skinId)) {
         sendSkinModSelection({
           championId,
           skinId,
@@ -618,6 +736,12 @@
           expectedModId: selectedModId,
         });
       }
+      // Remember the disabled mod and clear the local selection immediately,
+      // otherwise a still in-flight skin-mods-response brings it straight back.
+      markExplicitlyDisabled("skins", selectedModId);
+      selectedModId = null;
+      selectedModSkinId = null;
+
       const allLis = listEl.querySelectorAll("li");
       allLis.forEach(l => l.classList.remove("selected-row"));
       noneLi.classList.add("selected-row");
@@ -658,10 +782,12 @@
     if (index !== -1) {
       selectedIds.splice(index, 1);
       listItem.classList.remove("selected-row");
+      markExplicitlyDisabled(categoryId, otherId);
       if (bridge) bridge.send({ type: "select-other", category: categoryId, otherId, otherData, action: "deselect" });
     } else {
       selectedIds.push(otherId);
       listItem.classList.add("selected-row");
+      unmarkExplicitlyDisabled(categoryId, otherId);
       if (bridge) bridge.send({ type: "select-other", category: categoryId, otherId, otherData, action: "select" });
     }
 
@@ -707,6 +833,7 @@
 
       noneItem.addEventListener("click", () => {
         if (isSingleSelect) {
+          markExplicitlyDisabled(categoryId, selectedSingleId);
           if (categoryId === "maps") {
             selectedMapId = null;
             if (bridge) bridge.send({ type: "select-map", mapId: null });
@@ -720,6 +847,7 @@
         } else {
           const ids = getSelectedIdsForCategory(categoryId);
           for (const id of [...ids]) {
+            markExplicitlyDisabled(categoryId, id);
             if (bridge) bridge.send({ type: "select-other", category: categoryId, otherId: id, otherData: null, action: "deselect" });
           }
           ids.length = 0;
@@ -756,11 +884,13 @@
       listItem.addEventListener("click", () => {
         if (isSingleSelect) {
           if (selectedSingleId === itemId) {
+            markExplicitlyDisabled(categoryId, itemId);
             if (categoryId === "maps") { selectedMapId = null; if (bridge) bridge.send({ type: "select-map", mapId: null }); }
             else if (categoryId === "fonts") { selectedFontId = null; if (bridge) bridge.send({ type: "select-font", fontId: null }); }
             else if (categoryId === "announcers") { selectedAnnouncerId = null; if (bridge) bridge.send({ type: "select-announcer", announcerId: null }); }
             listItem.classList.remove("selected-row");
           } else {
+            unmarkExplicitlyDisabled(categoryId, itemId);
             if (categoryId === "maps") { selectedMapId = itemId; if (bridge) bridge.send({ type: "select-map", mapId: itemId, mapData: item }); }
             else if (categoryId === "fonts") { selectedFontId = itemId; if (bridge) bridge.send({ type: "select-font", fontId: itemId, fontData: item }); }
             else if (categoryId === "announcers") { selectedAnnouncerId = itemId; if (bridge) bridge.send({ type: "select-announcer", announcerId: itemId, announcerData: item }); }
@@ -818,7 +948,7 @@
     const title = document.createElement("div"); title.className = "rose-wheel-right-title"; title.textContent = tr("Custom Mods");
     const headerBtns = document.createElement("div"); headerBtns.style.display = "flex"; headerBtns.style.gap = "12px";
 
-    const backBtn = document.createElement("button"); backBtn.className = "rose-wheel-back-button"; backBtn.textContent = tr("Back"); backBtn.style.display = "none";
+    const backBtn = document.createElement("button"); backBtn.className = "rose-wheel-back-button"; backBtn.textContent = tr("Back");
     backBtn.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); setRightPaneMode("summary"); refreshSummaryValues(); });
 
     const closeBtn = document.createElement("button"); closeBtn.innerHTML = "&times;";
@@ -880,7 +1010,15 @@
       };
 
       addBtn.addEventListener("click", (e) => {
+        e.preventDefault();
         e.stopPropagation();
+        // Custom skins are not plain category mods: they are imported for a
+        // champion and bound to specific skins/chromas. Reuse the ready
+        // champion/skin card picker instead of the generic file dialog.
+        if (tab.id === "skins") {
+          window.dispatchEvent(new CustomEvent("rose-add-custom-skins"));
+          return;
+        }
         if (bridge) {
           bridge.send({ type: "add-custom-mods-category-selected", category: tab.id });
         }
@@ -1059,8 +1197,9 @@
 
     currentSkinMods = detail.mods || [];
     if (detail.historicMod && !selectedModId) {
-      const match = currentSkinMods.find(m => (m.relativePath || "").replace(/\\/g, "/") === String(detail.historicMod).replace(/\\/g, "/"));
-      if (match) {
+      const historicPath = String(detail.historicMod).replace(/\\/g, "/");
+      const match = currentSkinMods.find(m => (m.relativePath || "").replace(/\\/g, "/") === historicPath);
+      if (match && !isExplicitlyDisabled("skins", match.relativePath || match.modName)) {
         selectedModId = match.relativePath || match.modName;
         selectedModSkinId = Number(match.skinId);
       }
@@ -1078,7 +1217,7 @@
     lastMapsList = Array.isArray(detail.maps) ? detail.maps : [];
     if (detail.historicMod && !selectedMapId) {
       const hm = lastMapsList.find(m => (m.id||"").replace(/\\/g,"/") === String(detail.historicMod).replace(/\\/g,"/"));
-      if (hm) selectedMapId = hm.id || hm.name;
+      if (hm && !isExplicitlyDisabled("maps", hm.id || hm.name)) selectedMapId = hm.id || hm.name;
     }
     refreshSummaryValues();
     if (isOpen && rightPaneMode === "picker" && activeTab === "maps") updateMapsEntries(lastMapsList);
@@ -1090,7 +1229,7 @@
     lastFontsList = Array.isArray(detail.fonts) ? detail.fonts : [];
     if (detail.historicMod && !selectedFontId) {
       const hf = lastFontsList.find(f => (f.id||"").replace(/\\/g,"/") === String(detail.historicMod).replace(/\\/g,"/"));
-      if (hf) selectedFontId = hf.id || hf.name;
+      if (hf && !isExplicitlyDisabled("fonts", hf.id || hf.name)) selectedFontId = hf.id || hf.name;
     }
     refreshSummaryValues();
     if (isOpen && rightPaneMode === "picker" && activeTab === "fonts") updateFontsEntries(lastFontsList);
@@ -1102,7 +1241,7 @@
     lastAnnouncersList = Array.isArray(detail.announcers) ? detail.announcers : [];
     if (detail.historicMod && !selectedAnnouncerId) {
       const ha = lastAnnouncersList.find(a => (a.id||"").replace(/\\/g,"/") === String(detail.historicMod).replace(/\\/g,"/"));
-      if (ha) selectedAnnouncerId = ha.id || ha.name;
+      if (ha && !isExplicitlyDisabled("announcers", ha.id || ha.name)) selectedAnnouncerId = ha.id || ha.name;
     }
     refreshSummaryValues();
     if (isOpen && rightPaneMode === "picker" && activeTab === "announcers") updateAnnouncersEntries(lastAnnouncersList);
@@ -1128,6 +1267,7 @@
         });
         if (!match) continue;
         const otherId = match.id || match.name || `other-${Date.now()}-${Math.random()}`;
+        if (isExplicitlyDisabled(category, otherId)) continue;
         const selectedIds = getSelectedIdsForCategory(category);
         if (!selectedIds.includes(otherId)) {
           selectedIds.push(otherId);
@@ -1163,15 +1303,17 @@
 
     if (inCS) {
       const csRoot = document.querySelector(".champion-select");
-      if (csRoot && button.parentNode !== csRoot) {
+      const behind = isMenuOverlayOpen();
+      // Открытое меню держит кнопку в body (см. applyButtonLayer), вернуть её
+      // в .champion-select можно только когда меню закрыто.
+      if (!behind && csRoot && button.parentNode !== csRoot) {
         csRoot.appendChild(button);
+        button.style.position = "absolute";
+        button.style.right = "25px";
+        button.style.bottom = "75px";
+        button.style.left = "auto";
+        button.style.top = "auto";
       }
-      button.style.position = "absolute";
-      button.style.right = "25px";
-      button.style.bottom = "75px";
-      button.style.left = "auto";
-      button.style.top = "auto";
-      button.style.zIndex = "50";
     } else if (inLobby && isSwiftplayMode) {
       if (button.parentNode !== document.body) document.body.appendChild(button);
       button.style.position = "fixed";
@@ -1179,8 +1321,11 @@
       button.style.right = "225px";
       button.style.left = "auto";
       button.style.top = "auto";
-      button.style.zIndex = "50";
     }
+
+    // z-index is owned by applyButtonLayer so an open menu can push the button
+    // down a layer.
+    applyButtonLayer();
   }
 
   function updateChampionSelectTarget() {

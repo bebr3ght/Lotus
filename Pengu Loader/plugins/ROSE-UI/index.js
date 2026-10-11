@@ -793,7 +793,11 @@
 
   function stopSkinObserverGated() {
     if (!skinObserverCleanup) return;
-    try { skinObserverCleanup(); } catch (e) {}
+    try {
+      skinObserverCleanup();
+    } catch (e) {
+      log.warn("Skin observer cleanup failed", String(e));
+    }
     skinObserverCleanup = null;
   }
 

@@ -66,6 +66,7 @@ BACKGROUND_MESSAGE_TYPES = frozenset({
     "add-custom-mods-category-selected",
     "add-custom-mods-champion-selected",
     "add-custom-mods-skin-selected",
+    "request-manage-categories",
     "request-manage-champion-mods",
     "request-manage-category-mods",
     "delete-champion-mod",
@@ -177,7 +178,8 @@ class MessageHandler:
             if game_dir.exists() and game_dir.is_dir():
                 from config import GAME_EXECUTABLE_NAMES
                 return any((game_dir / name).is_file() for name in GAME_EXECUTABLE_NAMES)
-        except Exception:
+        except Exception as e:
+            log.debug(f"[Settings] Could not validate League path {game_path!r}: {e}")
             return False
 
         return False
@@ -194,11 +196,24 @@ class MessageHandler:
             log.warning("[SkinMonitor] Invalid payload: %s (%s)", message, exc)
             return
         
+        if not isinstance(payload, dict):
+            log.warning("[SkinMonitor] Ignoring payload that is not an object: %.200s", message)
+            return
+
         payload_type = payload.get("type")
         if payload_type in BACKGROUND_MESSAGE_TYPES:
             self._run_in_background(payload_type, payload)
-        else:
+            return
+        # An error escaping here would end the bridge connection and drop
+        # every message after it. A handler that keeps failing (on every
+        # hover, say) is reported once per message type and error.
+        try:
             self._route(payload_type, payload)
+        except Exception as e:  # noqa: BLE001
+            key = (payload_type, repr(e))
+            if key != getattr(self, "_last_route_error", None):
+                self._last_route_error = key
+                log.exception("[SkinMonitor] Failed to handle %s: %s", payload_type, e)
 
     def _run_in_background(self, payload_type: str, payload: dict) -> None:
         """Queue a message for the worker thread, starting it on first use."""
@@ -238,6 +253,8 @@ class MessageHandler:
             self._handle_open_mods_folder(payload)
         elif payload_type == "request-skin-mods":
             self._handle_request_skin_mods(payload)
+        elif payload_type == "request-manage-categories":
+            self._handle_request_manage_categories(payload)
         elif payload_type == "request-manage-champion-mods":
             self._handle_request_manage_champion_mods(payload)
         elif payload_type == "request-manage-category-mods":
@@ -697,7 +714,8 @@ class MessageHandler:
             # Preserve trailing newline style expected by the reader
             p.write_text("\n".join(kept_lines) + ("\n" if kept_lines else ""), encoding="utf-8", errors="ignore")
             return True
-        except Exception:
+        except Exception as e:
+            log.warning(f"[SkinMonitor] Could not clear diagnostics categories {categories}: {e}")
             return False
 
     def _handle_diagnostics_request(self, payload: dict) -> None:
@@ -924,7 +942,9 @@ class MessageHandler:
                     break
             out.reverse()
             return out
-        except Exception:
+        except Exception as e:
+            # Troubleshooting would look empty while errors were recorded
+            log.warning(f"[SkinMonitor] Could not read the diagnostics entries: {e}")
             return []
     
     def _handle_path_validate(self, payload: dict) -> None:
@@ -1068,7 +1088,8 @@ class MessageHandler:
                 f"/lol-game-data/assets/v1/champions/{champ_id}.json",
                 timeout=5.0,
             )
-        except Exception:
+        except Exception as e:
+            log.debug(f"[SkinMonitor] Could not fetch champion {champ_id} data: {e}")
             return None
         if not isinstance(champion_data, dict):
             return None
@@ -1094,8 +1115,8 @@ class MessageHandler:
                         ).replace("\\", "/")
                         quoted_path = quote(thumbnail_relative_path, safe="/")
                         thumbnail_url = f"http://127.0.0.1:{self.port}/mod-asset/{quoted_path}"
-            except Exception:
-                pass
+            except Exception as e:
+                log.debug(f"[SkinMonitor] No thumbnail for mod {entry.path}: {e}")
             mods_payload.append(
                 {
                     "modName": entry.mod_name,
@@ -1129,6 +1150,20 @@ class MessageHandler:
             "championName": self._lookup_champion_name(champion_id),
             "mods": self._serialize_manage_champion_mods(entries),
             "timestamp": int(time.time() * 1000),
+        }))
+
+    def _handle_request_manage_categories(self, payload: dict) -> None:
+        """List the categories Manage Mods offers: only those with a mod added."""
+        if not self.mod_storage:
+            return
+        try:
+            categories = self.mod_storage.categories_with_mods()
+        except Exception as exc:
+            log.error("[ManageMods] Failed to list categories with mods: %s", exc)
+            categories = []
+        self._send_response(json.dumps({
+            "type": "manage-categories-response",
+            "categories": categories,
         }))
 
     def _handle_request_manage_category_mods(self, payload: dict) -> None:
@@ -2818,6 +2853,13 @@ class MessageHandler:
                 self.websocket_server.broadcast(message), self.websocket_server.loop
             )
     
+    def _send_mod_import_started(self, mod_file: Path) -> None:
+        """Tell the plugins a picked mod is being imported; the folder-opened-response ends it"""
+        self._send_response(json.dumps({
+            "type": "mod-import-started",
+            "fileName": mod_file.name,
+        }))
+
     def _send_settings_save_success(self) -> None:
         """Send settings save success response"""
         payload = {"type": "settings-saved", "success": True}
@@ -2883,6 +2925,7 @@ class MessageHandler:
                 }))
                 return
 
+            self._send_mod_import_started(selected_mod_file)
             mod_folder, mod_name = self.mod_storage.import_category_mod_file(
                 category,
                 selected_mod_file,
@@ -3192,6 +3235,7 @@ class MessageHandler:
                     }))
                     return
 
+                self._send_mod_import_started(selected_mod_file)
                 mod_folder, target_manifest, mod_name = self.mod_storage.import_mod_file(
                     champion_id,
                     selected_mod_file,

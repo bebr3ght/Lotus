@@ -34,6 +34,7 @@ _ALLOWED_CODES = {
     'LTK_PATCHER_MISSING',    # User-provided LTK patcher files are missing
     'LTK_PATCHER_EOL',        # LTK patcher DLL no longer supports the current game build
     'LTK_PATCHER_FAILED',     # LTK patcher host/DLL reported an error
+    'PENGU_ACTIVATION_FAILED',  # Pengu Loader could not be activated: Rose is missing from the client
 }
 
 
@@ -140,7 +141,8 @@ def remove_issues(should_remove: Callable[[str, str], bool]) -> bool:
                 i += 1
             p.write_text("\n".join(kept) + "\n" if kept else "", encoding="utf-8")
         return True
-    except Exception:
+    except Exception as e:
+        log.debug("[ISSUES] Could not remove diagnostics entries: %s", e)
         return False
 
 

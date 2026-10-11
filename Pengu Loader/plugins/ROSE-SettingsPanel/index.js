@@ -198,6 +198,55 @@
       box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5) !important;
       margin: 0 !important;
     }
+
+    /* The settings list can be taller than the window; scroll it instead of
+       letting the bottom links get cut off by the client UI. Scrolling uses
+       the same scrollbar as #rose-diagnostics-body so the flyout keeps the
+       Rose look instead of falling back to the native Windows one. */
+    #${FLYOUT_ID} lc-flyout-content,
+    #${FLYOUT_ID} .lc-flyout-content {
+      min-height: 0 !important;
+      overflow-y: auto !important;
+      overflow-x: hidden !important;
+      overscroll-behavior: contain;
+      scrollbar-width: thin;
+      scrollbar-color: #463714 rgba(0, 0, 0, 0.25);
+    }
+
+    #${FLYOUT_ID} lc-flyout-content::-webkit-scrollbar,
+    #${FLYOUT_ID} .lc-flyout-content::-webkit-scrollbar {
+      width: 10px;
+    }
+
+    #${FLYOUT_ID} lc-flyout-content::-webkit-scrollbar:horizontal,
+    #${FLYOUT_ID} .lc-flyout-content::-webkit-scrollbar:horizontal {
+      display: none !important;
+      height: 0 !important;
+    }
+
+    #${FLYOUT_ID} lc-flyout-content::-webkit-scrollbar-track,
+    #${FLYOUT_ID} .lc-flyout-content::-webkit-scrollbar-track {
+      background: rgba(0, 0, 0, 0.25);
+      border-left: 1px solid rgba(70, 55, 20, 0.55);
+    }
+
+    #${FLYOUT_ID} lc-flyout-content::-webkit-scrollbar-thumb,
+    #${FLYOUT_ID} .lc-flyout-content::-webkit-scrollbar-thumb {
+      background: linear-gradient(to bottom, rgba(200, 155, 60, 0.22), rgba(70, 55, 20, 0.85));
+      border: 1px solid rgba(70, 55, 20, 0.95);
+      border-radius: 10px;
+      min-height: 28px;
+    }
+
+    #${FLYOUT_ID} lc-flyout-content::-webkit-scrollbar-thumb:hover,
+    #${FLYOUT_ID} .lc-flyout-content::-webkit-scrollbar-thumb:hover {
+      background: linear-gradient(to bottom, rgba(200, 155, 60, 0.32), rgba(70, 55, 20, 0.95));
+    }
+
+    #${FLYOUT_ID} lc-flyout-content::-webkit-scrollbar-corner,
+    #${FLYOUT_ID} .lc-flyout-content::-webkit-scrollbar-corner {
+      background: transparent;
+    }
     
     #${FLYOUT_ID} .settings-title {
       font-size: 18px;
@@ -852,6 +901,17 @@
     #manage-custom-mods-dropdown .framed-dropdown-type {
       text-align: left !important;
     }
+    #manage-custom-mods-dropdown lol-uikit-dropdown-option.rose-empty-category {
+      display: none !important;
+    }
+    #manage-custom-mods-dropdown .rose-no-mods-option {
+      display: none !important;
+    }
+    #manage-custom-mods-dropdown.rose-no-mods .rose-no-mods-option {
+      display: block !important;
+      color: #a09b8c !important;
+      cursor: default !important;
+    }
     #manage-custom-mods-dropdown[class*="active"] .placeholder-option,
     #manage-custom-mods-dropdown.active .placeholder-option {
       display: none !important;
@@ -1387,7 +1447,106 @@
       opacity: 0.45;
       cursor: default;
     }
+
+    /* Shown while Rose imports a picked mod */
+    #rose-mod-import-loading {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 10003;
+      background: rgba(0, 0, 0, 0.5);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .rose-mod-import-card {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 14px;
+      min-width: 280px;
+      max-width: 420px;
+      padding: 24px 28px;
+      box-sizing: border-box;
+      background: #010a13;
+      border: 1px solid #c8aa6e;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+      font-family: "Beaufort for LOL", serif;
+      text-align: center;
+    }
+    .rose-mod-import-spinner {
+      width: 36px;
+      height: 36px;
+      box-sizing: border-box;
+      border: 3px solid rgba(200, 170, 110, 0.25);
+      border-top-color: #c8aa6e;
+      border-radius: 50%;
+      animation: roseModImportSpin 0.8s linear infinite;
+    }
+    @keyframes roseModImportSpin {
+      to { transform: rotate(360deg); }
+    }
+    /* Once added: a green check draws itself, then the whole overlay fades out */
+    #rose-mod-import-loading.is-done {
+      pointer-events: none;
+      animation: roseModImportFadeOut 0.25s ease 1.25s forwards;
+    }
+    @keyframes roseModImportFadeOut {
+      to { opacity: 0; }
+    }
+    .rose-mod-import-check {
+      display: block;
+      width: 36px;
+      height: 36px;
+      fill: none;
+      stroke: #2ec27e;
+      stroke-width: 4;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      animation: roseModImportPop 0.3s ease-out 0.5s;
+    }
+    .rose-mod-import-check circle {
+      stroke-dasharray: 151;
+      stroke-dashoffset: 151;
+      transform: rotate(-90deg);
+      transform-origin: 26px 26px;
+      animation: roseModImportDraw 0.4s ease-out forwards;
+    }
+    .rose-mod-import-check path {
+      stroke-dasharray: 32;
+      stroke-dashoffset: 32;
+      animation: roseModImportDraw 0.25s ease-out 0.35s forwards;
+    }
+    @keyframes roseModImportDraw {
+      to { stroke-dashoffset: 0; }
+    }
+    @keyframes roseModImportPop {
+      50% { transform: scale(1.12); }
+    }
+    .rose-mod-import-title {
+      color: #f0e6d2;
+      font-size: 14px;
+      font-weight: bold;
+    }
+    .rose-mod-import-file {
+      max-width: 100%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: #a09b8c;
+      font-size: 12px;
+    }
   `;
+  }
+
+  // For code that runs on every mutation or poll: report each failure once
+  const warnedFailures = new Set();
+  function warnOnce(message, error) {
+    if (warnedFailures.has(message)) return;
+    warnedFailures.add(message);
+    log("warn", message, String(error));
   }
 
   function log(level, message, data = null) {
@@ -1669,7 +1828,9 @@
     const tryApply = () => {
       try {
         applyErrorBadges();
-      } catch (e) {}
+      } catch (e) {
+        warnOnce("Could not show the error badges", e);
+      }
     };
 
     try {
@@ -1809,7 +1970,9 @@
             if (bridge) bridge.send({ type: "diagnostics-clear-category", categories: cats });
           }
         }
-      } catch (e) {}
+      } catch (e) {
+        log("warn", "Could not clear the saved categories from Troubleshooting", String(e));
+      }
       _pendingSave = null;
 
       // Refresh settings + diagnostics + badges after save
@@ -1980,8 +2143,16 @@
     // Use absolute positioning within the fixed panel container
     flyoutFrame.style.position = "absolute";
     flyoutFrame.style.overflow = "visible";
-    // Position below the icon, centered horizontally on the icon
-    flyoutFrame.style.top = `${iconRect.bottom + 45}px`;
+    // Position below the icon, centered horizontally on the icon, but never
+    // past the bottom of the window: the panel is a long list and the links at
+    // the bottom used to be clipped by the League client UI.
+    const flyoutTop = Math.min(
+      Math.max(iconRect.bottom + 45, 10),
+      Math.max(120, window.innerHeight - 140)
+    );
+    const flyoutMaxHeight = Math.max(200, window.innerHeight - flyoutTop - 24);
+    flyoutFrame.style.top = `${flyoutTop}px`;
+    flyoutFrame.style.maxHeight = `${flyoutMaxHeight}px`;
     flyoutFrame.style.left = `${iconRect.left + iconRect.width / 2}px`;
     flyoutFrame.style.transform = "translateX(-50%)"; // Center the panel on the icon
     flyoutFrame.style.zIndex = "10001";
@@ -2029,6 +2200,7 @@
     form.style.display = "flex";
     form.style.flexDirection = "column";
     form.style.alignItems = "center";
+    form.style.flex = "0 0 auto";
 
     function getOrCreateGlobalTooltip() {
       let el = document.getElementById("rose-global-tooltip");
@@ -2806,6 +2978,19 @@
       manageDropdown.appendChild(option);
     });
 
+    // Listed alone when no mod is added yet; clicking it does nothing
+    const manageNoModsOption = document.createElement("lol-uikit-dropdown-option");
+    manageNoModsOption.setAttribute("slot", "lol-uikit-dropdown-option");
+    manageNoModsOption.setAttribute("value", "");
+    manageNoModsOption.className = "framed-dropdown-type rose-no-mods-option";
+    manageNoModsOption.textContent = t("No custom mods added yet");
+    manageNoModsOption.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+    }, true);
+    manageDropdown.appendChild(manageNoModsOption);
+
     const removeManageFocusAndGlow = () => {
       if (document.activeElement === manageDropdown || manageDropdown.contains(document.activeElement)) {
         manageDropdown.blur();
@@ -2876,6 +3061,7 @@
 
     manageDropdownContainer.appendChild(manageDropdown);
     customModsRow.appendChild(manageDropdownContainer);
+    applyManageCategories(manageDropdown);
 
     let manageRetryCount = 0;
     const injectManageShadowStyles = () => {
@@ -3005,6 +3191,16 @@
 
     form.appendChild(linksSection);
 
+    // Make the flyout itself the scroll container so nothing (Ko-Fi, GitHub,
+    // Discord) falls behind the client's UI when the panel is taller than the
+    // window.
+    flyoutContent.style.maxHeight = `${flyoutMaxHeight}px`;
+    flyoutContent.style.minHeight = "0";
+    flyoutContent.style.overflowY = "auto";
+    flyoutContent.style.overflowX = "hidden";
+    flyoutContent.style.setProperty("overflow-y", "auto", "important");
+    flyoutContent.style.webkitOverflowScrolling = "touch";
+
     flyoutContent.appendChild(form);
     flyoutFrame.appendChild(flyoutContent);
     panel.appendChild(flyoutFrame);
@@ -3055,6 +3251,7 @@
     // Request current settings and benchmark data
     requestSettings();
     requestDiagnostics();
+    requestManageCategories();
   }
 
   function setupSliderInteractions(sliderId, slider, button, fill, valueDisplay, min, max, valueConverter, displayFormatter) {
@@ -3896,6 +4093,30 @@
     { id: "others", name: "Others" },
   ];
 
+  // Manage Mods only offers the categories Rose says have a mod added (null until it answers)
+  let categoriesWithMods = null;
+
+  function requestManageCategories() {
+    if (bridge && document.getElementById("manage-custom-mods-dropdown")) {
+      bridge.send({ type: "request-manage-categories" });
+    }
+  }
+
+  function handleManageCategoriesResponse(payload) {
+    categoriesWithMods = Array.isArray(payload.categories) ? payload.categories : [];
+    applyManageCategories();
+  }
+
+  function applyManageCategories(dropdown = document.getElementById("manage-custom-mods-dropdown")) {
+    if (!dropdown) return;
+    const categories = categoriesWithMods || [];
+    dropdown.querySelectorAll('lol-uikit-dropdown-option:not([value=""])').forEach((option) => {
+      option.classList.toggle("rose-empty-category", !categories.includes(option.getAttribute("value")));
+    });
+    // Before Rose answers nothing is offered, but "no mods" isn't claimed yet either
+    dropdown.classList.toggle("rose-no-mods", categoriesWithMods !== null && categories.length === 0);
+  }
+
   function handleManageCategorySelection(category) {
     if (category === "skins") {
       openChampionSelection("manage");
@@ -4247,6 +4468,7 @@
       log("error", "Failed to delete champion mod: " + (payload.error || "unknown error"));
     } else {
       log("info", `Champion mod deleted: champion=${payload.championId}, mod=${payload.modName}`);
+      requestManageCategories();
     }
     if (
       document.getElementById("champion-mods-manage-dialog") &&
@@ -4331,6 +4553,7 @@
       log("error", "Failed to delete category mod: " + (payload.error || "unknown error"));
     } else {
       log("info", `Category mod deleted: category=${payload.category}, mod=${payload.modName}`);
+      requestManageCategories();
     }
     if (
       document.getElementById("category-mods-manage-dialog") &&
@@ -4567,9 +4790,75 @@
     updateSkinSelectionUI();
   }
 
+  // A small mod imports almost instantly: the spinner stays at least this long first
+  const MOD_IMPORT_MIN_LOADING_MS = 700;
+  // Matches the is-done fade out (1.25s delay + 0.25s)
+  const MOD_IMPORT_DONE_MS = 1500;
+  let modImportShownAt = 0;
+  let modImportTimer = null;
+
+  // Rose sends mod-import-started once a file is picked and folder-opened-response
+  // when the import is over. It can't be dismissed: only the answer or losing Rose ends it
+  function showModImportLoading(payload) {
+    hideModImportLoading();
+    modImportShownAt = Date.now();
+
+    const overlay = document.createElement("div");
+    overlay.id = "rose-mod-import-loading";
+
+    const card = document.createElement("div");
+    card.className = "rose-mod-import-card";
+    card.setAttribute("role", "status");
+
+    const spinner = document.createElement("div");
+    spinner.className = "rose-mod-import-spinner";
+    card.appendChild(spinner);
+
+    const title = document.createElement("div");
+    title.className = "rose-mod-import-title";
+    title.textContent = t("Adding mod...");
+    card.appendChild(title);
+
+    if (payload.fileName) {
+      const fileName = document.createElement("div");
+      fileName.className = "rose-mod-import-file";
+      fileName.textContent = payload.fileName;
+      fileName.title = payload.fileName;
+      card.appendChild(fileName);
+    }
+
+    overlay.appendChild(card);
+    document.body.appendChild(overlay);
+  }
+
+  function showModImportDone() {
+    const overlay = document.getElementById("rose-mod-import-loading");
+    if (!overlay || overlay.classList.contains("is-done")) return;
+
+    overlay.classList.add("is-done");
+    overlay.querySelector(".rose-mod-import-spinner").outerHTML =
+      '<svg class="rose-mod-import-check" viewBox="0 0 52 52"><circle cx="26" cy="26" r="24"></circle><path d="M15 27l7 7 15-15"></path></svg>';
+    overlay.querySelector(".rose-mod-import-title").textContent = t("Mod added");
+    modImportTimer = setTimeout(hideModImportLoading, MOD_IMPORT_DONE_MS);
+  }
+
+  function hideModImportLoading() {
+    clearTimeout(modImportTimer);
+    modImportTimer = null;
+    const overlay = document.getElementById("rose-mod-import-loading");
+    if (overlay) overlay.remove();
+  }
+
   function handleFolderOpenedResponse(payload) {
-    if (payload.cancelled)
-    {
+    if (payload.success) {
+      const loadingLeft = MOD_IMPORT_MIN_LOADING_MS - (Date.now() - modImportShownAt);
+      clearTimeout(modImportTimer);
+      modImportTimer = setTimeout(showModImportDone, Math.max(0, loadingLeft));
+      requestManageCategories();
+    } else {
+      hideModImportLoading();
+    }
+    if (payload.cancelled) {
       log("info", "Mod import cancelled");
     }
     else if (payload.error)
@@ -5122,6 +5411,15 @@
     }
   });
 
+  // ROSE-CustomWheel asks for the ready champion/skin card picker when the "+"
+  // of the Skins category is pressed, so both entry points share one flow.
+  window.addEventListener("rose-add-custom-skins", () => {
+    if (settingsPanel && document.getElementById(PANEL_ID)) {
+      closeSettingsPanel();
+    }
+    handleCategorySelection("skins");
+  });
+
   // Inject CSS
   function injectCSS() {
     // Remove existing CSS if it exists (to update with correct port)
@@ -5213,7 +5511,11 @@
       bridge.subscribe("path-validation-result", handlePathValidationResult);
       bridge.subscribe("champions-list-response", handleChampionsListResponse);
       bridge.subscribe("champion-skins-response", handleChampionSkinsResponse);
+      bridge.subscribe("mod-import-started", showModImportLoading);
       bridge.subscribe("folder-opened-response", handleFolderOpenedResponse);
+      // A Rose that closes mid-import never answers it
+      bridge.onDisconnect(hideModImportLoading);
+      bridge.subscribe("manage-categories-response", handleManageCategoriesResponse);
       bridge.subscribe("manage-champion-mods-response", handleManageSkinModsResponse);
       bridge.subscribe("manage-category-mods-response", handleManageCategoryModsResponse);
       bridge.subscribe("champion-mod-deleted", handleChampionModDeleted);
@@ -5235,7 +5537,9 @@
               if (!bridge || !bridge.ready) return;
               if (typeof document !== "undefined" && document.hidden) return;
               requestDiagnostics();
-            } catch (e) {}
+            } catch (e) {
+              warnOnce("Could not refresh Troubleshooting", e);
+            }
           }, 15000);
         }
       });

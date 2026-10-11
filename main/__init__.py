@@ -250,8 +250,8 @@ def _show_native_dll_dialog(tools_dir, reason="missing", detail=""):
     if selected_button.value == button_open:
         try:
             subprocess.run(["explorer", str(tools_dir)], check=False)
-        except Exception:
-            pass
+        except Exception as exc:
+            log.warning(f"[DLL] Could not open the tools folder: {exc}")
     return False
 
 
@@ -281,8 +281,8 @@ def _show_dll_dialog(tools_dir, reason="missing", detail="") -> bool:
     if response == 1:
         try:
             subprocess.run(["explorer", str(tools_dir)], check=False)
-        except Exception:
-            pass
+        except Exception as exc:
+            log.warning(f"[DLL] Could not open the tools folder: {exc}")
     return False
 
 
@@ -355,8 +355,9 @@ from .runtime.loop import run_main_loop
 import utils.integration.pengu_loader as pengu_loader
 from state import AppStatus
 from utils.core.logging import get_logger, log_success
+from utils.core.issue_reporter import report_issue
 from utils.threading.thread_manager import create_daemon_thread
-from config import APP_VERSION, MAIN_LOOP_FORCE_QUIT_TIMEOUT_S, set_config_option
+from config import APP_VERSION, MAIN_LOOP_FORCE_QUIT_TIMEOUT_S, get_config_option, set_config_option
 from injection.config.config_manager import ConfigManager
 from injection.game.game_detector import GameDetector
 import time
@@ -364,13 +365,50 @@ import time
 log = get_logger()
 
 
+def _warn_pengu_activation_failed() -> None:
+    """Tell the user Rose will not show in the client because Pengu Loader is not active.
+
+    Rose's own Troubleshooting panel lives in the client plugins, the part that
+    failed, so this has to be a Windows dialog. It runs on its own thread so
+    startup goes on while it is open.
+    """
+    log = get_logger()
+    log.error("[Pengu] Activation failed - Rose will not appear in the League client")
+    report_issue(
+        "PENGU_ACTIVATION_FAILED",
+        "error",
+        "Pengu Loader could not be activated, so Rose did not appear in the League client.",
+        hint="Close the League client, then restart Rose. If it happens again, make sure your antivirus is not blocking Pengu Loader.",
+    )
+    if sys.platform != "win32":
+        return
+
+    def show():
+        import ctypes
+        try:
+            ctypes.windll.user32.MessageBoxW(
+                0,
+                "Rose could not activate Pengu Loader, so it will not appear in the League client.\n\n"
+                "Close the League client, then restart Rose.\n"
+                "If it happens again, make sure your antivirus is not blocking Pengu Loader.\n\n"
+                "Details are in %LOCALAPPDATA%\\Rose\\logs\\",
+                "Rose - Pengu Loader",
+                0x50030,  # MB_OK | MB_ICONWARNING | MB_SETFOREGROUND | MB_TOPMOST
+            )
+        except Exception as e:
+            log.warning(f"[Pengu] Could not show the activation warning: {e}")
+
+    create_daemon_thread(show, "PenguActivationWarning").start()
+
+
 def _setup_pengu_and_injection(lcu, injection_manager, activate_pengu: bool = True) -> None:
     """
     Detect and save leaguepath/clientpath, then setup Pengu Loader and injection system.
 
     Args:
-        activate_pengu: If True, activate Pengu Loader (first startup).
-                        If False, skip Pengu activation (reconnection after account swap).
+        activate_pengu: If True, activate Pengu Loader (startup couldn't).
+                        If False, skip Pengu activation (done at startup, or a
+                        reconnection after account swap).
     """
     log.info("Detecting League paths...")
 
@@ -417,7 +455,8 @@ def _setup_pengu_and_injection(lcu, injection_manager, activate_pengu: bool = Tr
     # Set client path in Pengu Loader and activate (skip on reconnection)
     if activate_pengu:
         log.info("Setting client path in Pengu Loader and activating...")
-        pengu_loader.activate_on_start(str(client_path))
+        if not pengu_loader.activate_on_start(str(client_path)):
+            _warn_pengu_activation_failed()
 
     # Initialize injection system now (with detected paths already in config.ini)
     log.info("Initializing injection system...")
@@ -619,16 +658,27 @@ def run_league_unlock(args: Optional[argparse.Namespace] = None,
     thread_manager, t_phase, t_ui, t_ws, t_lcu_monitor = initialize_threads(
         lcu, state, args, injection_manager, skin_scraper, app_status, on_lcu_disconnected, on_lcu_reconnected
     )
-    
-    # Wait for WebSocket status to be active before activating Pengu Loader
-    log.info("Waiting for WebSocket status to be active before activating Pengu Loader...")
+
+    # Activate Pengu now rather than once a client runs: a client started after
+    # Rose then loads the plugins itself instead of starting without them and
+    # waiting for a restart. A running client is restarted (the bridge is up).
+    log.info("Activating Pengu Loader...")
+    pengu_active = pengu_loader.activate_on_start(get_config_option("General", "clientPath"))
+    if not pengu_active:
+        log.warning("Pengu Loader could not be activated yet; retrying once the client is up")
+
+    # Wait for WebSocket status to be active before setting up the injection system
+    log.info("Waiting for WebSocket status to be active...")
     while not t_ws.connection.is_connected:
         time.sleep(0.1)
-    
+
     log.info("WebSocket status is active, proceeding with Pengu Loader and injection system setup")
-    
+
+    # A restart the client refused while it was still starting goes through now
+    pengu_loader.retry_deferred_restart()
+
     # Setup Pengu Loader and injection system (LCU is already connected when WebSocket is active)
-    _setup_pengu_and_injection(lcu, injection_manager)
+    _setup_pengu_and_injection(lcu, injection_manager, activate_pengu=not pengu_active)
     
     # Run main loop
     try:
