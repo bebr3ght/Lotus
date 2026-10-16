@@ -6,6 +6,7 @@ All arbitrary values are centralized here for easy tracking and modification
 """
 
 import io
+import os
 import shutil
 import sys
 import threading
@@ -23,7 +24,13 @@ log = logging.getLogger(__name__)
 # APPLICATION METADATA
 # =============================================================================
 
-APP_VERSION = "1.4.7"                           # Application version
+APP_VERSION = "1.4.8"                           # Application version
+
+# Product identity. Rose.spec (which cannot import this module) and the build
+# scripts duplicate these three strings; scripts/create_update_package.py checks
+# them against this file on every package build so they cannot drift apart.
+APP_NAME = "Lotus"
+APP_EXE_NAME = f"{APP_NAME}.exe"
 APP_USER_AGENT = f"Lotus/{APP_VERSION}"  # User-Agent header for HTTP requests
 GAME_EXECUTABLE_NAMES = ("League of Legends.exe", "League of Legends (TM) Client.exe")
 
@@ -87,19 +94,38 @@ def write_config_file(config: configparser.ConfigParser, path: Path) -> None:
         path.write_bytes(data)
 
 
+def _legacy_config_candidates() -> list:
+    """Where an old install's config.ini may still live, most recent layout first."""
+    candidates = [Path("config.ini")]
+    frozen_root = getattr(sys, "_MEIPASS", None) or Path(sys.executable).parent
+    candidates.append(Path(frozen_root) / "config.ini")
+    appdata = os.environ.get("APPDATA")
+    if appdata:
+        candidates.append(Path(appdata) / "Rose" / "config.ini")
+    return candidates
+
+
 def _reload_config() -> None:
     """Reload config from disk only when the file has actually been modified."""
     global _CONFIG, _CONFIG_MTIME
     config_path = get_config_file_path()
 
-    # One-time migration of legacy config
+    # One-time migration of legacy config. It used to look at Path("config.ini"),
+    # which resolves against the *current working directory*: a frozen build
+    # started from the Start menu has a CWD that is not the install folder, so the
+    # migration never fired and upgrading users silently lost leaguePath,
+    # language and injection_threshold back to the defaults.
     if not config_path.exists():
-        legacy_path = Path("config.ini")
-        if legacy_path.exists():
+        for legacy_path in _legacy_config_candidates():
+            if not legacy_path.exists():
+                continue
             try:
+                config_path.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(legacy_path, config_path)
+                log.info("Migrated legacy config from %s", legacy_path)
+                break
             except Exception as e:
-                log.debug(f"Failed to migrate legacy config: {e}")
+                log.debug(f"Failed to migrate legacy config from {legacy_path}: {e}")
 
     # Check file mtime, skip re-read if unchanged
     try:
@@ -108,7 +134,10 @@ def _reload_config() -> None:
         current_mtime = 0.0
 
     with _CONFIG_LOCK:
-        if current_mtime == _CONFIG_MTIME and _CONFIG.sections():
+        # Only the mtime decides. Testing .sections() as well meant a legitimately
+        # empty config re-read the file on every single access, and every access
+        # also mkdirs the data dir (get_config_file_path).
+        if current_mtime == _CONFIG_MTIME and _CONFIG_MTIME != 0.0:
             return  # File unchanged = use cached config
 
         fresh = configparser.ConfigParser(interpolation=None)
@@ -145,22 +174,39 @@ def get_config_float(section: str, option: str, fallback: float) -> float:
 
 
 def set_config_option(section: str, option: str, value: str) -> None:
+    """Persist one setting.
+
+    Under the same lock the readers use. Without it, two writers (the settings
+    panel writes three to six options back to back, while the tray writes the
+    threshold) both parsed the same snapshot and the second write erased the
+    first one's key. The in-memory copy is updated in the same critical section
+    so the next read cannot hand back the pre-write value.
+    """
     config_path = get_config_file_path()
-    config = configparser.ConfigParser(interpolation=None)
-    if config_path.exists():
+    with _CONFIG_LOCK:
+        config = configparser.ConfigParser(interpolation=None)
+        if config_path.exists():
+            try:
+                read_config_file(config, config_path)
+            except Exception as e:
+                # Rewriting from an empty parser would erase every other setting
+                log.warning(f"Not saving [{section}] {option}: config file could not be read: {e}")
+                return
+        if section not in config:
+            config.add_section(section)
+        config.set(section, option, value)
         try:
-            read_config_file(config, config_path)
+            write_config_file(config, config_path)
         except Exception as e:
-            # Rewriting from an empty parser would erase every other setting
-            log.warning(f"Not saving [{section}] {option}: config file could not be read: {e}")
+            log.warning(f"Failed to write config file: {e}")
             return
-    if section not in config:
-        config.add_section(section)
-    config.set(section, option, value)
-    try:
-        write_config_file(config, config_path)
-    except Exception as e:
-        log.warning(f"Failed to write config file: {e}")
+
+        global _CONFIG, _CONFIG_MTIME
+        _CONFIG = config
+        try:
+            _CONFIG_MTIME = config_path.stat().st_mtime
+        except OSError:
+            _CONFIG_MTIME = 0.0
 
 
 # =============================================================================
@@ -388,9 +434,13 @@ INTERESTING_PHASES = {
 # ANALYTICS CONSTANTS
 # =============================================================================
 
-ANALYTICS_SERVER_URL = 'https://analytics.rosekeys.site/'  # Analytics server endpoint
+# Lotus is a fork and has no server of its own, so it must not report to the
+# upstream author's endpoint (which would also see our User-Agent). Set
+# ANALYTICS_SERVER_URL to a Lotus-run endpoint and ANALYTICS_ENABLED = True to
+# re-enable; until then nothing leaves the machine.
+ANALYTICS_SERVER_URL = ''  # Analytics server endpoint; empty disables analytics
 ANALYTICS_PING_INTERVAL_S = 900  # Seconds between presence heartbeats (15 minutes)
-ANALYTICS_ENABLED = True  # Enable/disable analytics tracking
+ANALYTICS_ENABLED = False  # Enable/disable analytics tracking
 ANALYTICS_TIMEOUT_S = 5  # Request timeout in seconds
 
 # =============================================================================

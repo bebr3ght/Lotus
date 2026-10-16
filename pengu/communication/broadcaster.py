@@ -453,6 +453,9 @@ class Broadcaster:
         from utils.core.utilities import is_owned
 
         # 2. Формируем данные
+        chroma_id_map = getattr(
+            self.skin_scraper.cache, "chroma_id_map", {}
+        ) if self.skin_scraper and self.skin_scraper.cache else {}
         for champ_id, skin_id in tracking.items():
             if active_champ_ids and int(champ_id) not in active_champ_ids:
                 continue
@@ -467,7 +470,6 @@ class Broadcaster:
             if selected_custom and selected_custom.get("champion_id") == int(champ_id):
                 skin_name = selected_custom.get("mod_name")
             else:
-                chroma_id_map = getattr(self.skin_scraper.cache, "chroma_id_map", {}) if self.skin_scraper and self.skin_scraper.cache else {}
                 if int(skin_id) in chroma_id_map:
                     chroma_data = chroma_id_map[int(skin_id)]
                     c_name = chroma_data.get('name', f"Chroma {skin_id}")
@@ -477,10 +479,6 @@ class Broadcaster:
             
             # Используем правильную функцию проверки (она учитывает дефолтные скины)
             skin_is_owned = is_owned(int(skin_id), owned_skins)
-
-            # Формируем путь к официальному сплеш-арту клиента Лиги
-            banner_path = f"/lol-game-data/assets/v1/champion-splashes/{champ_id}/{skin_id}.jpg"
-            tile_path = f"/lol-game-data/assets/v1/champion-tiles/{skin_id}.jpg"
 
             # --- ВЫЧИСЛЕНИЕ И СОХРАНЕНИЕ БАННЕРА ---
             from utils.core.utilities import is_base_skin, get_base_skin_id_for_chroma

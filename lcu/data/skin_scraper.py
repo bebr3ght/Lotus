@@ -41,9 +41,11 @@ class LCUSkinScraper:
             log.debug(f"[LCU-SCRAPER] Champion {champion_id} skins already cached ({len(self.cache.skins)} skins)")
             return True
         
-        # Clear old cache
-        self.cache.clear()
-        
+        # Build the new cache before dropping the old one: clearing first meant a single
+        # failed fetch also destroyed the previous champion's skins, and every
+        # lookup afterwards degraded silently instead of using stale-but-good data
+        new_cache = ChampionSkinCache()
+
         log.info(f"[LCU-SCRAPER] Scraping skins for champion ID {champion_id}...")
         
         # Try multiple endpoints to get champion skins
@@ -69,8 +71,8 @@ class LCUSkinScraper:
             return False
         
         # Extract champion info
-        self.cache.champion_id = champion_id
-        self.cache.champion_name = champ_data.get('name', f'Champion{champion_id}')
+        new_cache.champion_id = champion_id
+        new_cache.champion_name = champ_data.get('name', f'Champion{champion_id}')
         
         # Extract skins
         raw_skins = champ_data.get('skins', [])
@@ -112,7 +114,7 @@ class LCUSkinScraper:
                 }
                 
                 chroma_details.append(chroma_info)
-                self.cache.chroma_id_map[chroma_id] = chroma_info
+                new_cache.chroma_id_map[chroma_id] = chroma_info
             
             skin_data = {
                 'skinId': skin_id,
@@ -124,18 +126,21 @@ class LCUSkinScraper:
                 'num': skin.get('num', 0)
             }
             
-            self.cache.skins.append(skin_data)
-            self.cache.skin_id_map[skin_id] = skin_data
-            self.cache.skin_name_map[english_skin_name] = skin_data
-        
+            new_cache.skins.append(skin_data)
+            new_cache.skin_id_map[skin_id] = skin_data
+            new_cache.skin_name_map[english_skin_name] = skin_data
+
+        # Swap only now that the new cache is complete
+        self.cache = new_cache
+
         log.info(f"[LCU-SCRAPER] Scraped {len(self.cache.skins)} skins for {self.cache.champion_name} (ID: {champion_id})")
-        
+
         # Log first few skins for debugging
         if self.cache.skins:
             log.debug(f"[LCU-SCRAPER] Sample skins:")
             for skin in self.cache.skins[:3]:
                 log.debug(f"  - {skin['skinName']} (ID: {skin['skinId']})")
-        
+
         return True
     
     def find_skin_by_text(self, text: str, use_levenshtein: bool = True) -> Optional[Tuple[int, str, float]]:
@@ -178,7 +183,6 @@ class LCUSkinScraper:
             return None
 
         best_match = None
-        best_distance = float('inf')
         best_similarity = 0.0
 
         for skin in self.cache.skins:
@@ -189,8 +193,11 @@ class LCUSkinScraper:
                 max_len = max(len(candidate), len(skin_name))
                 similarity = 1.0 - (distance / max_len) if max_len > 0 else 0.0
 
-                if distance < best_distance:
-                    best_distance = distance
+                # Rank by similarity, not by raw distance: the two candidates have
+                # different lengths (the stripped one is shorter), so the shortest
+                # distance almost always belongs to the shorter candidate even when
+                # it is the worse match, and the threshold below then judges it.
+                if similarity > best_similarity:
                     best_similarity = similarity
                     best_match = skin
 

@@ -28,6 +28,7 @@ class CustomModInjectionMonitorTests(unittest.TestCase):
         state = SimpleNamespace(
             locked_champ_id=103,
             hovered_champ_id=None,
+            owned_skin_ids={103001},
             selected_map_mod=None,
             selected_font_mod=None,
             selected_announcer_mod=None,
@@ -59,6 +60,8 @@ class CustomModInjectionMonitorTests(unittest.TestCase):
         self.injector.overlay_manager.mk_run_overlay.assert_not_called()
 
     def test_a_missing_mod_source_stops_the_monitor(self):
+        # prepare_custom_mod answers "the mod is gone" with None
+        self.manager.prepare_custom_mod.return_value = None
         self.inject(self.custom_mod(self.root / "deleted"))
         self.injector.overlay_manager.mk_run_overlay.assert_not_called()
 
@@ -69,19 +72,16 @@ class CustomModInjectionMonitorTests(unittest.TestCase):
     def test_an_error_stops_the_monitor(self):
         mod_source = self.root / "Mod"
         mod_source.mkdir()
-        with patch("threads.handlers.injection_trigger.link_or_extract", side_effect=OSError("locked")):
-            self.inject(self.custom_mod(mod_source))
+        self.manager.prepare_custom_mod.side_effect = OSError("locked")
+        self.inject(self.custom_mod(mod_source))
         self.injector.overlay_manager.mk_run_overlay.assert_not_called()
 
     def test_a_completed_injection_stops_the_monitor(self):
         mod_source = self.root / "Mod"
         mod_source.mkdir()
+        self.manager.prepare_custom_mod.return_value = "Mod"
 
-        def link(source, dest, cache_dir=None):
-            dest.mkdir(parents=True)
-
-        with patch("threads.handlers.injection_trigger.link_or_extract", side_effect=link), \
-                patch("utils.core.mod_historic.write_historic_mod"), \
+        with patch("utils.core.mod_historic.write_historic_mod"), \
                 patch("utils.core.historic.write_historic_entry"), \
                 patch("utils.core.historic.write_historic_target"):
             self.inject(self.custom_mod(mod_source))

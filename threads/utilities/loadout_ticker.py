@@ -56,9 +56,13 @@ class LoadoutTicker(threading.Thread):
             log.exception(f"[loadout #{self.ticker_id}] Ticker stopped by an unexpected error")
         finally:
             # Release even after an error: while the flag is set no new ticker
-            # starts, and the champ select would end without an injection
-            if getattr(self.state, 'current_ticker', 0) == self.ticker_id:
-                self.state.loadout_countdown_active = False
+            # starts, and the champ select would end without an injection.
+            # Under timer_lock, because TimerManager reads and writes this flag
+            # there: clearing it unsynchronised let it observe False just before
+            # this ran and mint a new ticker that then suppressed its own start.
+            with self.state.timer_lock:
+                if getattr(self.state, 'current_ticker', 0) == self.ticker_id:
+                    self.state.loadout_countdown_active = False
 
     @staticmethod
     def _log_error_once(what: str, error: Exception, last_logged):
@@ -72,7 +76,11 @@ class LoadoutTicker(threading.Thread):
         # Exit immediately if another ticker has taken control
         if getattr(self.state, 'current_ticker', 0) != self.ticker_id:
             return
-        
+
+        # The patcher must be scanning before the client launches the game
+        if self.injection_manager:
+            self.injection_manager.start_patcher_in_background()
+
         # Local variables to avoid cross-resets
         left0_ms = self.state.loadout_left0_ms
         t0 = self.state.loadout_t0
@@ -83,6 +91,7 @@ class LoadoutTicker(threading.Thread):
         last_bucket = None
         last_logged_name = object()
         error_logged = None
+        injection_triggered = False
         
         # Continue loop only in ChampSelect/FINALIZATION
         while (not self.state.stop) and self.state.loadout_countdown_active and (self.state.current_ticker == self.ticker_id) and (self.state.phase in ["ChampSelect", "FINALIZATION"]):
@@ -160,9 +169,19 @@ class LoadoutTicker(threading.Thread):
                     if name:
                         # Trigger injection
                         self.injection_trigger.trigger_injection(name, self.ticker_id, cname)
+                        # Past validation, the trigger injects or stops the patcher itself
+                        injection_triggered = injection_triggered or self.state.last_hover_written
                 except Exception as e:
                     error_logged = self._log_error_once("Injection trigger failed", e, error_logged)
 
             if remain_ms <= 0:
                 break
             time.sleep(1.0 / float(self.hz))
+
+        # No injection was triggered (no skin, refused, dodge): stop the patcher
+        if (
+            self.injection_manager
+            and not injection_triggered
+            and getattr(self.state, 'current_ticker', 0) == self.ticker_id
+        ):
+            self.injection_manager.discard_early_patcher()

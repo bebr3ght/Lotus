@@ -13,7 +13,7 @@ import threading
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Dict
+from typing import Any, Dict
 
 # Third-party imports
 import logging
@@ -168,13 +168,13 @@ def setup_logging(log_mode: str = 'customer', *, write_logs: bool = True):
     global _CURRENT_LOG_MODE
     _CURRENT_LOG_MODE = log_mode
     # Handle windowed mode where stdout/stderr might be None or redirected to devnull
-    if sys.stdout is not None and not hasattr(sys.stdout, 'name') or sys.stdout.name != os.devnull:
+    if sys.stdout is not None and hasattr(sys.stdout, 'name') and sys.stdout.name != os.devnull:
         try:
             sys.stdout.reconfigure(line_buffering=True)
         except (AttributeError, OSError):
             pass  # stdout doesn't support reconfigure or is redirected
     
-    if sys.stderr is not None and not hasattr(sys.stderr, 'name') or sys.stderr.name != os.devnull:
+    if sys.stderr is not None and hasattr(sys.stderr, 'name') and sys.stderr.name != os.devnull:
         try:
             sys.stderr.reconfigure(line_buffering=True)
         except (AttributeError, OSError):
@@ -657,7 +657,7 @@ def log_success(logger: logging.Logger, message: str, icon: str = ""):
     logger.info(f"{icon} {message}" if icon else message)
 
 
-def log_status(logger: logging.Logger, status: str, value: any, icon: str = ""):
+def log_status(logger: logging.Logger, status: str, value: Any, icon: str = ""):
     """
     Log a status update
     

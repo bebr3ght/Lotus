@@ -25,8 +25,14 @@ def initialize_threads(lcu, state, args, injection_manager, skin_scraper, app_st
     thread_manager = ThreadManager()
     
     # Create and register threads
-    t_phase = PhaseThread(lcu, state, interval=1.0/max(PHASE_POLL_INTERVAL_DEFAULT, args.phase_hz), 
-                         log_transitions=False, injection_manager=injection_manager, skin_scraper=skin_scraper, db=None)
+    # args.phase_hz is a rate and PHASE_POLL_INTERVAL_DEFAULT is a period, so they
+    # must not meet in the same max(): that made --phase-hz 0.2 mean 0.5s (2Hz)
+    # instead of the requested 5s, and only looked right for the shipped defaults.
+    t_phase = PhaseThread(
+        lcu, state,
+        interval=max(PHASE_POLL_INTERVAL_DEFAULT, 1.0 / args.phase_hz if args.phase_hz > 0 else PHASE_POLL_INTERVAL_DEFAULT),
+        log_transitions=False, injection_manager=injection_manager, skin_scraper=skin_scraper, db=None,
+    )
     thread_manager.register("Phase", t_phase)
     
     t_ui = PenguSkinMonitorThread(state, lcu, skin_scraper=skin_scraper, injection_manager=injection_manager)

@@ -49,7 +49,8 @@ def load_historic_banner_map() -> Dict[str, str]:
         with p.open("r", encoding="utf-8") as f:
             data = json.load(f)
         return data if isinstance(data, dict) else {}
-    except Exception:
+    except Exception as e:
+        log.debug(f"[HISTORIC] Could not read the banner map: {e}")
         return {}
 
 
@@ -60,16 +61,22 @@ def get_historic_banner_for_champion(champion_id: int) -> Optional[str]:
 
 
 def write_historic_banner(champion_id: int, banner_url: str) -> None:
-    """Save banner/splash URL for a champion."""
+    """Save banner/splash URL for a champion.
+
+    Called on every Swiftplay state broadcast, from the Pengu bridge thread, so
+    the read-modify-write goes through the same lock and the same atomic write
+    as the other historic files: without both, two broadcasts racing each other
+    dropped one champion's banner, and a crash mid-write truncated the file.
+    """
+    p = _historic_banners_file_path()
     try:
-        p = _historic_banners_file_path()
-        m = load_historic_banner_map()
-        m[str(int(champion_id))] = str(banner_url)
-        p.parent.mkdir(parents=True, exist_ok=True)
-        with p.open("w", encoding="utf-8") as f:
-            json.dump(m, f, ensure_ascii=False, indent=2)
-    except Exception:
-        pass
+        with _write_lock:
+            m = load_historic_banner_map()
+            m[str(int(champion_id))] = str(banner_url)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            _write_json(p, m)
+    except Exception as e:
+        log.warning(f"[HISTORIC] Could not save the banner for champion {champion_id}: {e}")
 
 def _historic_target_file_path() -> Path:
     data_dir = get_user_data_dir()

@@ -38,7 +38,8 @@ class AnalyticsClient:
     def enabled(self) -> bool:
         if self._enabled_override is not None:
             return self._enabled_override
-        if not ANALYTICS_ENABLED:
+        # No endpoint means nowhere to send it, whatever the flags say
+        if not self.server_url or not ANALYTICS_ENABLED:
             return False
         value = get_config_option("General", "analytics_enabled")
         return value is None or value.strip().lower() not in {"0", "false", "no", "off"}

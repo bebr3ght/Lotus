@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Create Windows installer for Rose using Inno Setup
+Create Windows installer for Lotus using Inno Setup
 """
 
 import sys
 import subprocess
 import shutil
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import product  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -20,7 +24,8 @@ except ImportError:
 MIN_PYTHON = (3, 11)
 if sys.version_info < MIN_PYTHON:
     sys.stderr.write(
-        f"Rose build scripts require Python {MIN_PYTHON[0]}.{MIN_PYTHON[1]} or newer.\n"
+        f"{product.app_name()} build scripts require Python "
+        f"{MIN_PYTHON[0]}.{MIN_PYTHON[1]} or newer.\n"
         "Please re-run using an updated interpreter.\n"
     )
     sys.exit(1)
@@ -43,9 +48,9 @@ def create_installer():
     """Create Windows installer using Inno Setup"""
     
     print("=" * 60)
-    print("Creating Rose Windows Installer")
+    print(f"Creating {product.app_name()} Windows Installer")
     print("=" * 60)
-    
+
     # Check if Inno Setup is installed
     local_appdata = Path.home() / "AppData" / "Local" / "Programs"
     inno_setup_paths = [
@@ -54,15 +59,14 @@ def create_installer():
         r"C:\Program Files\Inno Setup 6\ISCC.exe",
         r"C:\Program Files (x86)\Inno Setup 5\ISCC.exe",
         r"C:\Program Files\Inno Setup 5\ISCC.exe",
-        r"E:\Apps\Inno Setup 6\ISCC.exe",
     ]
-    
+
     iscc_path = None
     for path in inno_setup_paths:
         if Path(path).exists():
             iscc_path = path
             break
-    
+
     if not iscc_path:
         print("Inno Setup not found!")
         print("\nPlease install Inno Setup from: https://jrsoftware.org/isdl.php")
@@ -72,8 +76,8 @@ def create_installer():
     print(f"Found Inno Setup: {iscc_path}")
     
     # Check if dist directory exists
-    if not (ROOT / "dist/Rose").exists():
-        print("\nError: dist/Rose directory not found!")
+    if not product.dist_dir().exists():
+        print(f"\nError: {product.dist_dir()} directory not found!")
         print("Please run 'python scripts/build_pyinstaller.py' first to create the executable.")
         return False
     
@@ -116,18 +120,26 @@ def create_installer():
         return False
     
     # Copy icon file to dist directory if it doesn't exist
-    icon_dst = ROOT / "dist/Rose/icon.ico"
+    icon_dst = product.dist_dir() / "icon.ico"
     if ico_icon.exists() and not icon_dst.exists():
         shutil.copy2(ico_icon, icon_dst)
         print(f"Copied {ico_icon} to {icon_dst}")
     
     print("\n[2/3] Compiling installer...")
-    
+
+    # Refuse to ship an installer whose identity does not match what we build
+    product.check_identity()
+
     # Compile the installer
     cmd = [iscc_path, str(ROOT / "installer.iss")]
     print(f"Running: {' '.join(cmd)}")
-    
-    result = subprocess.run(cmd, capture_output=True, text=True, cwd=ROOT)
+
+    # ISCC writes in the console OEM code page; a build path with non-ASCII
+    # characters (C:\Users\José) must not turn into a UnicodeDecodeError
+    result = subprocess.run(
+        cmd, capture_output=True, text=True, cwd=ROOT,
+        encoding="utf-8", errors="replace", timeout=600,
+    )
     
     if result.returncode != 0:
         print("Installer compilation failed!")
@@ -138,8 +150,11 @@ def create_installer():
     print("\n[3/3] Installer created successfully!")
     
     # Check if installer was created
-    # Named Rose_Setup_<version>.exe: the one just compiled is the newest
-    installer_files = sorted(installer_dir.glob("Lotus_Setup*.exe"), key=lambda p: p.stat().st_mtime)
+    # Named <AppName>_Setup_<version>.exe: the one just compiled is the newest
+    installer_files = sorted(
+        installer_dir.glob(f"{product.app_name()}_Setup*.exe"),
+        key=lambda p: p.stat().st_mtime,
+    )
     if installer_files:
         installer_file = installer_files[-1]
         size_mb = installer_file.stat().st_size / (1024 * 1024)

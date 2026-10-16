@@ -207,14 +207,16 @@ class OverlayManager:
         if self.game_dir is None:
             log.error("[INJECTOR] Cannot create overlay - League game directory not found")
             log.error("[INJECTOR] Please ensure League Client is running or manually set the path in config.ini")
+            self.discard_early_patcher()
             return 127
-        
+
         from ..tools.tools_manager import ToolsManager
         tools_manager = ToolsManager(self.tools_dir)
         tools = tools_manager.detect_tools()
         exe = tools.get("modtools")
         if not exe or not exe.exists():
             log.error(f"[INJECTOR] Missing mod-tools.exe in {self.tools_dir}")
+            self.discard_early_patcher()
             return 127
         
         # Use overlay directory (should already be clean from _clean_overlay_dir)
@@ -238,6 +240,7 @@ class OverlayManager:
             eol = time.strftime("%Y-%m-%d %H:%M", time.localtime(patcher.eol))
             log.error(f"[INJECT] LTK patcher does not support game builds after {eol}")
             self._report_ltk_patcher_eol(eol)
+            self.discard_early_patcher()
             return 1
 
         # The DLL only overlays games launched after the scan started, so the
@@ -387,11 +390,29 @@ class OverlayManager:
         patchers itself.
         """
         with self._early_patcher_lock:
-            if self._early_patcher is not None or self.game_dir is None:
+            if self.game_dir is None:
                 return
+            stale = None
+            if self._early_patcher is not None:
+                if self._early_patcher["proc"].poll() is None:
+                    return
+                # Lotus stopped it after the last game: scan again for this one.
+                # Released before the wait: aborting can block for
+                # PROCESS_TERMINATE_TIMEOUT_S, and mk_run_overlay needs this lock
+                # while the game is deliberately frozen.
+                stale, self._early_patcher = self._early_patcher, None
             from ..tools.tools_manager import ToolsManager
             ltk_host = ToolsManager(self.tools_dir).detect_ltk_patcher()
-            if not ltk_host or check_ltk_patcher(ltk_host.parent).expired_for(self.game_dir):
+            expired = not ltk_host or check_ltk_patcher(ltk_host.parent).expired_for(self.game_dir)
+
+        if stale is not None:
+            self._abort_ltk_patcher(stale)
+        if expired:
+            return
+
+        with self._early_patcher_lock:
+            if self._early_patcher is not None:
+                # Another thread started one while we were aborting
                 return
             overlay_dir = self.mods_dir.parent / "overlay"
             overlay_dir.mkdir(parents=True, exist_ok=True)

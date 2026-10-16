@@ -336,19 +336,25 @@ class SwiftplayHandler:
                                 if historic_val is not None:
                                     historic_id = None
                                     if is_custom_mod_path(historic_val):
+                                        # "skins/<skin_id>/<mod name>" -> the skin the mod replaces
                                         mod_path = get_custom_mod_path(historic_val)
-                                        parts = mod_path.replace("\\", "/").split("/")
+                                        path_parts = mod_path.replace("\\", "/").split("/")
                                         if len(path_parts) >= 2 and path_parts[0] == "skins":
-                                            historic_id = int(parts[1])
+                                            historic_id = int(path_parts[1])
+                                        else:
+                                            log.debug(
+                                                "[Swiftplay] Unrecognised saved mod path %s for champion %s",
+                                                mod_path, cid_int,
+                                            )
                                     else:
                                         historic_id = int(historic_val)
-                                    
+
                                     # Если исторический скин отличается от текущего (базового), применяем его
                                     if historic_id and historic_id != current_tracked_skin:
                                         self.state.swiftplay_skin_tracking[cid_int] = historic_id
                                         changed = True
                                         log.info(f"[Swiftplay] Auto-selected historic skin {historic_id} for champion {cid_int}, overwriting base skin.")
-                                # Если записи в истории нет, но и в трекинге тоже, добавляем базовый скин из лобби
+                            # Нет записи в истории: трекаем тот скин, что сам лобби показывает
                                 elif current_tracked_skin is None and sid is not None:
                                     self.state.swiftplay_skin_tracking[cid_int] = int(sid)
                                     changed = True

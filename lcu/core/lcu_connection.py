@@ -90,6 +90,7 @@ class LCUConnection:
             if same_connection:
                 return
 
+            previous_session = self.session
             self.port, self.pw = new_credentials
             self.base = f"https://127.0.0.1:{self.port}"
             self.session = self._prepare_session()
@@ -102,19 +103,45 @@ class LCUConnection:
             self.session.auth = ("riot", self.pw)
             self.session.headers.update({"Content-Type": "application/json"})
             self.ok = True
+            # The old session's pool is bound to a port that no longer answers
+            self._close_quietly(previous_session)
             log_section(log, "LCU Connected", "", {"Port": self.port, "Status": "Ready", "Source": source})
         except Exception as e:
             self._disable(f"LCU unavailable: {e}")
-    
+
+    @staticmethod
+    def _close_quietly(session) -> None:
+        """Release a replaced session's sockets; a failure here must not
+        abort the reconnect that just succeeded."""
+        if session is None:
+            return
+        try:
+            session.close()
+        except Exception as e:
+            log.debug(f"Could not close the previous LCU session: {e}")
+
     def _disable(self, reason: str):
         """Disable LCU connection"""
-        if self.ok: 
+        if self.ok:
             log.debug(f"LCU disabled: {reason}")
+        previous_session = self.session
         self.ok = False
         self.base = None
         self.port = None
         self.pw = None
         self.session = self._prepare_session()
+        self._close_quietly(previous_session)
+
+    def request_target(self) -> Optional[tuple]:
+        """The (base_url, session) pair to use for one request.
+
+        Read under the same lock that swaps them, so a request cannot be built
+        from a new base with the session carrying the previous token.
+        """
+        with self._lock:
+            if not self.ok or not self.session or not self.base:
+                return None
+            return self.base, self.session
     
     def refresh_if_needed(self, force: bool = False):
         """Refresh once per second, including tokens rotated on client restart."""

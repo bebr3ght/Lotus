@@ -254,7 +254,12 @@ class ModStorageService:
     def _load_target_manifest(
         self,
         champion_id: int,
-    ) -> tuple[tuple[int, ...], dict[str, dict]]:
+    ) -> Optional[tuple[tuple[int, ...], dict[str, dict]]]:
+        """The champion's targets, or None when the manifest exists but is unreadable.
+
+        None has to stay distinguishable from an empty result: a caller that
+        rewrites the manifest from an empty read drops every mod it held.
+        """
         champion_dir = self.get_champion_dir(champion_id)
         payload = None
         for metadata_name in (self.TARGET_METADATA, self.LEGACY_TARGET_METADATA):
@@ -262,6 +267,11 @@ class ModStorageService:
             payload = self._load_manifest(manifest_path)
             if payload:
                 break
+        if payload is None and any(
+            (champion_dir / name).exists()
+            for name in (self.TARGET_METADATA, self.LEGACY_TARGET_METADATA)
+        ):
+            return None
         if not isinstance(payload, dict):
             return (), {}
 
@@ -397,7 +407,14 @@ class ModStorageService:
 
         champion_dir = self.get_champion_dir(champion_id_int)
         champion_dir.mkdir(parents=True, exist_ok=True)
-        default_targets, mod_targets = self._load_target_manifest(champion_id_int)
+        loaded = self._load_target_manifest(champion_id_int)
+        if loaded is None:
+            # Rewriting it would drop every other mod registered for this champion
+            raise ValueError(
+                "This champion's mod list could not be read, so it was left unchanged. "
+                f"Delete or repair {champion_dir / self.TARGET_METADATA} and try again."
+            )
+        default_targets, mod_targets = loaded
         if mod_name:
             if mod_path is not None:
                 folder_hash, wad_hashes = self._hash_mod_folder(Path(mod_path))
@@ -701,7 +718,12 @@ class ModStorageService:
             resolved_mod_name = mod_name or target.stem
             safe_remove_entry(target)
 
-            default_targets, mod_targets = self._load_target_manifest(champion_id_int)
+            loaded = self._load_target_manifest(champion_id_int)
+            if loaded is None:
+                # The mod folder is already gone; leave the unreadable manifest alone
+                # rather than replacing it with one that lists nothing
+                return False
+            default_targets, mod_targets = loaded
             removed = False
             for key in list(mod_targets.keys()):
                 metadata = mod_targets[key]
@@ -929,7 +951,10 @@ class ModStorageService:
 
         champion_storage_id = champion_id_int * 1000
         champion_directory = self.get_champion_dir(champion_id_int)
-        default_targets, mod_targets = self._load_target_manifest(champion_id_int)
+        loaded = self._load_target_manifest(champion_id_int)
+        # An unreadable manifest means the mods are unknown, not absent: list what
+        # is on disk with no target associations rather than showing nothing
+        default_targets, mod_targets = loaded if loaded is not None else ((), {})
         entries = self._list_mods_in_directory(
             champion_directory,
             champion_id_int,

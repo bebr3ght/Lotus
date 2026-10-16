@@ -13,7 +13,10 @@ from utils.core.logging import get_logger
 
 log = get_logger()
 
-GITHUB_RELEASE_API = "https://api.github.com/repos/Alban1911/Rose/releases/latest"
+# Releases are read from this repository, which must match installer.iss's
+# MyAppURL: pointing it at the upstream project made every Lotus user offered,
+# and then served, upstream Rose builds over their own install.
+GITHUB_RELEASE_API = "https://api.github.com/repos/bebr3ght/Lotus/releases/latest"
 
 
 class GitHubClient:

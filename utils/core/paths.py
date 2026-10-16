@@ -248,6 +248,19 @@ def get_injection_dir() -> Path:
     return injection_dir
 
 
+def get_updates_root() -> Path:
+    """
+    Get the folder the updater downloads into and keeps its log in.
+
+    It sits next to config.ini, and both the download side and the side that
+    reports the previous update's outcome have to agree on it, so it is
+    resolved in one place.
+    """
+    updates_dir = get_user_data_dir() / "updates"
+    updates_dir.mkdir(parents=True, exist_ok=True)
+    return updates_dir
+
+
 def open_folder_in_explorer(folder: Path) -> None:
     """
     Create `folder` if missing and reveal it in the OS file explorer.

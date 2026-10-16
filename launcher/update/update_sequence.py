@@ -12,6 +12,7 @@ from typing import Callable, Optional
 
 from config import APP_VERSION, get_config_file_path, read_config_file, write_config_file
 from utils.core.logging import get_logger, get_named_logger
+from utils.core.paths import get_updates_root
 
 from .github_client import GitHubClient
 from .update_downloader import UpdateDownloader
@@ -19,6 +20,51 @@ from .update_installer import UpdateInstaller
 
 log = get_logger()
 updater_log = get_named_logger("updater", prefix="log_updater")
+
+
+def reconcile_installed_version(config_path: Path) -> Optional[str]:
+    """Settle `installed_version` against the binary that is actually running.
+
+    The updater writes the new version to config.ini *before* it launches the
+    batch script, and the script leaves config.ini alone (robocopy excludes it).
+    So on the next launch the two can only disagree in two ways:
+
+    * config holds a **newer** version: the copy failed. Leave it, so
+      perform_update still sees the failed update and can count the attempt.
+    * config holds an **older** version (or nothing): the copy landed, or the
+      config predates this install. Stamp the running version.
+
+    Overwriting it unconditionally is what made MAX_UPDATE_RETRIES dead: the
+    signal was erased before anything could read it.
+    """
+    updater_log.debug("Reconciling installed_version against the running build")
+    try:
+        config = configparser.ConfigParser(interpolation=None)
+        read_config_file(config, config_path)
+        if not config.has_section("General"):
+            return None
+        recorded = config.get("General", "installed_version", fallback="").strip()
+        recorded_parsed = _parse_semver_like(recorded)
+        running_parsed = _parse_semver_like(APP_VERSION)
+
+        if recorded_parsed and running_parsed and _cmp_version(recorded_parsed, running_parsed) > 0:
+            updater_log.info(
+                "installed_version is %s but %s is running: keeping it so the "
+                "failed update is retried (or given up on).",
+                recorded, APP_VERSION,
+            )
+            return recorded
+
+        if recorded == APP_VERSION:
+            return recorded
+
+        config.set("General", "installed_version", APP_VERSION)
+        write_config_file(config, config_path)
+        updater_log.info("installed_version set from %r to %s.", recorded, APP_VERSION)
+        return APP_VERSION
+    except Exception as exc:  # noqa: BLE001
+        updater_log.warning(f"Could not reconcile installed_version in {config_path}: {exc}")
+        return None
 
 
 def _parse_semver_like(version: str) -> Optional[tuple[int, ...]]:
@@ -252,8 +298,7 @@ class UpdateSequence:
                 return False
         
         # Download update
-        updates_root = config_path.parent / "updates"
-        updates_root.mkdir(parents=True, exist_ok=True)
+        updates_root = get_updates_root()
         zip_name = asset.get("name") or "update.zip"
         zip_path = updates_root / zip_name
         
@@ -310,22 +355,9 @@ class UpdateSequence:
                     f"Failed to persist installed_version to config before update: {exc}"
                 )
 
-        # Prepare and launch standalone updater (falls back to batch script if needed)
-        updater_params = self.installer.prepare_updater_launch(
+        # Start the script that copies the update over this install once Rose exits
+        if not self.installer.install(
             extracted_root,
-            install_dir,
-            updates_root,
-            zip_path,
-            staging_dir,
-            status_callback,
-        )
-        if not updater_params:
-            # Revert installed_version so the next run retries the update
-            self._revert_installed_version(config, config_path, old_installed_version)
-            return False
-
-        if not self.installer.launch_updater(
-            updater_params,
             install_dir,
             updates_root,
             zip_path,
@@ -340,6 +372,5 @@ class UpdateSequence:
         if bytes_callback and total_size:
             bytes_callback(total_size, total_size)
         status_callback("Update installed")
-        updater_log.info(f"Auto-update completed. Update installed: True")
         return True
 

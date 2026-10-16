@@ -287,10 +287,21 @@ def parse_skin_id(skin_name: str, champion_id: Optional[int] = None) -> int:
         return value
     return 0
 
-def build(game_dir: Path, mods_dir: Path, mod_folder: Path, skin_id: int) -> Optional[str]:
+def build(
+    game_dir: Path,
+    mods_dir: Path,
+    mod_folder: Path,
+    skin_id: int,
+    localized_name: Optional[str] = None,
+) -> Optional[str]:
     """Writes the mod and returns its folder name, or None when there is nothing to show.
 
     skin_id is the client's id (champion id * 1000 + skin number); chromas pass their base skin's id.
+
+    localized_name is the name the client itself reported (the LCU localised name). It is
+    preferred over the one read from the language table, so a skin the table does not list
+    under that id still gets the right name, and one the table lists in a different locale
+    gets the locale the account actually uses.
     """
     try:
         if not skin_id or skin_id % 1000 == 0:
@@ -305,12 +316,13 @@ def build(game_dir: Path, mods_dir: Path, mod_folder: Path, skin_id: int) -> Opt
             log.debug("[LOADNAME] no language wad in the game folder, skipped")
             return None
 
+        override = str(localized_name).strip() if localized_name else None
         for wad in wads:
             table = _read_table(wad)
             if not table or table[:3] != b"RST" or table[3] != 5:
                 continue
             for alias in aliases:
-                name = _text_of(table, _key_hash(f"game_character_skin_displayname_{alias}_{skin_id % 1000}"))
+                name = override or _text_of(table, _key_hash(f"game_character_skin_displayname_{alias}_{skin_id % 1000}"))
                 if not name:
                     continue
                 champion_key = _key_hash(f"{RECORD_KEY}{alias}")
@@ -342,7 +354,7 @@ def build(game_dir: Path, mods_dir: Path, mod_folder: Path, skin_id: int) -> Opt
                 (target / TABLE_PATH).write_bytes(table)
                 log.info(f"[LOADNAME] the loading screen will show '{name}'")
                 return MOD_FOLDER
-        log.debug(f"[LOADNAME] the game has no name for skin {skin_id}, skipped")
+        log.debug("[LOADNAME] the game has no name for skin %s, skipped", skin_id)
         return None
     except Exception as e:
         # a name is a nicety: an injection must never fail because of it

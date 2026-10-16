@@ -97,7 +97,12 @@ class TimerManager:
                         "Hz": self.timer_hz,
                         "Phase": phase_timer
                     })
-                    if self.ticker is None or not self.ticker.is_alive():
+                    if self.ticker is None or getattr(self.ticker, "ticker_id", None) != self.state.current_ticker:
+                        # A brand new ticker id always needs a brand new thread. The old
+                        # one has already released the countdown in its finally but stays
+                        # is_alive() for a moment while it unwinds, and reusing it on that
+                        # basis left loadout_countdown_active set with nobody to clear it,
+                        # which silently disabled injection for the rest of the session.
                         self.ticker = LoadoutTicker(
                             self.lcu,
                             self.state,

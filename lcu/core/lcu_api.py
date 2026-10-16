@@ -7,6 +7,7 @@ Handles HTTP requests to LCU API
 
 from typing import Any, Optional
 
+import copy
 import threading
 import time
 import requests
@@ -41,13 +42,16 @@ class LCUAPI:
             if expiry <= now:
                 self._cache.pop(path, None)
                 return _CACHE_MISS
-            return value
+            # Hand out a private copy: callers edit what they get (e.g. Swiftplay
+            # rewrites playerSlots[*].skinId), and mutating the cached object made
+            # every other reader of that endpoint inside the TTL see the edit.
+            return copy.deepcopy(value)
 
     def _cache_put(self, path: str, value: Any, ttl: float) -> None:
         if ttl <= 0:
             return
         with self._cache_lock:
-            self._cache[path] = (time.monotonic() + ttl, value)
+            self._cache[path] = (time.monotonic() + ttl, copy.deepcopy(value))
 
     def invalidate(self, path_prefix: str = "") -> None:
         """Invalidate cached GET responses.
@@ -98,8 +102,10 @@ class LCUAPI:
 
         if not self.connection.ok:
             self.connection.refresh_if_needed()
-            if not self.connection.ok:
-                return None
+        target = self.connection.request_target()
+        if target is None:
+            return None
+        base, session = target
 
         def _store(value):
             if use_cache:
@@ -107,28 +113,32 @@ class LCUAPI:
             return value
 
         try:
-            r = self.connection.session.get((self.connection.base or "") + path, timeout=timeout)
+            r = session.get(base + path, timeout=timeout)
             if r.status_code in (404, 405):
                 return _store(None)
             r.raise_for_status()
             try:
                 return _store(r.json())
             except (ValueError, requests.exceptions.JSONDecodeError) as e:
-                log.debug(f"Failed to decode JSON response: {e}")
-                return _store(None)
+                # A body that is not JSON is not an answer: caching it would make
+                # every reader inside the TTL see "no data" for a working endpoint.
+                log.debug(f"Failed to decode JSON response for {path}: {e}")
+                return None
         except requests.exceptions.RequestException:
             self.connection.refresh_if_needed(force=True)
-            if not self.connection.ok:
+            target = self.connection.request_target()
+            if target is None:
                 return None
+            base, session = target
             try:
-                r = self.connection.session.get((self.connection.base or "") + path, timeout=timeout)
+                r = session.get(base + path, timeout=timeout)
                 if r.status_code in (404, 405):
                     return _store(None)
                 r.raise_for_status()
-                try:
-                    return _store(r.json())
-                except Exception:
-                    return _store(None)
+                return _store(r.json())
+            except (ValueError, requests.exceptions.JSONDecodeError) as e:
+                log.debug(f"Failed to decode JSON response for {path} after reconnecting: {e}")
+                return None
             except requests.exceptions.RequestException as e:
                 log.debug(f"[LCU] GET {path} failed after reconnecting: {e}")
                 return None
@@ -150,12 +160,16 @@ class LCUAPI:
             if not self.connection.ok:
                 return None
 
-        url = (self.connection.base or "") + path
+        target = self.connection.request_target()
+        if target is None:
+            return None
+        base, session = target
+        url = base + path
         self.invalidate(path)
 
         try:
             t0 = time.perf_counter()
-            resp = self.connection.session.put(
+            resp = session.put(
                 url,
                 json=json_data,
                 timeout=timeout,
@@ -164,16 +178,21 @@ class LCUAPI:
             dt_ms = (time.perf_counter() - t0) * 1000.0
             log.info(f"[LCU] PUT {path} -> {getattr(resp, 'status_code', 'None')} in {dt_ms:.1f}ms")
             return resp
-        except Exception as exc:
+        except requests.exceptions.RequestException as exc:
+            # A transport failure may or may not have reached the client, but it is
+            # the only kind worth replaying: a serialise error or a decode failure
+            # says nothing about the connection and would repeat the write blind.
             log.warning(f"[LCU] PUT {path} failed ({type(exc).__name__}): {exc}")
             self.connection.refresh_if_needed(force=True)
-            if not self.connection.ok:
+            retry_target = self.connection.request_target()
+            if retry_target is None:
                 log.warning(f"[LCU] PUT {path} - connection lost after refresh")
                 return None
+            retry_base, retry_session = retry_target
             try:
                 t0 = time.perf_counter()
-                resp = self.connection.session.put(
-                    url,
+                resp = retry_session.put(
+                    retry_base + path,
                     json=json_data,
                     timeout=timeout,
                     headers=headers,
@@ -181,9 +200,13 @@ class LCUAPI:
                 dt_ms = (time.perf_counter() - t0) * 1000.0
                 log.info(f"[LCU] PUT(retry) {path} -> {getattr(resp, 'status_code', 'None')} in {dt_ms:.1f}ms")
                 return resp
-            except Exception as exc2:
+            except requests.exceptions.RequestException as exc2:
                 log.warning(f"[LCU] PUT(retry) {path} also failed ({type(exc2).__name__}): {exc2}")
                 return None
+        except Exception as exc:
+            # Never replay a non-idempotent write that failed for a local reason
+            log.warning(f"[LCU] PUT {path} failed before reaching the client ({type(exc).__name__}): {exc}")
+            return None
 
     def patch(self, path: str, json_data: dict, timeout: float) -> Optional[requests.Response]:
         """Make PATCH request to LCU API
@@ -198,15 +221,17 @@ class LCUAPI:
         """
         if not self.connection.ok:
             self.connection.refresh_if_needed()
-            if not self.connection.ok:
-                return None
+        target = self.connection.request_target()
+        if target is None:
+            return None
+        base, session = target
 
         self.invalidate(path)
 
         try:
             t0 = time.perf_counter()
-            resp = self.connection.session.patch(
-                (self.connection.base or "") + path,
+            resp = session.patch(
+                base + path,
                 json=json_data,
                 timeout=timeout,
             )
@@ -218,12 +243,14 @@ class LCUAPI:
             return resp
         except requests.exceptions.RequestException:
             self.connection.refresh_if_needed(force=True)
-            if not self.connection.ok:
+            retry_target = self.connection.request_target()
+            if retry_target is None:
                 return None
+            retry_base, retry_session = retry_target
             try:
                 t0 = time.perf_counter()
-                resp = self.connection.session.patch(
-                    (self.connection.base or "") + path,
+                resp = retry_session.patch(
+                    retry_base + path,
                     json=json_data,
                     timeout=timeout,
                 )

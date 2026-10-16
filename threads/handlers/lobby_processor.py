@@ -70,6 +70,15 @@ class LobbyProcessor:
             self.state.current_queue_id = detected_queue
 
         is_swiftplay = False
+        # self.lcu.game_mode is a live read of the game session. Read it once per
+        # pass: this runs at 5Hz for as long as the user sits in the lobby, and
+        # each access costs an HTTP round trip the cache has usually expired for.
+        lcu_game_mode = None
+        if self.lcu.ok:
+            lcu_game_mode = self.lcu.game_mode
+            if not isinstance(lcu_game_mode, str):
+                lcu_game_mode = None
+
         if detected_mode and isinstance(detected_mode, str) and detected_mode.upper() in SWIFTPLAY_MODES:
             is_swiftplay = True
         # Queue ID fallback - reliable Swiftplay/Quickplay indicator even when game_mode is missing or CLASSIC
@@ -86,12 +95,10 @@ class LobbyProcessor:
             log.debug(f"[phase] lobby: Swiftplay via stored queue {detected_queue} fallback (already in swiftplay mode)")
             if not detected_mode:
                 detected_mode = "SWIFTPLAY"
-        elif detected_mode is None and self.lcu.ok and self.lcu.is_swiftplay:
+        elif detected_mode is None and lcu_game_mode and lcu_game_mode.upper() in SWIFTPLAY_MODES:
             is_swiftplay = True
-            fallback_mode = self.lcu.game_mode
-            log.debug(f"[phase] lobby: Swiftplay via LCU.is_swiftplay fallback (game_mode={fallback_mode})")
-            if fallback_mode and isinstance(fallback_mode, str) and fallback_mode.upper() in SWIFTPLAY_MODES:
-                detected_mode = fallback_mode
+            detected_mode = lcu_game_mode
+            log.debug(f"[phase] lobby: Swiftplay via LCU game_mode fallback ({lcu_game_mode})")
 
         previous_mode = self._last_lobby_mode
         previous_queue = self._last_lobby_queue
@@ -102,7 +109,7 @@ class LobbyProcessor:
         swiftplay_changed = is_swiftplay != swiftplay_previous
 
         effective_mode = detected_mode if detected_mode is not None else (
-            self.lcu.game_mode if (is_swiftplay and self.lcu.ok and self.lcu.game_mode) else previous_mode
+            lcu_game_mode if (is_swiftplay and lcu_game_mode) else previous_mode
         )
 
         if mode_changed or queue_changed or swiftplay_changed:

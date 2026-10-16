@@ -16,7 +16,8 @@ class RequestFailureTests(unittest.TestCase):
         session.get.side_effect = requests.exceptions.ConnectionError('client closed')
         session.patch.side_effect = requests.exceptions.ConnectionError('client closed')
         self.connection = SimpleNamespace(ok=True, base='https://127.0.0.1:1', session=session,
-                                          refresh_if_needed=lambda force=False: None)
+                                          refresh_if_needed=lambda force=False: None,
+                                          request_target=lambda: ('https://127.0.0.1:1', session))
         self.api = LCUAPI(self.connection)
 
     def test_a_failed_get_is_logged(self):

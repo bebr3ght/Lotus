@@ -93,13 +93,25 @@ def on_skin_confirmed(skin_id: int) -> Optional[float]:
         "confirmed": True,
         "ts": int(time.time()),
     }
-    try:
-        samples = _load_samples()
-        samples.append(sample)
-        _save_samples(samples)
-    except Exception as e:
-        log.warning("[TRACKER] Could not record base skin sample: %s", e, exc_info=True)
+    _record_sample(sample)
     return elapsed_s
+
+
+def _record_sample(sample: dict) -> None:
+    """Append one sample to the history file.
+
+    Under the same lock as the pending-confirmation state: confirmation arrives
+    on the WebSocket thread and the timeout on the phase thread, and appending
+    outside the lock let two of them read the same file and one overwrite the
+    other's sample.
+    """
+    with _LOCK:
+        try:
+            samples = _load_samples()
+            samples.append(sample)
+            _save_samples(samples)
+        except Exception as e:
+            log.warning("[TRACKER] Could not record base skin sample: %s", e, exc_info=True)
 
 
 def on_champ_select_exit() -> Optional[float]:
@@ -125,12 +137,7 @@ def on_champ_select_exit() -> Optional[float]:
         "confirmed": False,
         "ts": int(time.time()),
     }
-    try:
-        samples = _load_samples()
-        samples.append(sample)
-        _save_samples(samples)
-    except Exception as e:
-        log.warning("[TRACKER] Could not record base skin sample: %s", e, exc_info=True)
+    _record_sample(sample)
     return elapsed_s
 
 
@@ -142,7 +149,8 @@ def get_stats() -> dict:
         avg_ms, p90_ms, max_ms, recommended_threshold_ms,
         samples (raw list for frontend display)
     """
-    samples = _load_samples()
+    with _LOCK:
+        samples = _load_samples()
     confirmed = [s for s in samples if s.get("confirmed")]
     timeouts = [s for s in samples if not s.get("confirmed")]
 
@@ -179,10 +187,11 @@ def get_stats() -> dict:
 
 def clear_samples() -> None:
     """Clear all saved samples."""
-    try:
-        p = _data_path()
-        if p.exists():
-            p.write_text("[]", encoding="utf-8")
-    except Exception as e:
-        log.warning("[TRACKER] Could not clear base skin samples: %s", e)
+    with _LOCK:
+        try:
+            p = _data_path()
+            if p.exists():
+                p.write_text("[]", encoding="utf-8")
+        except Exception as e:
+            log.warning("[TRACKER] Could not clear base skin samples: %s", e)
     log.info("[TRACKER] Samples cleared")

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Build script for Rose using PyInstaller
+Build script for Lotus using PyInstaller
 Fast builds with Windows UI API support
 """
 
@@ -11,6 +11,10 @@ import shutil
 import time
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import product  # noqa: E402
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -18,7 +22,8 @@ ROOT = Path(__file__).resolve().parents[1]
 MIN_PYTHON = (3, 11)
 if sys.version_info < MIN_PYTHON:
     sys.stderr.write(
-        f"Rose build scripts require Python {MIN_PYTHON[0]}.{MIN_PYTHON[1]} or newer.\n"
+        f"{product.app_name()} build scripts require Python "
+        f"{MIN_PYTHON[0]}.{MIN_PYTHON[1]} or newer.\n"
         "Please re-run using an updated interpreter.\n"
     )
     sys.exit(1)
@@ -169,7 +174,7 @@ def main():
     
     print_header("[OK] BUILD COMPLETED SUCCESSFULLY!")
     
-    exe_path = ROOT / "dist/Rose/Rose.exe"
+    exe_path = product.dist_exe()
     
     if exe_path.exists():
         size_mb = exe_path.stat().st_size / (1024 * 1024)
@@ -188,8 +193,8 @@ def main():
         print(f"  - Good enough against casual theft")
         
         print(f"\nTo test:")
-        print(f"  cd dist\\Rose")
-        print(f"  Rose.exe")
+        print(f"  {product.dist_dir()}")
+        print(f"  {product.app_exe_name()}")
     else:
         print("[ERROR] Executable not found!")
         sys.exit(1)

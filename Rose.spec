@@ -1,6 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
 """
-PyInstaller spec file for Rose
+PyInstaller spec file for Lotus
 Builds a standalone executable with Windows UI API support
 """
 
@@ -35,7 +35,7 @@ import os
 # NOTE: the LTK patcher (ltk_patcher_host.exe + ltk_patcher_dll.dll) is NOT included - users provide their own
 injection_binaries = [
     'injection/tools/mod-tools.exe',
-    'injection/tools/cslol-dll.dll',  # Rose's stand-in, built from native/cslol_stub
+    'injection/tools/cslol-dll.dll',  # Lotus's stand-in, built from native/cslol_stub
 ]
 # Data files (text files, etc.)
 injection_data_files = [
@@ -88,7 +88,7 @@ try:
 except Exception as e:
     print(f"[WARNING] Could not collect Pillow data files: {e}")
 
-# Include the source-built Pengu Loader runtime used for Rose activation/deactivation
+# Include the source-built Pengu Loader runtime used for Lotus activation/deactivation
 # Runtime-generated files (logs, per-user state) must be excluded so they don't
 # leak local test data into the shipped installer.
 pengu_loader_dir = Path('Pengu Loader')
@@ -393,7 +393,7 @@ excludes = [
     'relay_server',
 ]
 
-# Filter out user-provided patcher binaries (not redistributed with Rose)
+# Filter out user-provided patcher binaries (not redistributed with Lotus)
 def filter_binaries(binaries_list):
     return [(name, path, typ) for name, path, typ in binaries_list
             if 'ltk_patcher' not in name.lower()]
@@ -424,7 +424,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name='Rose',
+    name='Lotus',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -447,5 +447,5 @@ coll = COLLECT(
     strip=False,
     upx=False,
     upx_exclude=[],
-    name='Rose',
+    name='Lotus',
 )

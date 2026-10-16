@@ -16,7 +16,7 @@ from injection.mods.storage import ModStorageService
 from utils.core.logging import get_logger, log_success
 from utils.system.admin_utils import ensure_admin_rights
 from utils.threading.thread_manager import create_daemon_thread
-from config import APP_VERSION, set_config_option
+from config import APP_VERSION, set_config_option, get_config_file_path
 
 log = get_logger()
 
@@ -28,8 +28,16 @@ def initialize_core_components(args, injection_threshold: Optional[float] = None
     Returns:
         Tuple of (lcu, skin_scraper, state, injection_manager)
     """
-    set_config_option("General", "installed_version", APP_VERSION)
-    
+    # installed_version must only follow the binary that is really on disk.
+    # Stamping APP_VERSION here unconditionally erased the "an update failed"
+    # signal before the updater could read it, so a broken release was
+    # downloaded and applied again on every single launch.
+    try:
+        from launcher.update.update_sequence import reconcile_installed_version
+        reconcile_installed_version(get_config_file_path())
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Could not reconcile installed_version: %s", exc)
+
     # Check for admin rights FIRST (required for injection to work)
     ensure_admin_rights()
 

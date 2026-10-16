@@ -2,7 +2,7 @@
  * @name Rose-PartyMode
  * @author Rose Team
  * @description Party Mode - See your friends' skins in game via P2P
- * @link https://github.com/Alban1911/Rose
+ * @link https://github.com/bebr3ght/Lotus
  */
 (function initPartyMode() {
   const LOG_PREFIX = "[Rose-PartyMode]";

@@ -14,7 +14,7 @@ This package is organized into subpackages:
 # Import paths first (doesn't depend on config)
 from utils.core.paths import (
     get_user_data_dir, get_appdata_dir, get_skins_dir,
-    get_state_dir, get_injection_dir, get_app_dir, get_asset_path
+    get_state_dir, get_injection_dir, get_updates_root, get_app_dir, get_asset_path
 )
 
 # Lazy imports for modules that depend on config (to avoid circular imports)
@@ -70,7 +70,7 @@ def __getattr__(name):
 __all__ = [
     # Paths (eagerly imported)
     'get_user_data_dir', 'get_appdata_dir', 'get_skins_dir',
-    'get_state_dir', 'get_injection_dir', 'get_app_dir', 'get_asset_path',
+    'get_state_dir', 'get_injection_dir', 'get_updates_root', 'get_app_dir', 'get_asset_path',
     # Logging (lazy)
     'get_logger', 'setup_logging', 'log_section', 'log_success',
     'log_status', 'get_log_mode', 'log_event', 'log_action',

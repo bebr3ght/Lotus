@@ -29,8 +29,10 @@ from utils.system.win32_base import (
 
 from ..ui.update_dialog import UpdateDialog
 from ..update.update_sequence import UpdateSequence
+from ..update.update_installer import read_update_result
 from ..sequences.hash_check_sequence import HashCheckSequence
 from ..sequences.skin_sync_sequence import SkinSyncSequence
+from utils.core.paths import get_updates_root
 
 log = get_logger()
 updater_log = get_named_logger("updater", prefix="log_updater")
@@ -186,6 +188,36 @@ def _perform_update(dialog: UpdateDialog, dev_mode: bool = False) -> bool:
     return False
 
 
+def _report_previous_update(updates_root: Path) -> None:
+    """Tell the user how the last update went, before this launch overwrites it.
+
+    The copy happens in a batch script after this process has exited, so a
+    failure can only be reported on the next start. Reading it here is what
+    turns a silent, app-less exit into a message.
+    """
+    try:
+        outcome = read_update_result(updates_root)
+    except Exception as exc:  # noqa: BLE001
+        updater_log.debug(f"Could not read the last update result: {exc}")
+        return
+    if not outcome:
+        return
+
+    if outcome.split()[0] == "ok":
+        updater_log.info("The previous update completed successfully.")
+        return
+
+    code = outcome.partition(" ")[2].strip() or "?"
+    log_path = updates_root / "update.log"
+    updater_log.warning("The previous update FAILED (robocopy exit code %s).", code)
+    _show_error(
+        "The last update could not be installed, so Lotus was started without it.\n\n"
+        f"Details: {log_path}\n\n"
+        "Usually this means antivirus held a file open, or there was not enough "
+        "free disk space. Freeing some space and starting Lotus again will retry."
+    )
+
+
 def run_launcher(dev_mode: bool = False, test_download_fail: bool = False) -> None:
     """Display the Win32 update dialog and perform startup checks.
 
@@ -203,6 +235,7 @@ def run_launcher(dev_mode: bool = False, test_download_fail: bool = False) -> No
 
 def _run_launcher_dialog(dev_mode: bool, test_download_fail: bool) -> None:
     updater_log.info("Launcher sequence starting.")
+    _report_previous_update(get_updates_root())
     dialog = UpdateDialog()
     try:
         dialog.show_window(SW_SHOWNORMAL)

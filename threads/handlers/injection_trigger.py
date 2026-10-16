@@ -15,7 +15,7 @@ from lcu import LCU
 from state import SharedState
 from utils.core.issue_reporter import report_issue
 from utils.core.logging import get_logger, log_action
-from utils.core.utilities import is_default_skin
+from utils.core.utilities import is_default_skin, is_selectable_owned
 from injection.config.base_skin_tracker import start_tracking as _start_skin_tracking
 from injection.game.game_monitor import make_game_ended_callback
 from injection.loadingname.loading_name import build as build_loading_name
@@ -56,6 +56,16 @@ class InjectionTrigger:
             reason,
         )
 
+    def _is_selectable_owned(self, skin_id: Optional[int], owned_skin_ids: set) -> bool:
+        """Return whether the client lets the player pick an owned skin or chroma.
+
+        A chroma bought without its skin is owned but refused by the client,
+        so it needs the base skin forced and injected like an unowned skin.
+        """
+        cache = getattr(self.skin_scraper, "cache", None)
+        chroma_map = getattr(cache, "chroma_id_map", None)
+        return is_selectable_owned(skin_id, owned_skin_ids or set(), chroma_map)
+
     def _skin_matches_champion(self, skin_id: Optional[int], champion_id: Optional[int]) -> bool:
         if skin_id is None or champion_id is None:
             return True
@@ -72,8 +82,6 @@ class InjectionTrigger:
             log.error(f"   Loadout Timer: #{ticker_id}")
             log.error("=" * LOG_SEPARATOR_WIDTH)
             return
-
-        self.state.last_hover_written = True
 
         ui_skin_id = self.state.last_hovered_skin_id
         locked_champ_id = self.state.locked_champ_id or self.state.hovered_champ_id
@@ -118,9 +126,14 @@ class InjectionTrigger:
 
         skin_to_validate = effective_skin_id if (historic_active or random_active) else ui_skin_id
         if not self._skin_matches_champion(skin_to_validate, locked_champ_id):
+            # Refused: the ticker keeps calling us until the window closes, because the
+            # player may still change the selection. Leaving last_hover_written False
+            # is what makes that retry possible, and what lets the ticker stop the
+            # early patcher on the way out.
             self._warn_refusal_once("champion mismatch", skin_to_validate, locked_champ_id)
             return
 
+        # Past validation this run either injects or stops the patcher itself.
         self.state.last_hover_written = True
         selected_custom_mod = getattr(self.state, 'selected_custom_mod', None)
         mod_name = None
@@ -323,7 +336,10 @@ class InjectionTrigger:
             has_other_mods = bool(selected_map_mod or selected_font_mod or selected_announcer_mod or (selected_other_mods and len(selected_other_mods) > 0))
 
             if has_custom_skin_mod:
-                is_skin_owned = target_skin_id in owned_skin_ids
+                # A chroma bought without its skin (Mythic Shop) is in the inventory
+                # but the client refuses it, so it needs a carrier archive like any
+                # other skin the account does not own.
+                is_skin_owned = self._is_selectable_owned(target_skin_id, owned_skin_ids)
                 if not is_skin_owned:
                     log.info(f"[INJECT] Custom mod selected for unowned skin {target_skin_id}, injecting base skin ZIP + custom mod")
                     self._inject_custom_mod(selected_custom_mod, base_skin_name=name, champion_name=cname)
@@ -342,7 +358,12 @@ class InjectionTrigger:
                 }
 
                 is_default = target_skin_id is not None and is_default_skin(target_skin_id)
-                is_skin_owned = target_skin_id is not None and (is_default or target_skin_id in (owned_skin_ids or set()))
+                is_skin_owned = (
+                    target_skin_id is not None and (
+                        is_default
+                        or self._is_selectable_owned(target_skin_id, owned_skin_ids)
+                    )
+                )
                 base_skin_name_for_injection = None
 
                 if not is_skin_owned and target_skin_id != 0 and not is_default:
@@ -364,13 +385,17 @@ class InjectionTrigger:
                     log.info(f"[INJECT] skipping injection for default skin (skinId={effective_skin_id}) - no mods selected")
                     if self.injection_manager:
                         self.injection_manager.resume_if_suspended()
+                        self.injection_manager.discard_early_patcher()
                 champ_id = self.state.locked_champ_id or self.state.hovered_champ_id
                 if champ_id:
                     from utils.core.historic import clear_historic_entry
                     clear_historic_entry(int(champ_id))
                     log.info(f"[HISTORIC] Cleared historic entry for champion {champ_id} (default skin played)")
 
-            elif effective_skin_id in owned_skin_ids and not is_default:
+            # Force owned skins/chromas via LCU
+            # Use effective_skin_id which includes the selected chroma if applicable
+            # (a chroma owned without its skin can't be picked, so it is injected)
+            elif self._is_selectable_owned(effective_skin_id, owned_skin_ids) and not is_default:
                 self._force_owned_skin(effective_skin_id)
                 if self.injection_manager:
                     self.injection_manager.inject_skin_immediately(
@@ -393,6 +418,8 @@ class InjectionTrigger:
 
         except Exception as e:
             log.warning(f"[loadout #{ticker_id}] injection setup failed: {e}")
+            if self.injection_manager:
+                self.injection_manager.discard_early_patcher()
 
     def _force_owned_skin(self, skin_id: int):
         log.info(f"[INJECT] User owns this skin/chroma (skinId={skin_id}), forcing selection via LCU")
@@ -773,7 +800,12 @@ class InjectionTrigger:
 
             # 1. Извлекаем базовый скин (только если скин не куплен)
             if base_skin_name:
-                log.info(f"[INJECT] Extracting base skin ZIP: {base_skin_name}")
+                log.info(f"[INJECT] Extracting carrier skin archive: {base_skin_name}")
+                # The archive is not optional: it carries the skin's assets onto
+                # skin0. Without it the overlay would be built from the custom mod
+                # alone and the game would show the champion's default skin, so a
+                # failure here has to give up rather than inject a partial overlay.
+                zp = None
                 try:
                     zp = injector._resolve_zip(
                         base_skin_name,
@@ -781,14 +813,35 @@ class InjectionTrigger:
                         champion_name=champion_name,
                         champion_id=champion_id
                     )
-                    if zp and zp.exists():
-                        base_mod_folder = injector._extract_zip_to_mod(zp)
-                        if base_mod_folder:
-                            carrier_mod_folder_name = base_mod_folder.name
-                            mod_folder_names.append(base_mod_folder.name)
-                            mod_names_list.append(f"Base Skin ({base_skin_name})")
                 except Exception as e:
-                    log.error(f"[INJECT] Error extracting base skin ZIP: {e}")
+                    log.error(f"[INJECT] Error resolving carrier archive {base_skin_name}: {e}")
+
+                if not zp or not zp.exists():
+                    log.error(f"[INJECT] Required carrier archive not found: {base_skin_name}")
+                    report_issue(
+                        "CARRIER_ARCHIVE_MISSING",
+                        "error",
+                        "Injection failed: the skin archive this mod needs is not on your PC.",
+                        details={"carrier": str(base_skin_name)},
+                        hint="Download the skin in Lotus first, then pick the mod again.",
+                    )
+                    return
+
+                base_mod_folder = injector._extract_zip_to_mod(zp)
+                if not base_mod_folder:
+                    log.error(f"[INJECT] Required carrier archive could not be extracted: {base_skin_name}")
+                    report_issue(
+                        "CARRIER_ARCHIVE_UNREADABLE",
+                        "error",
+                        "Injection failed: the skin archive this mod needs could not be extracted.",
+                        details={"carrier": str(base_skin_name)},
+                        hint="Re-download the skin, and check the log for an antivirus block.",
+                    )
+                    return
+
+                carrier_mod_folder_name = base_mod_folder.name
+                mod_folder_names.append(base_mod_folder.name)
+                mod_names_list.append(f"Skin Carrier ({base_skin_name})")
 
             # 2. Извлекаем кастомный скин
             if mod_folder_name and mod_path:
