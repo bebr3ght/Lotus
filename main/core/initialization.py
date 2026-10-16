@@ -21,6 +21,52 @@ from config import APP_VERSION, set_config_option, get_config_file_path
 log = get_logger()
 
 
+def _make_skin_selector(lcu):
+    """Build the callable the UI uses to select a skin in the client.
+
+    Logs every attempt in full, because the previous behaviour was to write the
+    selection silently: when auto-lock did not mark the skin as chosen there was
+    nothing in the log to tell whether the write never happened, was refused, or
+    landed.
+    """
+    from utils.core.utilities import get_champion_id_from_skin_id
+
+    def select_skin(skin_id: int, reason: str = "") -> bool:
+        if not lcu or not lcu.ok:
+            log.warning(f"[AUTOLOCK] {reason or 'select'} skin {skin_id}: LCU is not connected")
+            return False
+        try:
+            target = int(skin_id)
+        except (TypeError, ValueError):
+            log.warning(f"[AUTOLOCK] {reason or 'select'}: {skin_id!r} is not a skin id")
+            return False
+
+        champion_id = get_champion_id_from_skin_id(target)
+        log.info(
+            f"[AUTOLOCK] {reason or 'Writing'} skin {target} "
+            f"(champion {champion_id}) into the client selection"
+        )
+
+        ok = False
+        try:
+            ok = bool(lcu.set_my_selection_skin(target))
+        except Exception as exc:  # noqa: BLE001
+            log.error(f"[AUTOLOCK] {reason or 'select'} skin {target} raised: {exc}", exc_info=True)
+            return False
+
+        if ok:
+            log.info(f"[AUTOLOCK] Client now has skin {target} selected")
+        else:
+            log.warning(
+                f"[AUTOLOCK] The client refused skin {target}. This is expected for a "
+                "skin the account does not own: the client only accepts owned skins, "
+                "and unowned ones are injected instead."
+            )
+        return ok
+
+    return select_skin
+
+
 def initialize_core_components(args, injection_threshold: Optional[float] = None) -> Tuple[LCU, LCUSkinScraper, SharedState, InjectionManager]:
     """
     Initialize core application components
@@ -60,6 +106,11 @@ def initialize_core_components(args, injection_threshold: Optional[float] = None
         log.info("Initializing shared state...")
         state = SharedState()
         log.info("Shared state initialized")
+
+        # Let the UI layers write a skin into the client's champ-select
+        # selection. They have no LCU of their own, and auto-lock otherwise
+        # injected the skin without the client marking it as chosen.
+        state.select_skin_callback = _make_skin_selector(lcu)
     except Exception as e:
         log.error("=" * 80)
         log.error("FATAL ERROR DURING INITIALIZATION")

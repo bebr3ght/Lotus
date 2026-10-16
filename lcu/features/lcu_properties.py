@@ -11,6 +11,11 @@ from utils.core.logging import get_logger
 
 log = get_logger()
 
+#: The phase the LCU reports for the client home screen. It is a phase like any
+#: other, and the WebSocket handler already stores it verbatim, so the poller
+#: has to agree.
+CLIENT_HOME_PHASE = "None"
+
 
 class LCUProperties:
     """Property-based accessors for LCU endpoints"""
@@ -25,8 +30,20 @@ class LCUProperties:
     
     @property
     def phase(self) -> Optional[str]:
-        """Get current gameflow phase"""
-        ph = self.api.get("/lol-gameflow/v1/gameflow-phase")
+        """Get current gameflow phase.
+
+        A client with no gameflow at all (the home screen, practice tool, after
+        the client gave up on a queue) answers 404 here. That is a real state,
+        not a failed request, so it maps to the home phase the LCU itself uses.
+        Returning None instead made the poller log a growing "no phase" streak
+        every second until the user entered a lobby, which is the one thing that
+        makes the endpoint answer again.
+        """
+        from ..core.lcu_api import LCU_ENDPOINT_ABSENT
+
+        ph = self.api.get("/lol-gameflow/v1/gameflow-phase", absent_sentinel=True)
+        if ph is LCU_ENDPOINT_ABSENT:
+            return CLIENT_HOME_PHASE
         return ph if isinstance(ph, str) else None
     
     @property

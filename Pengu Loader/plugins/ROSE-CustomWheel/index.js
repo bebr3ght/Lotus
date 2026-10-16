@@ -14,6 +14,9 @@
   const PANEL_ID = "rose-custom-wheel-panel-container";
   const REQUEST_TYPE = "request-skin-mods";
   const EVENT_SKIN_STATE = "lu-skin-monitor-state";
+  // Panels share a z-index with the HistoricMode auto-lock badge, so whichever
+  // is painted last wins. This tells the badge to step behind us while we are up.
+  const EVENT_PANEL_VISIBILITY = "rose-custom-wheel-panel-visibility";
 
   let isOpen = false;
   let panel = null;
@@ -1086,11 +1089,16 @@ function detachButtonToBody() {
     openPanel();
   }
 
+  function setPanelVisible(visible) {
+    window.dispatchEvent(new CustomEvent(EVENT_PANEL_VISIBILITY, { detail: { visible: !!visible } }));
+  }
+
   function openPanel() {
     if (!panel) createPanel();
 
     panel.style.display = "block";
     isOpen = true;
+    setPanelVisible(true);
 
     if (isFirstOpenInSession) { activeTab = "skins"; isFirstOpenInSession = false; }
     setRightPaneMode("summary");
@@ -1122,6 +1130,7 @@ function detachButtonToBody() {
     if (panel) panel.style.display = "none";
     isOpen = false;
     isGlobalMode = false;
+    setPanelVisible(false);
   }
 
   function updateButtonBadge(count) {

@@ -129,8 +129,15 @@ class HistoricModeHandler:
 
                 if is_custom_mod_path(historic_value):
                     log.info(f"[HISTORIC] Historic mode ACTIVATED for champion {self.state.locked_champ_id} (custom mod path: {historic_value})")
+                    # A custom mod has no skin the client could accept; the mod is
+                    # injected and the carrier forces the base skin later.
+                    log.info(f"[AUTOLOCK] Custom mod {historic_value}: no client selection to write")
                 else:
                     log.info(f"[HISTORIC] Historic mode ACTIVATED for champion {self.state.locked_champ_id} (historic skin ID: {historic_value})")
+                    # Auto-lock: mark the skin as chosen in the client too, so the
+                    # champ-select UI reflects what is actually going to be injected
+                    # instead of still showing the default.
+                    self._write_client_selection(historic_value)
 
                 try:
                     if self.state and hasattr(self.state, "ui_skin_thread") and self.state.ui_skin_thread:
@@ -147,6 +154,41 @@ class HistoricModeHandler:
 
         # Mark first detection as done AFTER processing
         self.state.historic_first_detection_done = True
+
+    def _write_client_selection(self, historic_value: object) -> bool:
+        """Write the auto-locked skin into the client's champ-select selection.
+
+        Historic mode only decided what to inject; the client kept showing its
+        own default skin as the chosen one, so the two disagreed on screen. This
+        asks the client to select it as well and logs the outcome, including the
+        common refusal for a skin the account does not own.
+        """
+        selector = getattr(self.state, "select_skin_callback", None)
+        if selector is None:
+            log.debug("[AUTOLOCK] No client selection callback available; leaving the selection alone")
+            return False
+        try:
+            skin_id = int(historic_value)
+        except (TypeError, ValueError):
+            log.warning(f"[AUTOLOCK] Saved entry {historic_value!r} is not a skin id; skipping")
+            return False
+
+        base_skin_id = (self.state.locked_champ_id or 0) * 1000
+        if skin_id == base_skin_id:
+            log.debug("[AUTOLOCK] Saved entry is the champion's default skin; nothing to write")
+            return False
+
+        owned = getattr(self.state, "owned_skin_ids", None) or set()
+        if skin_id not in owned:
+            log.info(
+                f"[AUTOLOCK] Skin {skin_id} is not owned, so the client would refuse it. "
+                "It will still be injected; this log line is expected, not a fault."
+            )
+        try:
+            return bool(selector(skin_id, "Auto-locking the saved skin"))
+        except Exception as exc:  # noqa: BLE001
+            log.error(f"[AUTOLOCK] Writing skin {skin_id} raised: {exc}", exc_info=True)
+            return False
     
     def check_and_deactivate(self, skin_id: int, new_base_skin_id: Optional[int]) -> None:
         """Check and deactivate historic mode if skin changed from default"""

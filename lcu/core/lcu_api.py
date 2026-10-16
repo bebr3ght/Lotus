@@ -19,6 +19,11 @@ log = get_logger()
 
 _CACHE_MISS = object()
 
+#: Returned by :meth:`LCUAPI.get` for 404/405 when the caller asked for it,
+#: so "the client does not expose this endpoint" is distinguishable from
+#: "the request failed".
+LCU_ENDPOINT_ABSENT = object()
+
 
 class LCUAPI:
     """Handles HTTP requests to LCU API"""
@@ -76,12 +81,19 @@ class LCUAPI:
                     self._cache.pop(key, None)
 
     def get(self, path: str, timeout: float = 1.0,
-            cache_ttl: Optional[float] = None, use_cache: bool = True) -> Optional[dict]:
+            cache_ttl: Optional[float] = None, use_cache: bool = True,
+            absent_sentinel: bool = False) -> Optional[dict]:
         """Make GET request to LCU API.
 
         Responses are cached for ``cache_ttl`` seconds (default
         ``LCU_GET_CACHE_TTL_S``) to de-duplicate bursty polls from multiple
         threads hitting the same endpoint. Pass ``use_cache=False`` to bypass.
+
+        An endpoint the client does not expose answers 404/405. That is normally
+        folded into ``None``, which hides "this build has no such endpoint" behind
+        "the client is down". Pass ``absent_sentinel=True`` to get
+        ``LCU_ENDPOINT_ABSENT`` for those instead, and keep ``None`` for real
+        transport failures.
 
         Args:
             path: API endpoint path
@@ -115,7 +127,7 @@ class LCUAPI:
         try:
             r = session.get(base + path, timeout=timeout)
             if r.status_code in (404, 405):
-                return _store(None)
+                return _store(LCU_ENDPOINT_ABSENT if absent_sentinel else None)
             r.raise_for_status()
             try:
                 return _store(r.json())
@@ -133,7 +145,7 @@ class LCUAPI:
             try:
                 r = session.get(base + path, timeout=timeout)
                 if r.status_code in (404, 405):
-                    return _store(None)
+                    return _store(LCU_ENDPOINT_ABSENT if absent_sentinel else None)
                 r.raise_for_status()
                 return _store(r.json())
             except (ValueError, requests.exceptions.JSONDecodeError) as e:

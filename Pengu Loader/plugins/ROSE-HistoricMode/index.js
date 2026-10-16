@@ -139,6 +139,12 @@
       transition: opacity 0.3s ease;
     }
 
+    /* The custom-mod wheel sits on the same z-index, so while it is open the
+       badge has to step behind it instead of competing for the same layer. */
+    #rose-historic-locked-label.behind-panel {
+      z-index: 9000;
+    }
+
     /* Classic View: Centered globally at bottom */
     #rose-historic-locked-label.is-classic-view {
       position: fixed;
@@ -723,7 +729,24 @@
     const textSpan = wrapper.querySelector('.rose-historic-badge-text');
     if (textSpan) textSpan.textContent = decodeHTMLEntities(skinName);
 
+    // Assigning className wholesale, so the layer class has to be re-applied
+    // rather than assumed to survive.
     wrapper.className = `is-${viewType}`;
+    applyBadgeLayer(wrapper);
+  }
+
+  // The custom-mod wheel and this badge share z-index 10000, so DOM order
+  // decided which one covered the other. Drop behind it while it is open.
+  let customWheelPanelOpen = false;
+
+  function applyBadgeLayer(wrapper) {
+    if (!wrapper) return;
+    wrapper.classList.toggle('behind-panel', customWheelPanelOpen);
+  }
+
+  function handleCustomWheelPanelVisibility(e) {
+    customWheelPanelOpen = !!(e && e.detail && e.detail.visible);
+    applyBadgeLayer(document.getElementById('rose-historic-locked-label'));
   }
 
   function scanHistoricLabelContext() {
@@ -801,6 +824,8 @@
     });
     
     bridge.subscribe("historic-label-response", handleHistoricLabelResponse);
+
+    window.addEventListener("rose-custom-wheel-panel-visibility", handleCustomWheelPanelVisibility);
 
     bridge.onReady(() => {
       requestHistoricFlagImage();
