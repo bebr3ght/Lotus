@@ -81,13 +81,21 @@ class PhaseThread(threading.Thread):
             # Use a grace period to avoid wiping Swiftplay state on transient
             # API hiccups (the LCU can briefly return None during transitions).
             if ph is None:
-                from threads.handlers.champ_select_reset import note_phase_for_reset
-                note_phase_for_reset(self.state, None)
-                self.state.phase = None
                 self._null_phase_streak += 1
+                log.debug(
+                    "[phase] LCU returned no phase (streak %d/3), keeping %s",
+                    self._null_phase_streak, self.state.phase,
+                )
 
-                # Only clean up after several consecutive None polls (~1.5-2.5 s)
+                # Only after several consecutive None polls (~1.5-2.5 s) is the
+                # phase really unknown. Publishing None immediately ended the
+                # loadout ticker, whose loop requires a known phase: a single
+                # hiccup during FINALIZATION threw away the rest of the countdown
+                # and discarded the skin with it.
                 if self._null_phase_streak >= 3:
+                    from threads.handlers.champ_select_reset import note_phase_for_reset
+                    note_phase_for_reset(self.state, None)
+                    self.state.phase = None
                     if self.state.is_swiftplay_mode:
                         # Swiftplay flag is still set but LCU returned None for
                         # several polls — the session is gone.  Full cleanup.

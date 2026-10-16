@@ -210,7 +210,6 @@ Rose/
 │   │   ├── logging.py
 │   │   ├── paths.py
 │   │   ├── utilities.py
-│   │   ├── validation.py
 │   │   ├── normalization.py
 │   │   ├── historic.py
 │   │   ├── mod_historic.py
@@ -234,8 +233,7 @@ Rose/
 │   ├── system/             # System utilities
 │   │   ├── admin_utils.py
 │   │   ├── win32_base.py
-│   │   ├── window_utils.py
-│   │   └── resolution_utils.py
+│   │   └── window_utils.py
 │   └── threading/          # Threading utilities
 │       └── thread_manager.py
 │
@@ -294,10 +292,7 @@ Rose/
 │   │   ├── party_state.py
 │   │   └── party_storage.py
 │   ├── network/            # Networking layer
-│   │   ├── ws_relay.py     # WebSocket relay client
-│   │   ├── peer_connection.py
-│   │   ├── stun_client.py
-│   │   └── udp_transport.py
+│   │   └── ws_relay.py     # WebSocket relay client
 │   ├── protocol/           # Wire protocol
 │   │   ├── message_types.py
 │   │   └── token_codec.py
@@ -305,9 +300,8 @@ Rose/
 │   │   ├── lobby_matcher.py
 │   │   ├── skin_collector.py
 │   │   └── custom_mods.py  # Custom mod hashes shared with friends
-│   └── integration/        # UI and injection hooks
-│       ├── injection_hook.py
-│       └── ui_bridge.py
+│   └── integration/        # Injection hooks
+│       └── injection_hook.py
 │
 ├── relay-worker/           # Cloudflare Worker — party relay
 │   ├── src/

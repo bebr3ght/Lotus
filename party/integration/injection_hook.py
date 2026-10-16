@@ -209,32 +209,3 @@ class PartyInjectionHook:
             log.warning(f"[PARTY_INJECT] Could not find skin ZIP for {skin_name}")
             return None
         return zip_path
-
-    def get_injection_summary(self) -> dict:
-        """Get summary of party injection status
-
-        Returns:
-            Dict with injection summary info
-        """
-        if not self.is_enabled():
-            return {
-                "party_enabled": False,
-                "peers_in_lobby": 0,
-                "skins_to_inject": 0,
-            }
-
-        party_skins = self.get_party_skins_for_injection()
-
-        return {
-            "party_enabled": True,
-            "peers_in_lobby": len(self.party_manager.party_state.get_lobby_peers()),
-            "skins_to_inject": len(party_skins),
-            "skins": [
-                {
-                    "summoner_name": s.summoner_name,
-                    "champion_id": s.champion_id,
-                    "skin_id": s.skin_id,
-                }
-                for s in party_skins
-            ],
-        }

@@ -7,7 +7,6 @@ Provides window detection, size monitoring, and ROI calculation utilities
 
 import os
 import time
-import sys
 import ctypes
 from ctypes import wintypes
 from typing import Optional, Tuple
@@ -300,16 +299,6 @@ def get_league_window_client_size(hint: str = "League") -> Optional[Tuple[int, i
     return None
 
 
-def get_window_size() -> Optional[Tuple[int, int]]:
-    """
-    Alias for get_league_window_client_size for backward compatibility
-    
-    Returns:
-        Tuple[int, int]: (width, height) or None if window is not found
-    """
-    return get_league_window_client_size()
-
-
 def monitor_league_window():
     """
     Monitor League of Legends window size every second
@@ -341,47 +330,3 @@ def monitor_league_window():
     except KeyboardInterrupt:
         print("\nMonitoring stopped.")
 
-
-def calculate_roi_from_proportions(window_rect: Tuple[int, int, int, int], 
-                                 proportions: dict) -> Optional[Tuple[int, int, int, int]]:
-    """
-    Calculate ROI coordinates from window rectangle and proportions
-    
-    Args:
-        window_rect: (left, top, right, bottom) window coordinates
-        proportions: Dict with 'x1_ratio', 'y1_ratio', 'x2_ratio', 'y2_ratio'
-        
-    Returns:
-        Tuple of ROI coordinates (left, top, right, bottom) or None if invalid
-    """
-    if not window_rect or not proportions:
-        return None
-    
-    left, top, right, bottom = window_rect
-    width = right - left
-    height = bottom - top
-    
-    roi_abs = (
-        int(left + width * proportions.get('x1_ratio', 0)),
-        int(top + height * proportions.get('y1_ratio', 0)),
-        int(left + width * proportions.get('x2_ratio', 1)),
-        int(top + height * proportions.get('y2_ratio', 1))
-    )
-    
-    return roi_abs
-
-
-def main():
-    """Main entry point for monitoring script"""
-    if len(sys.argv) > 1 and sys.argv[1] in ['-h', '--help']:
-        print("Window utilities for League of Legends")
-        print("Usage: python utils/window_utils.py")
-        print("The script displays window size every second")
-        print("Press Ctrl+C to stop")
-        return
-    
-    monitor_league_window()
-
-
-if __name__ == "__main__":
-    main()

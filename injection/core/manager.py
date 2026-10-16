@@ -535,37 +535,6 @@ class InjectionManager:
         except Exception as e:
             log.warning(f"[INJECT] Failed to kill mod-tools.exe processes: {e}")
     
-    def _get_injection_dir(self) -> Path:
-        """Get the injection directory path (works in both frozen and development environments)"""
-        if getattr(sys, 'frozen', False):
-            # Running as compiled executable (PyInstaller)
-            # Handle both onefile (_MEIPASS) and onedir (_internal) modes
-            if hasattr(sys, '_MEIPASS'):
-                # One-file mode: tools are in _MEIPASS (temporary extraction directory)
-                base_path = Path(sys._MEIPASS)
-                injection_dir = base_path / "injection"
-            else:
-                # One-dir mode: tools are alongside executable
-                base_dir = Path(sys.executable).parent
-                possible_injection_dirs = [
-                    base_dir / "injection",  # Direct path
-                    base_dir / "_internal" / "injection",  # _internal folder
-                ]
-                
-                injection_dir = None
-                for dir_path in possible_injection_dirs:
-                    if dir_path.exists():
-                        injection_dir = dir_path
-                        break
-                
-                if not injection_dir:
-                    injection_dir = possible_injection_dirs[0]
-        else:
-            # Running as Python script
-            injection_dir = Path(__file__).parent.parent
-        
-        return injection_dir
-
     def prepare_custom_mod(self, mod_dict: dict, mod_type_name: str) -> Optional[str]:
             """Extract or link a custom mod to the active mods directory (Shared Utility)"""
             if not mod_dict or not mod_dict.get("mod_folder_name") or not mod_dict.get("mod_path"):

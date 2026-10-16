@@ -73,17 +73,5 @@ class ModManager:
 
     @staticmethod
     def _hide_directory(path: Path):
-        """Set hidden + system attributes on a directory and its contents (Windows only)"""
-        import sys
-        if sys.platform != "win32":
-            return
-        try:
-            import ctypes
-            FILE_ATTRIBUTE_HIDDEN = 0x02
-            FILE_ATTRIBUTE_SYSTEM = 0x04
-            attrs = FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM
-            ctypes.windll.kernel32.SetFileAttributesW(str(path), attrs)
-            for item in path.rglob('*'):
-                ctypes.windll.kernel32.SetFileAttributesW(str(item), attrs)
-        except Exception as e:
-            log.debug("[INJECT] Could not hide directory %s: %s", path, e)
+        from injection.overlay.overlay_manager import OverlayManager
+        OverlayManager.hide_directory_tree(path)

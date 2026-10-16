@@ -138,9 +138,6 @@ class PartyToken:
             log.error(f"[TOKEN] Failed to decode token: {e}")
             raise ValueError(f"Token decoding failed: {e}")
 
-    def is_expired(self) -> bool:
-        return time.time() > (self.timestamp + TOKEN_EXPIRY_SECONDS)
-
     def time_until_expiry(self) -> int:
         return int(self.timestamp + TOKEN_EXPIRY_SECONDS - time.time())
 

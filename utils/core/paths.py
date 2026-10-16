@@ -345,21 +345,6 @@ def get_asset_path(asset_name: str) -> Path:
     return asset_path
 
 
-def ensure_write_permissions(path: Path) -> bool:
-    """
-    Ensure that the given path is writable.
-    Returns True if writable, False otherwise.
-    """
-    try:
-        # Try to create a test file
-        test_file = path / ".write_test"
-        test_file.touch()
-        test_file.unlink()
-        return True
-    except (OSError, PermissionError):
-        return False
-
-
 def get_detected_user_info() -> Tuple[str, str, bool]:
     """
     Get information about user detection for logging/debugging.

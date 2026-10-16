@@ -124,25 +124,6 @@ class RepoDownloader:
         except (IOError, OSError) as e:
             log.warning(f"Failed to save local SHA: {e}")
 
-    def has_repository_changed(self) -> bool:
-        """Check if repository has changed by comparing commit SHAs."""
-        remote_sha = self.fetch_remote_sha()
-        if remote_sha is None:
-            log.warning("Could not fetch remote SHA, assuming no changes")
-            return False
-
-        local_sha = self.get_local_sha()
-        if local_sha is None:
-            log.info("No local SHA found, repository needs download")
-            return True
-
-        if local_sha != remote_sha:
-            log.info(f"Repository changed: {local_sha[:8]} -> {remote_sha[:8]}")
-            return True
-
-        log.info("Repository unchanged, skipping download")
-        return False
-
     def get_changed_files(self, old_sha: str, new_sha: str) -> Optional[List[Dict]]:
         """Get list of changed files between two commits using GitHub compare API.
 

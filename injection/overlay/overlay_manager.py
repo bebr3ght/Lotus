@@ -13,6 +13,7 @@ Security Notes:
 
 import shutil
 import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -709,6 +710,27 @@ class OverlayManager:
             proc.wait()
 
     @staticmethod
+    def hide_directory_tree(path: Path) -> None:
+        """Set hidden + system attributes on a directory and everything under it.
+
+        One implementation: ModManager used to carry a byte-identical copy that
+        logged the path on failure while this one did not, so the two drifted.
+        """
+        if sys.platform != "win32":
+            return
+        try:
+            import ctypes
+            FILE_ATTRIBUTE_HIDDEN = 0x02
+            FILE_ATTRIBUTE_SYSTEM = 0x04
+            attrs = FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM
+            ctypes.windll.kernel32.SetFileAttributesW(str(path), attrs)
+            for item in path.rglob('*'):
+                ctypes.windll.kernel32.SetFileAttributesW(str(item), attrs)
+            log.debug("[INJECT] Hidden directory: %s", path)
+        except Exception as e:
+            log.debug("[INJECT] Could not hide directory %s: %s", path, e)
+
+    @staticmethod
     def _open_runoverlay_log():
         """Open a log file for runoverlay output, or None if it cannot be created."""
         try:
@@ -766,23 +788,7 @@ class OverlayManager:
 
     @staticmethod
     def _hide_directory(path: Path):
-        """Set hidden + system attributes on a directory and its contents (Windows only)"""
-        import sys
-        if sys.platform != "win32":
-            return
-        try:
-            import ctypes
-            FILE_ATTRIBUTE_HIDDEN = 0x02
-            FILE_ATTRIBUTE_SYSTEM = 0x04
-            attrs = FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM
-            # Hide the directory itself
-            ctypes.windll.kernel32.SetFileAttributesW(str(path), attrs)
-            # Hide all contents recursively
-            for item in path.rglob('*'):
-                ctypes.windll.kernel32.SetFileAttributesW(str(item), attrs)
-            log.debug(f"[INJECT] Hidden overlay directory: {path}")
-        except Exception as e:
-            log.debug(f"[INJECT] Could not hide overlay directory: {e}")
+        OverlayManager.hide_directory_tree(path)
 
     def mk_overlay_only(self, mod_names: List[str], timeout: int = 60) -> int:
         """Create overlay using mkoverlay only (no runoverlay) - for testing"""

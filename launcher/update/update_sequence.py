@@ -325,16 +325,18 @@ class UpdateSequence:
             return False
         
         # Download hash file if available (skip in dev mode)
+        #
+        # Not shipped with the update: the payload's robocopy excludes
+        # hashes.game.txt by name so the user's merged file survives, and
+        # HashCheckSequence re-fetches it at every startup anyway. Downloading
+        # it into the staging tree here only wrote a file that was then thrown
+        # away, so the step is gone rather than quietly discarded.
         if getattr(sys, "frozen", False):
             hash_asset = self.github_client.get_hash_asset(release)
             if hash_asset:
-                status_callback("Downloading hash file...")
-                hash_download_url = hash_asset.get("browser_download_url")
-                hash_target_path = extracted_root / "injection" / "tools" / "hashes.game.txt"
-                self.downloader.download_hash_file(
-                    hash_download_url,
-                    hash_target_path,
-                    status_callback,
+                updater_log.debug(
+                    "Skipping the release's hashes.game.txt: the updater preserves "
+                    "the local one and the startup hash check refreshes it."
                 )
         
         # Install update
@@ -351,9 +353,15 @@ class UpdateSequence:
             try:
                 write_config_file(config, config_path)
             except Exception as exc:
-                updater_log.warning(
-                    f"Failed to persist installed_version to config before update: {exc}"
+                # Without this the update lands but config still names the old
+                # version, so every later launch re-downloads and re-applies it
+                updater_log.error(
+                    f"Could not persist installed_version to {config_path}: {exc}. "
+                    "Aborting the update rather than applying one we cannot record."
                 )
+                status_callback("Update aborted: config could not be written")
+                self._revert_installed_version(config, config_path, old_installed_version)
+                return False
 
         # Start the script that copies the update over this install once Rose exits
         if not self.installer.install(

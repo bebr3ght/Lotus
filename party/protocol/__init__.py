@@ -5,6 +5,5 @@ Party Mode Protocol - Message types and encoding
 """
 
 from .token_codec import PartyToken
-from .message_types import Message, MessageType
 
-__all__ = ["PartyToken", "Message", "MessageType"]
+__all__ = ["PartyToken"]

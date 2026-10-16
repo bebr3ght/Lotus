@@ -288,18 +288,6 @@ class TrayManager:
         """Check if the tray icon is running"""
         return self.icon is not None and self.tray_thread is not None and self.tray_thread.is_alive()
     
-    def wait_for_quit(self, timeout: Optional[float] = None) -> bool:
-        """
-        Wait for quit signal from tray
-        
-        Args:
-            timeout: Maximum time to wait in seconds
-            
-        Returns:
-            True if quit was requested, False if timeout
-        """
-        return self._stop_event.wait(timeout)
-    
     def set_status(self, status: str):
         """
         Update the tray icon to show the specified status
@@ -334,15 +322,4 @@ class TrayManager:
                 log.warning(f"Unknown status: {status}")
         except Exception as e:
             log.error(f"Failed to update tray icon: {e}")
-    
-    def set_downloading(self, is_downloading: bool):
-        """
-        Update the tray icon to show downloading status (legacy method for compatibility)
-        
-        Args:
-            is_downloading: True to show locked icon, False to show golden unlocked icon
-        """
-        if is_downloading:
-            self.set_status("locked")
-        else:
-            self.set_status("unlocked")
+

@@ -155,91 +155,15 @@ class WebSocketEventHandler:
                 self._handle_phase_exit()
     
     def _handle_champ_select_entry(self):
-        """Handle entering ChampSelect phase"""
+        """Handle entering ChampSelect phase.
+
+        The reset lives in champ_select_reset.perform_champ_select_reset. This
+        used to keep an 80-line copy of it below a bare `return`, and the two had
+        already drifted: the copy never reset the ui_last_text_* fields, so a
+        fix applied to whichever one you read first would silently do nothing.
+        """
         from threads.handlers.champ_select_reset import perform_champ_select_reset
         perform_champ_select_reset(self.state, self.lcu)
-        return
-
-        log_event(log, "Entering ChampSelect - resetting state for new game", "")
-        
-        # Reset skin detection state
-        self.state.last_hovered_skin_key = None
-        self.state.last_hovered_skin_id = None
-        self.state.last_hovered_skin_slug = None
-        self.state.ui_last_text = None
-        self.state.ui_skin_id = None
-        
-        # Reset LCU skin selection
-        self.state.selected_skin_id = None
-        self.state.owned_skin_ids.clear()
-        self.state.last_hover_written = False
-        
-        # Reset injection and countdown state
-        self.state.injection_completed = False
-        self.state.loadout_countdown_active = False
-        
-        # Reset champion lock state for new game
-        self.state.locked_champ_id = None
-        self.state.locked_champ_timestamp = 0.0
-        self.state.own_champion_locked = False
-        
-        # Broadcast champion unlock state to JavaScript
-        try:
-            if self.state and hasattr(self.state, 'ui_skin_thread') and self.state.ui_skin_thread:
-                self.state.ui_skin_thread._broadcast_champion_locked(False)
-        except Exception as e:
-            log.debug(f"[ws] Failed to broadcast champion unlock state: {e}")
-        
-        # Reset random skin state
-        self.state.random_skin_name = None
-        self.state.random_skin_id = None
-        self.state.random_mode_active = False
-        
-        # Reset historic mode state
-        self.state.historic_mode_active = False
-        self.state.historic_skin_id = None
-        self.state.historic_first_detection_done = False
-
-        # Clear custom mod selection from previous game so the mod-name popup
-        # doesn't re-appear until the user (or historic auto-select) picks it.
-        self.state.selected_custom_mod = None
-        
-        # Reset exchange tracking
-        if self.champion_lock_handler:
-            self.champion_lock_handler.last_locked_champion_id = None
-        self.state.champion_exchange_triggered = False
-        
-        # Signal main thread to reset skin notification debouncing
-        self.state.reset_skin_notification = True
-        try:
-            self.state.processed_action_ids.clear()
-        except Exception:
-            self.state.processed_action_ids = set()
-        
-        # Request UI initialization when entering ChampSelect
-        try:
-            from ui.core.user_interface import get_user_interface
-            user_interface = get_user_interface(self.state, None)  # skin_scraper not needed here
-            user_interface.reset_skin_state()
-            user_interface._force_reinitialize = True
-            user_interface.request_ui_initialization()
-            log_event(log, "UI reinitialization requested for ChampSelect", "")
-        except Exception as e:
-            log.warning(f"Failed to request UI initialization for ChampSelect: {e}")
-        
-        # Load owned skins immediately when entering ChampSelect
-        try:
-            owned_skins = self.lcu.owned_skins()
-            log.debug(f"[WS] Raw owned skins response: {owned_skins}")
-            if owned_skins and isinstance(owned_skins, list):
-                self.state.owned_skin_ids = set(owned_skins)
-                log.info(f"[WS] Loaded {len(self.state.owned_skin_ids)} owned skins from inventory")
-            else:
-                log.warning(f"[WS] Failed to fetch owned skins from LCU - no data returned (response: {owned_skins})")
-        except Exception as e:
-            log.warning(f"[WS] Error fetching owned skins: {e}")
-        
-        log.debug("[WS] State reset complete - ready for new champion select")
     
     def _handle_in_progress_entry(self):
         """Handle entering InProgress phase"""

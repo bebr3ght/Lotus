@@ -180,30 +180,6 @@ def get_base_skin_id_for_chroma(chroma_id: int, chroma_id_map: Optional[dict]) -
         return None
 
 
-def is_base_skin_of_chroma_set(skin_id: int, chroma_id_map: Optional[dict]) -> bool:
-    """Check if a skin ID is the base skin of a chroma set
-    
-    Args:
-        skin_id: The skin ID to check
-        chroma_id_map: Dictionary mapping chroma IDs to chroma data
-        
-    Returns:
-        True if the skin is a base skin of a chroma set, False otherwise
-    """
-    # Check if this skin ID appears as a base skin for any chromas in the map
-    if chroma_id_map is not None:
-        for chroma_id, chroma_data in chroma_id_map.items():
-            if chroma_data and chroma_data.get('skinId') == skin_id:
-                return True
-    
-    # Special cases that are base skins but might not be in chroma_id_map
-    special_base_skins = [99007, 82054, 25080, 145070, 103085, 21016]
-    if skin_id in special_base_skins:
-        return True
-    
-    return False
-
-
 def is_base_skin(skin_id: int, chroma_id_map: Optional[dict]) -> bool:
     """Check if a skin ID is a base skin (not a chroma)
     
@@ -317,26 +293,6 @@ def write_bridge_port(port: int) -> bool:
     except Exception as e:
         log.warning(f"[UTILITIES] Failed to write bridge port: {e}")
         return False
-
-
-def read_bridge_port() -> Optional[int]:
-    """
-    Read the bridge port from file.
-    
-    Returns:
-        Port number if found and valid, None otherwise
-    """
-    try:
-        port_file = get_bridge_port_file()
-        if not port_file.exists():
-            return None
-        port_str = port_file.read_text(encoding='utf-8').strip()
-        port = int(port_str)
-        if port > 0:
-            return port
-    except Exception as e:
-        log.debug(f"[UTILITIES] Failed to read bridge port: {e}")
-    return None
 
 
 def delete_bridge_port_file() -> bool:

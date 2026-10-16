@@ -43,18 +43,12 @@ def __getattr__(name):
         )
         return locals()[name]
     
-    if name in {
-        'validate_skin_id', 'validate_skin_name', 'validate_champion_id',
-        'validate_positive_number', 'require_non_empty_list', 'validated_method'
-    }:
-        from utils.core.validation import (
-            validate_skin_id, validate_skin_name, validate_champion_id,
-            validate_positive_number, require_non_empty_list, validated_method
-        )
+    if name in {'validate_skin_id', 'validate_skin_name'}:
+        from utils.core.validation import validate_skin_id, validate_skin_name
         return locals()[name]
     
-    if name in {'levenshtein_distance', 'levenshtein_score'}:
-        from utils.core.normalization import levenshtein_distance, levenshtein_score
+    if name == 'levenshtein_distance':
+        from utils.core.normalization import levenshtein_distance
         return locals()[name]
     
     if name in {
@@ -79,10 +73,9 @@ __all__ = [
     'is_chroma_id', 'get_base_skin_id_for_chroma', 'is_base_skin',
     'is_base_skin_owned', 'find_free_port',
     # Validation (lazy)
-    'validate_skin_id', 'validate_skin_name', 'validate_champion_id',
-    'validate_positive_number', 'require_non_empty_list', 'validated_method',
+    'validate_skin_id', 'validate_skin_name',
     # Normalization (lazy)
-    'levenshtein_distance', 'levenshtein_score',
+    'levenshtein_distance',
     # Historic (lazy)
     'load_historic_map', 'get_historic_skin_for_champion', 'write_historic_entry',
 ]

@@ -66,12 +66,6 @@ class GameDetector:
         log.warning("Could not detect League of Legends paths. Please ensure League Client is running or manually set the paths in config.ini")
         return None, None
     
-    def detect_game_dir(self) -> Optional[Path]:
-        """Auto-detect League of Legends Game directory (backward compatibility).
-        Returns None if game directory cannot be found."""
-        league_path, _ = self.detect_paths()
-        return league_path
-    
     def _detect_via_leagueclient(self) -> Tuple[Optional[Path], Optional[Path]]:
         """Detect League paths by finding running LeagueClient.exe process.
         Returns (game_path, client_path) tuple."""

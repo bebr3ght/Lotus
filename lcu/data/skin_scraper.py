@@ -216,16 +216,6 @@ class LCUSkinScraper:
 
         return None
     
-    @property
-    def cached_champion_name(self) -> Optional[str]:
-        """Get the name of the currently cached champion"""
-        return self.cache.champion_name
-    
-    @property
-    def cached_champion_id(self) -> Optional[int]:
-        """Get the ID of the currently cached champion"""
-        return self.cache.champion_id
-    
     def get_chromas_for_skin(self, skin_id: int) -> Optional[list]:
         """Get chroma details for a specific skin
         
@@ -239,14 +229,4 @@ class LCUSkinScraper:
         if skin_data:
             return skin_data.get('chromaDetails', [])
         return None
-    
-    def get_chroma_by_id(self, chroma_id: int) -> Optional[dict]:
-        """Get chroma data by chroma ID
-        
-        Args:
-            chroma_id: Chroma ID to look up
-            
-        Returns:
-            Chroma dict or None if not found
-        """
-        return self.cache.chroma_id_map.get(chroma_id)
+

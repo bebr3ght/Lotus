@@ -787,24 +787,6 @@ class ModStorageService:
 
             return True
 
-    def _load_category_manifest(self, category: str) -> set[str]:
-        manifest_path = self.mods_root / category / self.CATEGORY_METADATA
-        payload = self._load_manifest(manifest_path)
-        if not payload:
-            return set()
-
-        raw_mods = payload.get("mods") or {}
-        if not isinstance(raw_mods, dict):
-            return set()
-
-        registered = set()
-        for mod_key, raw_metadata in raw_mods.items():
-            metadata = raw_metadata if isinstance(raw_metadata, dict) else {}
-            mod_path = str(metadata.get("path") or mod_key).replace("\\", "/").strip("/")
-            if mod_path and "/" not in mod_path:
-                registered.add(mod_path.casefold())
-        return registered
-
     def import_category_mod_file(
         self,
         category: str,
@@ -990,9 +972,6 @@ class ModStorageService:
             tuple(entries),
         )
         return list(entries)
-
-    def has_mods_for_skin(self, skin_id: int | str) -> bool:
-        return bool(self.list_mods_for_skin(skin_id))
 
     def categories_with_mods(self) -> List[str]:
         """Root categories holding at least one mod, in menu order."""

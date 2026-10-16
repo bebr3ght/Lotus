@@ -565,11 +565,6 @@ def _clear_log_file(log_file: Path):
         pass
 
 
-def cleanup_logs_on_startup():
-    """Clean up old log files when the application starts"""
-    cleanup_logs()
-
-
 # ==================== Pretty Logging Helpers ====================
 
 def log_section(logger: logging.Logger, title: str, icon: str = "", details: dict = None, mode: str = None):

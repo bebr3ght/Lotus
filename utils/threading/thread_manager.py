@@ -106,45 +106,6 @@ class ThreadManager:
         elapsed = time.time() - cleanup_start
         return still_alive, elapsed
     
-    @property
-    def alive_threads(self) -> List[str]:
-        """Get list of threads that are still alive"""
-        with self.lock:
-            return [m.name for m in self.threads if m.thread.is_alive()]
-    
-    def get_thread(self, name: str) -> Optional[threading.Thread]:
-        """Get a thread instance by name"""
-        with self.lock:
-            for managed in self.threads:
-                if managed.name == name:
-                    return managed.thread
-        return None
-    
-    def wait_for_all(self, timeout: Optional[float] = None) -> bool:
-        """
-        Wait for all threads to complete
-        
-        Args:
-            timeout: Maximum time to wait (None = wait forever)
-            
-        Returns:
-            True if all threads completed, False if timeout reached
-        """
-        start = time.time()
-        
-        with self.lock:
-            threads_copy = list(self.threads)
-        
-        for managed in threads_copy:
-            if timeout is not None:
-                remaining = timeout - (time.time() - start)
-                if remaining <= 0:
-                    return False
-                managed.thread.join(timeout=remaining)
-            else:
-                managed.thread.join()
-        
-        return all(not m.thread.is_alive() for m in threads_copy)
 
 
 def create_daemon_thread(target: Callable, name: str = None) -> threading.Thread:

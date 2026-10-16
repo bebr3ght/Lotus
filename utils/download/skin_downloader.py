@@ -223,30 +223,6 @@ class SkinDownloader:
             'total_ids': total_skins + total_chromas
         }
     
-    def cleanup_old_skins(self, days_old: int = 30) -> int:
-        """Remove skin files older than specified days"""
-        if not self.target_dir.exists():
-            return 0
-        
-        cutoff_time = time.time() - (days_old * 24 * 60 * 60)
-        removed_count = 0
-        
-        for champion_dir in self.target_dir.iterdir():
-            if champion_dir.is_dir():
-                for skin_file in list(champion_dir.glob("*.zip")) + list(champion_dir.glob("*.fantome")):
-                    if skin_file.stat().st_mtime < cutoff_time:
-                        try:
-                            skin_file.unlink()
-                            removed_count += 1
-                            log.debug(f"Removed old skin: {skin_file}")
-                        except Exception as e:
-                            log.error(f"Failed to remove {skin_file}: {e}")
-        
-        if removed_count > 0:
-            log.info(f"Cleaned up {removed_count} old skin files")
-        
-        return removed_count
-
 
 def download_skins_on_startup(
     target_dir: Path = None,

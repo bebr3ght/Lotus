@@ -70,18 +70,6 @@ class PartyState:
             if summoner_id in self.peers:
                 del self.peers[summoner_id]
 
-    def update_peer_connection(self, summoner_id: int, connected: bool):
-        """Update peer connection status"""
-        with self._lock:
-            if summoner_id in self.peers:
-                self.peers[summoner_id].connected = connected
-
-    def update_peer_connection_state(self, summoner_id: int, connection_state: str):
-        """Update peer connection state (connecting, handshaking, connected, disconnected, dead)"""
-        with self._lock:
-            if summoner_id in self.peers:
-                self.peers[summoner_id].connection_state = connection_state
-
     def update_peer_lobby_status(self, summoner_id: int, in_lobby: bool):
         """Update peer lobby status"""
         with self._lock:
@@ -112,24 +100,10 @@ class PartyState:
                 if old_selection:
                     self.party_skins.pop(old_selection.champion_id, None)
 
-    def get_connected_peers(self) -> List[PartyPeerState]:
-        """Get list of connected peers"""
-        with self._lock:
-            return [p for p in self.peers.values() if p.connected]
-
     def get_lobby_peers(self) -> List[PartyPeerState]:
         """Get list of peers in the current lobby"""
         with self._lock:
             return [p for p in self.peers.values() if p.connected and p.in_lobby]
-
-    def get_all_skin_selections(self) -> Dict[int, SkinSelection]:
-        """Get all skin selections from peers (summoner_id -> selection)"""
-        with self._lock:
-            return {
-                p.summoner_id: p.skin_selection
-                for p in self.peers.values()
-                if p.connected and p.skin_selection
-            }
 
     def clear_all(self):
         """Clear all party state"""

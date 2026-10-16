@@ -65,31 +65,6 @@ class ChromaSelector:
         # Delegate to selection handler
         self.selection_handler.handle_selection(chroma_id, chroma_name)
     
-    def should_show_chroma_panel(self, skin_id: int) -> bool:
-        """
-        Check if chroma panel should be shown for this skin
-        
-        Args:
-            skin_id: Skin ID to check
-            
-        Returns:
-            True if skin has any chromas (owned or unowned)
-            
-        Raises:
-            TypeError: If skin_id is not an integer
-            ValueError: If skin_id is negative
-        """
-        # Validate input
-        validate_skin_id(skin_id)
-        
-        try:
-            chromas = self.skin_scraper.get_chromas_for_skin(skin_id)
-            # Show panel if there are ANY chromas (owned or unowned)
-            return bool(chromas)
-        except Exception as e:
-            log.debug(f"[CHROMA] Error checking chromas for skin {skin_id}: {e}")
-            return False
-    
     def show_button_for_skin(self, skin_id: int, skin_name: str, champion_name: str = None, champion_id: int = None):
         """
         Show button for a skin (called when UI detection finds any unowned skin or owned skin with chromas)

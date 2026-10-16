@@ -542,18 +542,6 @@ class Win32Window:
         style = (style | add) & ~remove
         SetWindowLongPtr(hwnd, GWL_EXSTYLE, style)
 
-    def enable_text_transparency(self, hwnd: wintypes.HWND) -> None:
-        if not hwnd:
-            return
-        self.set_window_styles(hwnd, remove=(0x0001 | 0x0002))  # remove SS_CENTER / SS_RIGHT
-        self.set_window_ex_styles(hwnd, add=WS_EX_TRANSPARENT)
-
-    def set_label_text(self, hwnd: wintypes.HWND, text: str) -> None:
-        if not hwnd:
-            return
-        user32.SetWindowTextW(hwnd, text)
-        user32.InvalidateRect(hwnd, None, True)
-
     def _load_icon_handle(self, path: str, width: int, height: int) -> Optional[int]:
         handle = user32.LoadImageW(
             None,

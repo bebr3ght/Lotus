@@ -231,13 +231,6 @@ class ChromaPanelManager:
                 log.debug(f"[CHROMA] Failed to broadcast chroma state on show: {e}")
             
     
-    def show_wheel_directly(self):
-        """Request to show the chroma panel for current skin (called by JavaScript plugin)"""
-        with self.lock:
-            if self.current_skin_name and self.current_chromas:
-                log.info(f"[CHROMA] Request to show panel for {self.current_skin_name}")
-                self.pending_show = (self.current_skin_name, self.current_chromas)
-    
     def process_pending(self):
         """Process pending show/hide requests (must be called from main thread) - NON-BLOCKING"""
         # Try to acquire lock with timeout to avoid blocking
