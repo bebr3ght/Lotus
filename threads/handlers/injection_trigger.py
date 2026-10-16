@@ -421,6 +421,30 @@ class InjectionTrigger:
             if self.injection_manager:
                 self.injection_manager.discard_early_patcher()
 
+    def _set_selection_via_action(self, target_skin_id: int) -> bool:
+        """Force a skin through the champ-select pick action, if there is one.
+
+        Shared by _force_owned_skin and _force_base_skin: the two carried
+        byte-identical copies of this loop. It only breaks out of the round on a
+        pick it could actually use, so a completed action or one without an id
+        no longer hides a usable pick in a later round.
+        """
+        sess = self.lcu.session or {}
+        actions = sess.get("actions") or []
+        my_cell = self.state.local_cell_id
+
+        for rnd in actions:
+            for act in rnd:
+                if act.get("actorCellId") != my_cell or act.get("type") != "pick":
+                    continue
+                action_id = act.get("id")
+                if act.get("completed", False) or action_id is None:
+                    continue
+                if self.lcu.set_selected_skin(action_id, target_skin_id):
+                    return True
+            # No usable pick in this round; try the next one
+        return False
+
     def _force_owned_skin(self, skin_id: int):
         log.info(f"[INJECT] User owns this skin/chroma (skinId={skin_id}), forcing selection via LCU")
         champ_id = self.state.locked_champ_id or self.state.hovered_champ_id
@@ -428,20 +452,7 @@ class InjectionTrigger:
             target_skin_id = skin_id
             forced_successfully = False
             try:
-                sess = self.lcu.session or {}
-                actions = sess.get("actions") or []
-                my_cell = self.state.local_cell_id
-
-                for rnd in actions:
-                    for act in rnd:
-                        if act.get("actorCellId") == my_cell and act.get("type") == "pick":
-                            action_id = act.get("id")
-                            if not act.get("completed", False) and action_id is not None:
-                                if self.lcu.set_selected_skin(action_id, target_skin_id):
-                                    forced_successfully = True
-                            break
-                    if forced_successfully:
-                        break
+                forced_successfully = self._set_selection_via_action(target_skin_id)
 
                 if not forced_successfully:
                     forced_successfully = self.lcu.set_my_selection_skin(target_skin_id)
@@ -653,20 +664,7 @@ class InjectionTrigger:
         t_force0 = time.perf_counter()
 
         try:
-            sess = self.lcu.session or {}
-            actions = sess.get("actions") or []
-            my_cell = self.state.local_cell_id
-
-            for rnd in actions:
-                for act in rnd:
-                    if act.get("actorCellId") == my_cell and act.get("type") == "pick":
-                        action_id = act.get("id")
-                        if not act.get("completed", False) and action_id is not None:
-                            if self.lcu.set_selected_skin(action_id, base_skin_id):
-                                base_skin_set_successfully = True
-                        break
-                if base_skin_set_successfully:
-                    break
+            base_skin_set_successfully = self._set_selection_via_action(base_skin_id)
 
             if not base_skin_set_successfully:
                 base_skin_set_successfully = self.lcu.set_my_selection_skin(base_skin_id)

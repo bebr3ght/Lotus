@@ -210,8 +210,20 @@ def _process_ui_updates(state: SharedState, skin_scraper: LCUSkinScraper) -> boo
         except Exception as e:
             log.error(f"[MAIN] Failed to hide UI during champion exchange: {e}")
 
-    if user_interface.is_ui_initialized() and user_interface.chroma_ui and user_interface.chroma_ui.chroma_selector and user_interface.chroma_ui.chroma_selector.panel:
-        panel = user_interface.chroma_ui.chroma_selector.panel
+    # The panel is drained even while the UI is torn down. Tearing the UI down
+    # sets chroma_ui to None, and this block used to be guarded by
+    # is_ui_initialized(), so a pending_hide was never applied after a
+    # teardown. chroma_panel_open then stayed True, which pins the main loop to
+    # the fast sleep for the rest of the session.
+    panel = None
+    chroma_ui = getattr(user_interface, "chroma_ui", None)
+    selector = getattr(chroma_ui, "chroma_selector", None) if chroma_ui else None
+    live_panel = getattr(selector, "panel", None) if selector else None
+    if live_panel is not None:
+        _loop_state['last_panel'] = live_panel
+    panel = live_panel or _loop_state.get('last_panel')
+
+    if panel is not None:
         panel_has_work = (
             state.chroma_panel_open
             or state.pending_chroma_selection
@@ -225,9 +237,13 @@ def _process_ui_updates(state: SharedState, skin_scraper: LCUSkinScraper) -> boo
         if panel_has_work:
             ui_activity = True
             chroma_start = time.time()
-            panel.process_pending()
-            # Update positions to follow League window
-            panel.update_positions()
+            try:
+                panel.process_pending()
+                # Update positions to follow League window
+                panel.update_positions()
+            except Exception as e:
+                log.debug(f"[MAIN] Chroma panel pending work failed: {e}")
+                _loop_state.pop('last_panel', None)
             chroma_elapsed = time.time() - chroma_start
             if chroma_elapsed > CHROMA_PANEL_PROCESSING_THRESHOLD_S:
                 log.warning(f"[WATCHDOG] Chroma panel processing took {chroma_elapsed:.2f}s")

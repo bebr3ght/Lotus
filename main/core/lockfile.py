@@ -172,8 +172,12 @@ def create_single_instance_mutex() -> bool:
     try:
         handle = ctypes.windll.kernel32.CreateMutexW(None, False, SINGLE_INSTANCE_MUTEX_NAME)
         if not handle:
-            log.error("CreateMutexW failed; falling back to lock file.")
-            return True  # allow fallback path to decide
+            # The caller returns on win32 and never reaches the lock-file path,
+            # so "fall back" meant falling back to nothing: if the mutex cannot
+            # be created, the single-instance guarantee has to come from the
+            # lock file instead, not be given up silently.
+            log.error("CreateMutexW failed; using the lock file instead.")
+            return _fallback_to_lock_file(app_state)
 
         last_error = ctypes.windll.kernel32.GetLastError()
         if last_error == ERROR_ALREADY_EXISTS:
@@ -195,8 +199,20 @@ def create_single_instance_mutex() -> bool:
         atexit.register(cleanup_lock_file)  # reuse existing cleanup hook
         return True
     except Exception as e:
-        log.error(f"Failed to create mutex: {e}; falling back to lock file.")
-        return True
+        log.error(f"Failed to create mutex: {e}; using the lock file instead.")
+        return _fallback_to_lock_file(app_state)
+
+
+def _fallback_to_lock_file(app_state) -> bool:
+    """Second line of defence when the OS mutex is unavailable."""
+    try:
+        created = create_lock_file()
+        if created:
+            atexit.register(cleanup_lock_file)
+        return created
+    except Exception as e:
+        log.error("Lock file fallback also failed: %s", e)
+        return False
 
 
 def cleanup_lock_file() -> None:
@@ -226,41 +242,40 @@ def cleanup_lock_file() -> None:
 def check_single_instance() -> None:
     """Check if another instance is already running"""
 
-    # Prefer OS mutex on Windows
+    # Prefer OS mutex on Windows; it falls back to the lock file itself when the
+    # mutex cannot be created, so this covers both.
     if sys.platform == "win32":
         if not create_single_instance_mutex():
-            try:
-                ctypes.windll.user32.MessageBoxW(
-                    0,
-                    "Another instance of Rose is already running!\n\nPlease close the existing instance before starting a new one.",
-                    "Rose - Instance Already Running",
-                    0x50010,
-                )
-            except Exception:
-                log.error("Another instance of Rose is already running!")
+            _report_already_running()
             sys.exit(1)
         return
 
     # Existing behavior for non-Windows
     if not create_lock_file():
-        # Show error message using Windows MessageBox since console might not be visible
-        if sys.platform == "win32":
-            try:
-                # MB_OK (0x0) + MB_ICONERROR (0x10) + MB_SETFOREGROUND (0x10000) + MB_TOPMOST (0x40000)
-                # = 0x50010 - Ensures dialog appears on top and gets focus
-                ctypes.windll.user32.MessageBoxW(
-                    0, 
-                    "Another instance of Rose is already running!\n\nPlease close the existing instance before starting a new one.",
-                    "Rose - Instance Already Running",
-                    0x50010  # MB_OK | MB_ICONERROR | MB_SETFOREGROUND | MB_TOPMOST
-                )
-            except (OSError, AttributeError) as e:
-                # Fallback to logging if MessageBox fails
-                log.error(f"Failed to show message box: {e}")
-                log.error("Another instance of Rose is already running!")
-                log.error("Please close the existing instance before starting a new one.")
-        else:
-            log.error("Another instance of Rose is already running!")
-            log.error("Please close the existing instance before starting a new one.")
+        _report_already_running()
         sys.exit(1)
+
+
+def _report_already_running() -> None:
+    """Tell the user another instance owns the mutex.
+
+    The old code branched on sys.platform *after* already returning on win32,
+    so the MessageBox branch was dead and the user got no window at all.
+    """
+    message = (
+        "Another instance of Lotus is already running!\n\n"
+        "Please close the existing instance before starting a new one."
+    )
+    if sys.platform == "win32":
+        try:
+            # MB_OK | MB_ICONERROR | MB_SETFOREGROUND | MB_TOPMOST
+            ctypes.windll.user32.MessageBoxW(
+                0,
+                message,
+                "Lotus - Instance Already Running",
+                0x50010,
+            )
+        except (OSError, AttributeError) as e:
+            log.error(f"Failed to show message box: {e}")
+    log.error(message)
 

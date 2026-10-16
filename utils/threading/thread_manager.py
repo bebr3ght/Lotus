@@ -91,17 +91,28 @@ class ThreadManager:
                 except Exception as e:
                     log.warning(f"Error calling stop method for {managed.name}: {e}")
         
-        # Then wait for all threads to finish
+        # Then wait for all threads to finish.
+        # One budget for the whole set, not per thread: joining five threads with
+        # a 2s timeout each took up to 10s, while the tray watchdog that force-quits
+        # the process fires after MAIN_LOOP_FORCE_QUIT_TIMEOUT_S (2s), so it killed
+        # the process in the middle of its own cleanup.
+        deadline = time.monotonic() + timeout
         for managed in threads_copy:
+            if not managed.thread.is_alive():
+                continue
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                still_alive.append(managed.name)
+                log.warning(f"{managed.name} thread not stopped before the cleanup budget ran out")
+                continue
+            log.debug(f"Waiting for {managed.name} thread...")
+            managed.thread.join(timeout=remaining)
+
             if managed.thread.is_alive():
-                log.debug(f"Waiting for {managed.name} thread...")
-                managed.thread.join(timeout=timeout)
-                
-                if managed.thread.is_alive():
-                    log.warning(f"{managed.name} thread did not stop within {timeout}s timeout")
-                    still_alive.append(managed.name)
-                else:
-                    log_success(log, f"{managed.name} thread stopped", "")
+                log.warning(f"{managed.name} thread did not stop within {timeout}s timeout")
+                still_alive.append(managed.name)
+            else:
+                log_success(log, f"{managed.name} thread stopped", "")
         
         elapsed = time.time() - cleanup_start
         return still_alive, elapsed

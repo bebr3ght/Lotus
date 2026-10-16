@@ -338,11 +338,10 @@ class InjectionManager:
             log.error("[INJECT] Please ensure League Client is running or manually set the path in config.ini")
             return False
 
-        # Check if injection already in progress
-        if self._injection_in_progress:
-            log.warning(f"[INJECT] Injection already in progress - skipping request for: {label}")
-            return False
-    
+        # The lock below is the real gate. A plain read of _injection_in_progress first
+        # was a check-then-act: two threads could both see False and both proceed,
+        # and the loser then returned from the INJECTION_LOCK_TIMEOUT path while
+        # the winner was already mid-injection on the shared mods directory.
         lock_acquired = self.injection_lock.acquire(timeout=INJECTION_LOCK_TIMEOUT_S)
         if not lock_acquired:
             log.warning("[INJECT] Could not acquire injection lock - another injection in progress")

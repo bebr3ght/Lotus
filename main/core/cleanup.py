@@ -60,11 +60,10 @@ def perform_cleanup(state: SharedState, thread_manager: ThreadManager, tray_mana
     # Check if any threads are still alive
     if still_alive:
         log.warning(f"Some threads did not stop: {', '.join(still_alive)}")
-        log.warning(f"Cleanup took {elapsed:.1f}s - forcing exit")
-        
+
         # Clean up lock file before forced exit
         cleanup_lock_file()
-        
+
         # Force exit after timeout
         if elapsed > THREAD_FORCE_EXIT_TIMEOUT_S:
             log.error(f"Forced exit after {elapsed:.1f}s - threads still running")

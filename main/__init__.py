@@ -357,7 +357,7 @@ from state import AppStatus
 from utils.core.logging import get_logger, log_success
 from utils.core.issue_reporter import report_issue
 from utils.threading.thread_manager import create_daemon_thread
-from config import APP_VERSION, MAIN_LOOP_FORCE_QUIT_TIMEOUT_S, get_config_option, set_config_option
+from config import APP_NAME, APP_VERSION, MAIN_LOOP_FORCE_QUIT_TIMEOUT_S, get_config_option, set_config_option
 from injection.config.config_manager import ConfigManager
 from injection.game.game_detector import GameDetector
 import time
@@ -472,57 +472,82 @@ def _update_registry_version() -> None:
     """
     if sys.platform != "win32" or not getattr(sys, "frozen", False):
         return
-    try:
-        import winreg
-        key_path = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Rose"
-        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, key_path, 0, winreg.KEY_SET_VALUE) as key:
-            winreg.SetValueEx(key, "DisplayVersion", 0, winreg.REG_SZ, APP_VERSION)
-    except Exception:
-        pass
+    import winreg
+    # The installer registers under its own MyAppName. Writing to a hardcoded
+    # "Rose" created a second, never-updated entry instead of updating the real
+    # one, so Apps & features listed Lotus twice and kept showing the originally
+    # installed version.
+    key_path = rf"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{APP_NAME}"
+    for root, name in ((winreg.HKEY_LOCAL_MACHINE, "HKLM"), (winreg.HKEY_CURRENT_USER, "HKCU")):
+        try:
+            with winreg.OpenKey(root, key_path, 0, winreg.KEY_SET_VALUE) as key:
+                winreg.SetValueEx(key, "DisplayVersion", 0, winreg.REG_SZ, APP_VERSION)
+            log.debug(f"[REG] DisplayVersion set to {APP_VERSION} under {name}")
+            return
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            log.debug(f"[REG] Could not write DisplayVersion under {name}: {exc}")
+            continue
+    log.debug(f"[REG] No uninstall entry at {key_path}; leaving version reporting to the installer")
 
 def _schedule_restart() -> bool:
-    """Spawn a detached helper that relaunches Rose after this process exits.
+    """Spawn a detached helper that relaunches Lotus after this process exits.
 
     The new instance cannot start while the current one is still alive because
     of the single-instance mutex, so a small batch file waits for this PID to
-    exit and then starts Rose again.
+    exit and then starts Lotus again.
+
+    Every path arrives as an environment variable and the script is written in
+    ASCII. Putting them in the script body meant cmd decoded a path such as
+    C:\\Users\\José in the console code page and started nothing, and dropping
+    sys.argv meant a restart lost --lockfile, --dev and the test flags.
     """
     import os
+    import secrets
     import subprocess
     import tempfile
 
     try:
         pid = os.getpid()
         if getattr(sys, 'frozen', False):
-            exe_path = Path(sys.executable).resolve()
-            workdir = exe_path.parent
-            launch_cmd = f'start "" /D "{workdir}" "{exe_path}"'
+            workdir = Path(sys.executable).resolve().parent
+            args: list[str] = []
         else:
             # Development mode: relaunch `python main.py` from the project root
-            exe_path = Path(sys.executable).resolve()
             workdir = Path(__file__).parent.parent
-            launch_cmd = f'start "" /D "{workdir}" "{exe_path}" "main.py"'
+            args = ["main.py", *sys.argv[1:]]
 
-        batch_path = Path(tempfile.gettempdir()) / f"rose_restart_{pid}.bat"
+        # A predictable name in a shared temp directory is pre-creatable by any
+        # local user, and an elevated cmd would then execute what they wrote.
+        batch_dir = Path(tempfile.gettempdir()) / f"lotus_restart_{secrets.token_hex(16)}"
+        batch_dir.mkdir(parents=True, exist_ok=True)
+        batch_path = batch_dir / "restart.bat"
 
-        batch_content = (
-            "@echo off\n"
-            "setlocal enableextensions\n"
-            f'set "TARGET_PID={pid}"\n'
-            ":wait\n"
-            'tasklist /FI "PID eq %TARGET_PID%" /NH 2>NUL | find /I "%TARGET_PID%" >NUL\n'
-            'if not errorlevel 1 (\n'
-            '    ping 127.0.0.1 -n 2 >NUL\n'
-            '    goto wait\n'
-            ')\n'
-            f"{launch_cmd}\n"
-            'del "%~f0" >NUL 2>&1\n'
-            "exit\n"
+        script = (
+            "@echo off\r\n"
+            "setlocal enableextensions\r\n"
+            'tasklist /FI "PID eq %TARGET_PID%" /NH 2>NUL | find /I "%TARGET_PID%" >NUL\r\n'
+            "if not errorlevel 1 (\r\n"
+            "    ping 127.0.0.1 -n 2 >NUL\r\n"
+            "    goto wait\r\n"
+            ")\r\n"
+            'start "" /D "%WORKDIR%" "%EXE%" %ARGS%\r\n'
+            'rmdir /S /Q "%~dp0" >NUL 2>&1\r\n'
+            "exit\r\n"
         )
-        batch_path.write_text(batch_content, encoding="utf-8")
+        batch_path.write_text(script, encoding="ascii", newline="")
 
+        env = dict(
+            os.environ,
+            TARGET_PID=str(pid),
+            WORKDIR=str(workdir),
+            EXE=str(Path(sys.executable).resolve()),
+            ARGS=" ".join(f'"{a}"' for a in args),
+        )
         subprocess.Popen(
-            ["cmd", "/c", str(batch_path)],
+            ["cmd", "/s", "/c", str(batch_path)],
+            env=env,
             close_fds=True,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )

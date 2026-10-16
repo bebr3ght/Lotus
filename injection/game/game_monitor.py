@@ -223,7 +223,7 @@ class GameMonitor:
                         log.debug(f"[monitor] Error in immediate check {immediate_check}: {e}")
                     
                     # If we found and suspended the game, break out of immediate checks
-                    if self._suspended_game_process is not None:
+                    if self.get_suspended_game_process() is not None:
                         break
                     
                     # Very short sleep between immediate checks (5ms)
@@ -237,8 +237,15 @@ class GameMonitor:
                         self._monitor_active = False
                         break
                     
-                    # If we've already suspended the game, check for safety timeout
-                    if self._suspended_game_process is not None:
+                    # If we've already suspended the game, check for safety timeout.
+                    # Taken under the lock and kept in a local: stop() clears
+                    # the field from the injection thread, so reading the
+                    # attribute twice could see it become None in between and
+                    # then clear the reference without ever resuming, leaving
+                    # the game frozen for good.
+                    with self._process_lock:
+                        suspended_process = self._suspended_game_process
+                    if suspended_process is not None:
                         # Check safety timeout to auto-resume (prevent permanent freeze)
                         if suspension_start_time is not None:
                             elapsed = time.time() - suspension_start_time
@@ -257,22 +264,23 @@ class GameMonitor:
                                     hint="Settings → Monitor Auto-Resume Timeout → increase it (ex: 60s).",
                                 )
                                 try:
-                                    self._suspended_game_process.resume()
+                                    suspended_process.resume()
                                     log.info("[monitor] Auto-resumed game successfully")
                                 except Exception as e:
                                     log.error(f"[monitor] Auto-resume error: {e}")
                                     # Try to resume one more time, but don't block on it
                                     try:
                                         # Check if process still exists
-                                        if PSUTIL_AVAILABLE and self._suspended_game_process.status() == STATUS_STOPPED:
-                                            self._suspended_game_process.resume()
+                                        if PSUTIL_AVAILABLE and suspended_process.status() == STATUS_STOPPED:
+                                            suspended_process.resume()
                                             log.info("[monitor] Auto-resume retry succeeded")
                                     except Exception as retry_e:
                                         log.error(f"[monitor] Auto-resume retry failed: {retry_e}")
                                 # Always clear reference and stop monitor after auto-resume attempt
                                 # Even if resume failed, we can't keep trying forever
                                 with self._process_lock:
-                                    self._suspended_game_process = None
+                                    if self._suspended_game_process is suspended_process:
+                                        self._suspended_game_process = None
                                 suspension_start_time = None
                                 log.info("[monitor] Stopping monitor after auto-resume - runoverlay should have hooked")
                                 self._monitor_active = False
@@ -360,7 +368,8 @@ class GameMonitor:
     
     def get_suspended_game_process(self):
         """Get the currently suspended game process (if any)"""
-        return self._suspended_game_process
+        with self._process_lock:
+            return self._suspended_game_process
     
     def resume_game(self):
         """Resume the suspended game (called when runoverlay starts)"""
