@@ -61,9 +61,29 @@ class AnalyticsClientTests(unittest.TestCase):
     @patch("analytics.core.analytics_client.get_install_id", return_value="00000000-0000-4000-8000-000000000000")
     @patch("analytics.core.analytics_client.requests.post")
     def test_missing_config_option_keeps_analytics_enabled(self, post, get_install_id):
+        # A missing config.ini key means "not opted out", it does not enable
+        # analytics on its own. The client is built with a server so the test
+        # covers the opt-in rule rather than the shipped default, which is off
+        # until the fork runs its own endpoint.
         post.return_value = Mock(status_code=204)
         with patch("analytics.core.analytics_client.get_config_option", return_value=None):
-            self.assertTrue(AnalyticsClient().send_ping("1.2.14"))
+            client = AnalyticsClient(server_url="https://lotus.example/", enabled=True)
+            self.assertTrue(client.send_ping("1.2.14"))
+
+    @patch("analytics.core.analytics_client.requests.post")
+    def test_the_default_build_sends_nothing(self, post):
+        """Lotus has no analytics endpoint of its own, so nothing may leave the
+        machine unless one is configured."""
+        self.assertFalse(AnalyticsClient().enabled)
+        self.assertFalse(AnalyticsClient().send_ping("1.2.14"))
+        post.assert_not_called()
+
+    @patch("analytics.core.analytics_client.requests.post")
+    def test_a_configured_server_alone_does_not_enable_it(self, post):
+        """ANALYTICS_ENABLED is the master switch: pointing at an endpoint is
+        not enough, the build has to opt in explicitly."""
+        self.assertFalse(AnalyticsClient(server_url="https://lotus.example/").enabled)
+        post.assert_not_called()
 
     def test_presence_interval_is_15_minutes(self):
         self.assertEqual(ANALYTICS_PING_INTERVAL_S, 900)

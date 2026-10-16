@@ -66,12 +66,17 @@ class SmartSkinDownloader:
             # Increase delay when rate limit is low
             self.min_request_interval = max(RATE_LIMIT_DELAY_LOW, self.min_request_interval * RATE_LIMIT_BACKOFF_MULTIPLIER)
     
-    def _make_request(self, url: str, **kwargs) -> Optional[requests.Response]:
-        """Make a rate-limited request"""
+    def _make_request(self, url: str, timeout: float = RATE_LIMIT_REQUEST_TIMEOUT, **kwargs) -> Optional[requests.Response]:
+        """Make a rate-limited request.
+
+        timeout is a named parameter, not something to forward through kwargs:
+        a caller passing its own timeout used to collide with the default here
+        and every request died with "multiple values for keyword argument".
+        """
         self._wait_for_rate_limit()
-        
+
         try:
-            response = self.session.get(url, timeout=RATE_LIMIT_REQUEST_TIMEOUT, **kwargs)
+            response = self.session.get(url, timeout=timeout, **kwargs)
             self._handle_rate_limit_response(response)
             response.raise_for_status()
             return response

@@ -64,15 +64,81 @@ def is_chroma_id(skin_id: int, chroma_id_map: Optional[dict]) -> bool:
     Returns:
         True if the skin ID is a chroma, False otherwise
     """
-    # Check hardcoded special chroma IDs first (always check these)
-    if skin_id in (145071, 103086, 103087, 99991, 99992, 99993, 99994, 99995, 99996, 99997, 99998, 99999, 82998, 82999, 25999, 875998, 875999, 147002, 147003, 21997, 21998, 21999):
+    # Special forms always count as chromas, even with no chroma map loaded
+    if is_special_form_id(skin_id):
         return True
-    
+
     # Check chroma_id_map if it's not None and not empty
     if chroma_id_map is not None:
         return skin_id in chroma_id_map
     
     return False
+
+
+# ---------------------------------------------------------------------------
+# Skins whose extra "chroma" IDs are not chromas at all
+# ---------------------------------------------------------------------------
+# Elementalist Lux, Sahn Uzal Mordekaiser, Spirit Blossom Morgana, Radiant Sett,
+# KDA Seraphine, Viego and Gun Goddess Miss Fortune ship extra forms whose IDs are
+# not in the LCU chroma list, and the Hall of Legends Kai'Sa and Ahri get a second
+# ID each. Riot issues them real skin IDs, so without this table a form looks like
+# an ordinary skin: the overlay puts the wrong assets on skin0 and the chroma
+# wheel treats a form change as a different skin.
+#
+# This table is the single source of truth. It used to be spelled out in seven
+# places, and they had already drifted: Viego was missing from the two copies in
+# this module, so a Viego form was reported as an unowned skin and got the carrier
+# injection path. Ranges are inclusive (start, stop, base).
+_SPECIAL_FORM_RANGES: tuple[tuple[int, int, int], ...] = (
+    (99991, 99999, 99007),     # Elementalist Lux forms
+    (82998, 82999, 82054),     # Sahn Uzal Mordekaiser forms
+    (25999, 25999, 25080),     # Spirit Blossom Morgana form
+    (875998, 875999, 875066),  # Radiant Sett forms
+    (147002, 147003, 147001),  # KDA Seraphine forms
+    (234994, 234999, 234043),  # Viego forms
+    (21997, 21999, 21016),     # Gun Goddess Miss Fortune forms
+    (145071, 145071, 145070),  # Immortalized Legend Kai'Sa
+    (103086, 103087, 103085),  # Immortalized Legend Ahri, Form 2 Ahri
+)
+
+# Base skins that look like chromas because a form of theirs shares the prefix
+_SPECIAL_FORM_BASES: frozenset[int] = frozenset({
+    99007,   # Elementalist Lux
+    82054,   # Sahn Uzal Mordekaiser
+    25080,   # Spirit Blossom Morgana
+    875066,  # Radiant Sett
+    147001,  # KDA Seraphine
+    234043,  # Viego
+    21016,   # Gun Goddess Miss Fortune
+    145070,  # Risen Legend Kai'Sa
+    103085,  # Risen Legend Ahri
+})
+
+
+def get_base_skin_id_for_special_form(chroma_id: int) -> Optional[int]:
+    """The base skin a special-form ID belongs to, or None if it is ordinary.
+
+    The one place that knows these IDs; everything else asks here.
+    """
+    try:
+        value = int(chroma_id)
+    except (TypeError, ValueError):
+        return None
+    for start, stop, base in _SPECIAL_FORM_RANGES:
+        if start <= value <= stop:
+            return base
+    if value in _SPECIAL_FORM_BASES:
+        return value
+    return None
+
+
+def is_special_form_id(chroma_id: int) -> bool:
+    """Whether this ID is one of the special forms rather than a real chroma."""
+    try:
+        value = int(chroma_id)
+    except (TypeError, ValueError):
+        return False
+    return any(start <= value <= stop for start, stop, _base in _SPECIAL_FORM_RANGES)
 
 
 def get_base_skin_id_for_chroma(chroma_id: int, chroma_id_map: Optional[dict]) -> Optional[int]:
@@ -86,74 +152,21 @@ def get_base_skin_id_for_chroma(chroma_id: int, chroma_id_map: Optional[dict]) -
         Base skin ID if found, None otherwise
     """
     try:
-        # Check if this is an Elementalist Lux form (fake ID)
-        if 99991 <= chroma_id <= 99999:
-            return 99007  # Elementalist Lux base skin ID
-        
-        # Check if this is a Sahn Uzal Mordekaiser form
-        if chroma_id in (82998, 82999):
-            return 82054  # Sahn Uzal Mordekaiser base skin ID
-        
-        # Check if this is a Spirit Blossom Morgana form
-        if chroma_id == 25999:
-            return 25080  # Spirit Blossom Morgana base skin ID
-        
-        # Check if this is a Radiant Sett form
-        if chroma_id in (875998, 875999):
-            return 875066  # Radiant Sett base skin ID
-        
-        # Check if this is a KDA Seraphine form
-        if chroma_id in (147002, 147003):
-            return 147001  # KDA Seraphine base skin ID
-        
-        # Check if this is a Gun Goddess Miss Fortune form
-        if chroma_id in (21997, 21998, 21999):
-            return 21016  # Gun Goddess Miss Fortune base skin ID
-        
-        # Special case: Elementalist Lux base skin (99007)
-        if chroma_id == 99007:
-            return 99007  # Elementalist Lux base skin ID
-        
-        # Special case: Sahn Uzal Mordekaiser base skin (82054)
-        if chroma_id == 82054:
-            return 82054  # Sahn Uzal Mordekaiser base skin ID
-        
-        # Special case: Spirit Blossom Morgana base skin (25080)
-        if chroma_id == 25080:
-            return 25080  # Spirit Blossom Morgana base skin ID
+        # Skins whose extra forms carry real skin IDs (see the table above)
+        special = get_base_skin_id_for_special_form(chroma_id)
+        if special is not None:
+            return special
 
-        # Special case: Radiant Sett base skin (875066)
-        if chroma_id == 875066:
-            return 875066  # Radiant Sett base skin ID
+        # Check if this chroma ID exists in the cache
+        if chroma_id_map is not None:
+            chroma_data = chroma_id_map.get(chroma_id)
+            if chroma_data:
+                return chroma_data.get('skinId')
 
-        # Special case: KDA Seraphine base skin (147001)
-        if chroma_id == 147001:
-            return 147001  # KDA Seraphine base skin ID
-
-        # Special case: Gun Goddess Miss Fortune base skin (21016)
-        if chroma_id == 21016:
-            return 21016  # Gun Goddess Miss Fortune base skin ID
-
-        # Special case: Risen Legend Kai'Sa (145070)
-        if chroma_id == 145070:
-            return 145070  # Risen Legend Kai'Sa base skin ID
-        
-        # Special case: Immortalized Legend Kai'Sa (145071)
-        if chroma_id == 145071:
-            return 145070  # Immortalized Legend Kai'Sa base skin ID
-        
-        # Special case: Risen Legend Ahri (103085)
-        if chroma_id == 103085:
-            return 103085  # Risen Legend Ahri base skin ID
-        
-        # Special case: Immortalized Legend Ahri (103086)
-        if chroma_id == 103086:
-            return 103085  # Immortalized Legend Ahri base skin ID
-        
-        # Special case: Form 2 Ahri (103087)
-        if chroma_id == 103087:
-            return 103085  # Form 2 Ahri base skin ID
-        
+        return None
+    except Exception as e:
+        log.debug(f"[UTILITIES] Error getting base skin ID for chroma {chroma_id}: {e}")
+        return None
         # Check if this chroma ID exists in the cache
         if chroma_id_map is not None:
             chroma_data = chroma_id_map.get(chroma_id)

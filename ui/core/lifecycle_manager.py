@@ -26,7 +26,11 @@ class UILifecycleManager:
         """
         self.state = state
         self.skin_scraper = skin_scraper
-        self.lock = threading.Lock()
+        # Reentrant on purpose: process_pending_operations holds this while it calls
+        # destroy_ui, and with a plain Lock destroy_ui could never take it again,
+        # so it always fell through to the unlocked branch and skipped the global
+        # panel cleanup on every teardown.
+        self.lock = threading.RLock()
         
         # UI Components
         self.chroma_ui: ChromaUI = None
@@ -90,7 +94,12 @@ class UILifecycleManager:
             current_time = time.time()
             if self._last_destruction_time > 0 and (current_time - self._last_destruction_time) < 0.5:  # 500ms cooldown
                 remaining_time = 0.5 - (current_time - self._last_destruction_time)
-                log.warning(f"[UI] UI initialization requested but in cooldown period - {remaining_time:.2f}s remaining")
+                # Deferred, not dropped. Returning here without remembering the
+                # request meant a destroy/init pair landing in two main-loop ticks
+                # left the chroma wheel permanently absent for that champ select,
+                # because nothing ever asked again.
+                self._pending_ui_initialization = True
+                log.info(f"[UI] UI initialization deferred by cooldown - {remaining_time:.2f}s remaining")
                 return
             
             # Check for force reinitialize FIRST (before other checks)
@@ -140,6 +149,11 @@ class UILifecycleManager:
             
             # Handle pending initialization (either new or after destruction)
             if self._pending_ui_initialization:
+                # Honour the post-destruction cooldown here, where the deferral
+                # above can be acted on, instead of refusing the request outright.
+                current_time = time.time()
+                if self._last_destruction_time > 0 and (current_time - self._last_destruction_time) < 0.5:
+                    return False
                 ui_initialized = self.is_ui_initialized()
                 log.debug(f"[UI] Checking initialization: pending={self._pending_ui_initialization}, initialized={ui_initialized}")
                 if not ui_initialized:

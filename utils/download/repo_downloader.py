@@ -17,7 +17,7 @@ from typing import Callable, Optional, Dict, List, Tuple
 from utils.core.atomic_file import atomic_write, write_text_atomic
 from utils.core.logging import get_logger
 from utils.core.paths import get_classic_skins_dir, get_skins_dir
-from utils.core.safe_extract import is_safe_path, join_within
+from utils.core.safe_extract import UnsafePathError, is_safe_path, join_within, validate_archive
 from config import APP_USER_AGENT, SKIN_DOWNLOAD_STREAM_TIMEOUT_S
 
 log = get_logger()
@@ -91,6 +91,21 @@ class RepoDownloader:
         except requests.RequestException as e:
             log.warning(f"Failed to fetch remote SHA: {e}")
             return None
+
+    @staticmethod
+    def _release_response(response) -> None:
+        """Return a streamed response to the pool.
+
+        A streamed response is only released once its body is consumed or the
+        response is closed; the retry loop and the error paths left them open,
+        so each attempt cost a socket.
+        """
+        if response is None:
+            return
+        try:
+            response.close()
+        except Exception as e:
+            log.debug(f"Could not close a download response: {e}")
 
     def get_local_sha(self) -> Optional[str]:
         """Read the locally stored commit SHA."""
@@ -227,12 +242,14 @@ class RepoDownloader:
             # Download added/modified/renamed files
             raw_url = f"{self.raw_base}/{filename}"
             try:
-                resp = self.session.get(raw_url, stream=True, timeout=SKIN_DOWNLOAD_STREAM_TIMEOUT_S)
-                resp.raise_for_status()
-                with atomic_write(local_path, 'wb', durable=False) as f:
-                    for chunk in resp.iter_content(chunk_size=8192):
-                        if chunk:
-                            f.write(chunk)
+                # context manager: a failure part-way through used to leave the
+                # connection out of the pool instead of releasing it
+                with self.session.get(raw_url, stream=True, timeout=SKIN_DOWNLOAD_STREAM_TIMEOUT_S) as resp:
+                    resp.raise_for_status()
+                    with atomic_write(local_path, 'wb', durable=False) as f:
+                        for chunk in resp.iter_content(chunk_size=8192):
+                            if chunk:
+                                f.write(chunk)
                 success_count += 1
                 log.debug(f"Downloaded {filename}")
             except (requests.RequestException, OSError) as e:
@@ -278,11 +295,11 @@ class RepoDownloader:
                 # Try to resolve total size via HEAD request first
                 total_size: Optional[int] = None
                 try:
-                    head_response = self.session.head(zip_url, allow_redirects=True, timeout=SKIN_DOWNLOAD_STREAM_TIMEOUT_S)
-                    head_response.raise_for_status()
-                    total_size_header = head_response.headers.get('Content-Length')
-                    if total_size_header:
-                        total_size = int(total_size_header)
+                    with self.session.head(zip_url, allow_redirects=True, timeout=SKIN_DOWNLOAD_STREAM_TIMEOUT_S) as head_response:
+                        head_response.raise_for_status()
+                        total_size_header = head_response.headers.get('Content-Length')
+                        if total_size_header:
+                            total_size = int(total_size_header)
                 except requests.RequestException:
                     total_size = None
                 except ValueError:
@@ -341,9 +358,11 @@ class RepoDownloader:
                 log.info(f"Repository ZIP downloaded: {temp_zip_path}")
                 final_total = total_size if total_size else downloaded
                 self._emit_progress(progress_end, f"Download complete ({_format_size(downloaded)} / {_format_size(final_total)})")
+                self._release_response(response)
                 return temp_zip_path
 
             except requests.RequestException as e:
+                self._release_response(locals().get("response"))
                 log.warning(f"Download attempt {attempt}/{max_retries} failed: {e}")
                 # Clean up partial download
                 if temp_zip_path and temp_zip_path.exists():
@@ -476,6 +495,16 @@ class RepoDownloader:
             log.info("Extracting skins, previews, and resources folder from LeagueSkins repository ZIP...")
 
             with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                # The entry-count and unpacked-size caps apply to this archive too,
+                # not just to custom mod uploads. Without them a compromised CDN
+                # (or a poisoned mirror) could ship a bomb that this loop happily
+                # wrote to disk, because it only ever checked for path traversal.
+                try:
+                    validate_archive(zip_ref, zip_path.parent)
+                except UnsafePathError as e:
+                    log.error(f"[SECURITY] Refusing to unpack the skin repository ZIP: {e}")
+                    return False
+
                 # Find all files in the skins/ directory
                 skins_files = []
                 zip_count = 0

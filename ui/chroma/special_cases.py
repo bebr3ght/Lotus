@@ -230,42 +230,15 @@ class ChromaSpecialCases:
     @staticmethod
     def get_base_skin_id_for_special(chroma_id: int) -> Optional[int]:
         """Get base skin ID for special chromas
-        
+
+        Delegates to the shared table in utils.core.utilities. This used to be a
+        hand-written copy of it, and it had already drifted: it knew about Viego
+        while the injection path did not, so hovering a Viego form cleared the
+        chroma selection instead of keeping it.
+
         Returns:
             Base skin ID or None if not a special chroma
         """
-        if ChromaSpecialCases.is_elementalist_form(chroma_id):
-            return 99007  # Elementalist Lux base skin ID
-        
-        if ChromaSpecialCases.is_mordekaiser_form(chroma_id):
-            return 82054  # Sahn Uzal Mordekaiser base skin ID
-        
-        if ChromaSpecialCases.is_morgana_form(chroma_id):
-            return 25080  # Spirit Blossom Morgana base skin ID
-        
-        if ChromaSpecialCases.is_sett_form(chroma_id):
-            return 875066  # Radiant Sett base skin ID
-        
-        if ChromaSpecialCases.is_seraphine_form(chroma_id):
-            return 147001  # KDA Seraphine base skin ID
-        
-        if ChromaSpecialCases.is_viego_form(chroma_id):
-            return 234043  # Viego base skin ID
-        
-        if ChromaSpecialCases.is_missfortune_form(chroma_id):
-            return 21016  # Gun Goddess Miss Fortune base skin ID
-        
-        if chroma_id == 21016:
-            return 21016  # Gun Goddess Miss Fortune base skin ID
-        
-        if chroma_id == 145071:
-            return 145070  # Risen Legend Kai'Sa base skin ID
-        
-        if chroma_id == 103086:
-            return 103085  # Risen Legend Ahri base skin ID
-        
-        if chroma_id == 103087:
-            return 103085  # Risen Legend Ahri base skin ID
-        
-        return None
+        from utils.core.utilities import get_base_skin_id_for_special_form
+        return get_base_skin_id_for_special_form(chroma_id)
 

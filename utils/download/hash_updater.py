@@ -169,25 +169,23 @@ def download_file(url: str, session: requests.Session, status_callback: Optional
         if status_callback:
             status_callback(f"Downloading {filename}...")
         
-        response = session.get(url, timeout=30, stream=True)
-        response.raise_for_status()
-        
-        # Get total size if available
-        total_size = int(response.headers.get('content-length', 0))
-        downloaded = 0
-        chunks = []
-        
-        for chunk in response.iter_content(chunk_size=8192):
-            if chunk:
-                chunks.append(chunk)
-                downloaded += len(chunk)
-                
-                # Update status with progress if callback provided
-                if status_callback:
-                    size_mb = downloaded / (1024 * 1024)
-                    status_callback(f"Downloading {filename}... ({size_mb:.1f} MB)")
-        
-        content = b''.join(chunks)
+        with session.get(url, timeout=30, stream=True) as response:
+            response.raise_for_status()
+
+            downloaded = 0
+            chunks = []
+
+            for chunk in response.iter_content(chunk_size=8192):
+                if chunk:
+                    chunks.append(chunk)
+                    downloaded += len(chunk)
+
+                    # Update status with progress if callback provided
+                    if status_callback:
+                        size_mb = downloaded / (1024 * 1024)
+                        status_callback(f"Downloading {filename}... ({size_mb:.1f} MB)")
+
+            content = b''.join(chunks)
         
         size_mb = len(content) / (1024 * 1024)
         updater_log.info(f"Downloaded {filename} ({size_mb:.1f} MB)")
@@ -206,14 +204,19 @@ def download_file(url: str, session: requests.Session, status_callback: Optional
 
 def combine_hash_files(contents: list[bytes]) -> bytes:
     """Combine multiple hash files into one
-    
+
+    Decoding is tolerant on purpose: one non-UTF-8 byte anywhere in a
+    CommunityDragon part used to raise out of here, and this is the live copy of
+    the merger, so a single bad byte meant hashes.game.txt was never written at
+    all and the game hash check failed on every start.
+
     Args:
         contents: List of hash file contents
-    
+
     Returns:
         Combined file content
     """
-    texts = [c.decode('utf-8') for c in contents]
+    texts = [c.decode('utf-8', errors='replace') for c in contents]
     combined = '\n'.join(t.rstrip('\n') for t in texts)
     if combined and not combined.endswith('\n'):
         combined += '\n'

@@ -7,6 +7,7 @@ Handles loading and finding skin IDs by name
 
 import json
 import logging
+import threading
 from typing import Optional
 from pathlib import Path
 
@@ -25,6 +26,11 @@ class SkinMapping:
             shared_state: Shared application state
         """
         self.shared_state = shared_state
+        # load_mapping/clear run from the champ-select and phase threads while
+        # the websocket loop looks names up, so every access is guarded. The
+        # lookups iterate the mapping, which a concurrent clear() turns into a
+        # "dictionary changed size during iteration" RuntimeError.
+        self._lock = threading.RLock()
         self.skin_id_mapping: dict[str, int] = {}
         self.skin_id_name_mapping: dict[int, str] = {}  # Normalized (lowercase) names for backward compatibility
         self.skin_id_original_name_mapping: dict[int, str] = {}  # Original names with proper case
@@ -65,24 +71,27 @@ class SkinMapping:
             )
             return False
         
-        self.skin_id_mapping.clear()
-        self.skin_id_original_name_mapping.clear()
-        for skin_id_str, name in data.items():
-            try:
-                skin_id = int(skin_id_str)
-            except (TypeError, ValueError):
-                continue
-            original_name = (name or "").strip()
-            normalized = original_name.lower()
-            if normalized and normalized not in self.skin_id_mapping:
-                self.skin_id_mapping[normalized] = skin_id
-                self.skin_id_name_mapping[skin_id] = normalized
-                self.skin_id_original_name_mapping[skin_id] = original_name  # Store original case
-        
-        self.skin_mapping_loaded = True
+        with self._lock:
+            self.skin_id_mapping.clear()
+            self.skin_id_original_name_mapping.clear()
+            self.skin_id_name_mapping.clear()
+            for skin_id_str, name in data.items():
+                try:
+                    skin_id = int(skin_id_str)
+                except (TypeError, ValueError):
+                    continue
+                original_name = (name or "").strip()
+                normalized = original_name.lower()
+                if normalized and normalized not in self.skin_id_mapping:
+                    self.skin_id_mapping[normalized] = skin_id
+                    self.skin_id_name_mapping[skin_id] = normalized
+                    self.skin_id_original_name_mapping[skin_id] = original_name  # Store original case
+
+            loaded = len(self.skin_id_mapping)
+            self.skin_mapping_loaded = True
         log.info(
             "[SkinMonitor] Loaded %s skin mappings for '%s'",
-            len(self.skin_id_mapping),
+            loaded,
             language,
         )
         return True
@@ -101,14 +110,15 @@ class SkinMapping:
                 return None
         
         normalized = skin_name.strip().lower()
-        if normalized in self.skin_id_mapping:
-            return self.skin_id_mapping[normalized]
-        
-        # Try partial matching
-        for mapped_name, skin_id in self.skin_id_mapping.items():
-            if normalized in mapped_name or mapped_name in normalized:
-                return skin_id
-        
+        with self._lock:
+            if normalized in self.skin_id_mapping:
+                return self.skin_id_mapping[normalized]
+
+            # Try partial matching
+            for mapped_name, skin_id in self.skin_id_mapping.items():
+                if normalized in mapped_name or mapped_name in normalized:
+                    return skin_id
+
         return None
     def find_skin_name_by_skin_id(self, skin_id: int) -> Optional[str]:
         """Find skin name by id using mapping
@@ -124,16 +134,21 @@ class SkinMapping:
                 return None
 
         # Return original name with proper case
-        if skin_id in self.skin_id_original_name_mapping:
-            return self.skin_id_original_name_mapping[skin_id]
-        # Fallback to normalized name if original not available (for backward compatibility)
-        if skin_id in self.skin_id_name_mapping:
-            return self.skin_id_name_mapping[skin_id]
+        with self._lock:
+            if skin_id in self.skin_id_original_name_mapping:
+                return self.skin_id_original_name_mapping[skin_id]
+            # Fallback to normalized name if original not available (for backward compatibility)
+            if skin_id in self.skin_id_name_mapping:
+                return self.skin_id_name_mapping[skin_id]
         return None
 
     def clear(self) -> None:
         """Clear mapping cache"""
-        self.skin_mapping_loaded = False
-        self.skin_id_mapping.clear()
-        self.skin_id_original_name_mapping.clear()
+        with self._lock:
+            self.skin_mapping_loaded = False
+            self.skin_id_mapping.clear()
+            # This one was missed, so a reloaded mapping kept answering lookups
+            # from the previous champion's names.
+            self.skin_id_name_mapping.clear()
+            self.skin_id_original_name_mapping.clear()
 

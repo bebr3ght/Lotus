@@ -28,12 +28,15 @@ class UserInterface:
         self.state = state
         self.skin_scraper = skin_scraper
         self.lock = threading.Lock()
-        
+
         # Current skin tracking
         self.current_skin_id = None
         self.current_skin_name = None
         self.current_champion_name = None
         self.current_champion_id = None
+
+        # Set by worker threads, drained by the main loop
+        self._pending_hide_all = False
         
         # Initialize handlers
         self.lifecycle_manager = UILifecycleManager(state, skin_scraper)
@@ -149,15 +152,27 @@ class UserInterface:
                 self.skin_display_handler._hide_chroma_ui()
     
     def _schedule_hide_all_on_main_thread(self):
-        """Schedule hide_all() to run on the main thread"""
-        try:
-            # Use threading.Timer to schedule on main thread
-            timer = threading.Timer(0.0, self.hide_all)
-            timer.daemon = True
-            timer.start()
-            log.debug("[UI] hide_all() scheduled on main thread")
-        except Exception as e:
-            log.warning(f"[UI] Failed to schedule hide_all on main thread: {e}")
+        """Ask the main loop to run hide_all().
+
+        threading.Timer spawns a *new* thread, it does not marshal to the main
+        one, so this used to run hide_all() concurrently with the loop's
+        show_skin(). They race on the panel's pending_hide flag and the result
+        was a hide/show flap around every injection. A pending flag drained by
+        the loop is the same mechanism the lifecycle manager already uses for
+        init/destroy.
+        """
+        with self.lock:
+            self._pending_hide_all = True
+        log.debug("[UI] hide_all() requested; the main loop will apply it")
+
+    def apply_pending_hide_all(self) -> bool:
+        """Run a requested hide_all(). Call from the main loop only."""
+        with self.lock:
+            if not self._pending_hide_all:
+                return False
+            self._pending_hide_all = False
+        self.hide_all()
+        return True
     
     def check_resolution_and_update(self):
         """Check for resolution changes and update UI components accordingly"""

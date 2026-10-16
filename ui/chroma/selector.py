@@ -20,6 +20,12 @@ from utils.core.validation import validate_skin_id, validate_skin_name
 log = get_logger()
 
 
+def _resolve_base_skin(skin_id: int, chroma_id_map) -> int:
+    """The base skin behind a chroma or a special form, or the ID itself."""
+    from utils.core.utilities import get_base_skin_id_for_chroma
+    return get_base_skin_id_for_chroma(skin_id, chroma_id_map) or skin_id
+
+
 class ChromaSelector:
     """
     Manages chroma selection with new workflow:
@@ -110,35 +116,15 @@ class ChromaSelector:
         with self.lock:
             # Check if this is a chroma ID - if so, get the base skin ID for chroma data
             base_skin_id = skin_id
-            
-            # Special handling for Elementalist Lux forms (fake IDs 99991-99999)
-            if ChromaSpecialCases.is_elementalist_form(skin_id):
-                base_skin_id = 99007  # Elementalist Lux base skin ID
-                log.debug(f"[CHROMA] Detected Elementalist Lux form {skin_id}, using base skin {base_skin_id} for chroma data")
-            # Special handling for Sahn Uzal Mordekaiser forms (IDs 82998, 82999)
-            elif ChromaSpecialCases.is_mordekaiser_form(skin_id):
-                base_skin_id = 82054  # Sahn Uzal Mordekaiser base skin ID
-                log.debug(f"[CHROMA] Detected Sahn Uzal Mordekaiser form {skin_id}, using base skin {base_skin_id} for chroma data")
-            # Special handling for Spirit Blossom Morgana forms (ID 25999)
-            elif ChromaSpecialCases.is_morgana_form(skin_id):
-                base_skin_id = 25080  # Spirit Blossom Morgana base skin ID
-                log.debug(f"[CHROMA] Detected Spirit Blossom Morgana form {skin_id}, using base skin {base_skin_id} for chroma data")
-            # Special handling for Radiant Sett forms (IDs 875998, 875999)
-            elif ChromaSpecialCases.is_sett_form(skin_id):
-                base_skin_id = 875066  # Radiant Sett base skin ID
-                log.debug(f"[CHROMA] Detected Radiant Sett form {skin_id}, using base skin {base_skin_id} for chroma data")
-            # Special handling for KDA Seraphine forms (IDs 147998, 147999)
-            elif ChromaSpecialCases.is_seraphine_form(skin_id):
-                base_skin_id = 147001  # KDA Seraphine base skin ID
-                log.debug(f"[CHROMA] Detected KDA Seraphine form {skin_id}, using base skin {base_skin_id} for chroma data")
-            # Special handling for Viego forms (IDs 234994-234999)
-            elif ChromaSpecialCases.is_viego_form(skin_id):
-                base_skin_id = 234043  # Viego base skin ID
-                log.debug(f"[CHROMA] Detected Viego form {skin_id}, using base skin {base_skin_id} for chroma data")
-            # Special handling for Gun Goddess Miss Fortune forms (IDs 21997-21999)
-            elif ChromaSpecialCases.is_missfortune_form(skin_id):
-                base_skin_id = 21016  # Gun Goddess Miss Fortune base skin ID
-                log.debug(f"[CHROMA] Detected Gun Goddess Miss Fortune form {skin_id}, using base skin {base_skin_id} for chroma data")
+
+            # Skins whose extra forms carry real skin IDs (Elementalist Lux,
+            # Mordekaiser, Morgana, Sett, Seraphine, Viego, Miss Fortune, HoL
+            # Kai'Sa/Ahri). One shared table; it used to be an if/elif chain here
+            # that had fallen behind the copy the injection path used.
+            special_base = ChromaSpecialCases.get_base_skin_id_for_special(skin_id)
+            if special_base is not None:
+                base_skin_id = special_base
+                log.debug(f"[CHROMA] Special form {skin_id}, using base skin {base_skin_id} for chroma data")
             elif self.skin_scraper and self.skin_scraper.cache:
                 if skin_id in self.skin_scraper.cache.chroma_id_map:
                     # This is a chroma, get its base skin ID
@@ -190,100 +176,18 @@ class ChromaSelector:
         # Check if both IDs are chromas of the same base skin
         current_base_id = self.current_skin_id
         new_base_id = skin_id
-        
-        # Special handling for Elementalist Lux forms
-        if ChromaSpecialCases.is_elementalist_form(current_base_id):
-            current_base_id = 99007
-            log.debug(f"[CHROMA] Current skin {self.current_skin_id} is Elementalist Lux form of base skin {current_base_id}")
-        elif current_base_id == 99007:
-            current_base_id = 99007
-            log.debug(f"[CHROMA] Current skin {self.current_skin_id} is Elementalist Lux base skin")
-        # Special handling for Sahn Uzal Mordekaiser forms
-        elif ChromaSpecialCases.is_mordekaiser_form(current_base_id):
-            current_base_id = 82054
-            log.debug(f"[CHROMA] Current skin {self.current_skin_id} is Sahn Uzal Mordekaiser form of base skin {current_base_id}")
-        elif current_base_id == 82054:
-            current_base_id = 82054
-            log.debug(f"[CHROMA] Current skin {self.current_skin_id} is Sahn Uzal Mordekaiser base skin")
-        # Special handling for Spirit Blossom Morgana forms
-        elif ChromaSpecialCases.is_morgana_form(current_base_id):
-            current_base_id = 25080
-            log.debug(f"[CHROMA] Current skin {self.current_skin_id} is Spirit Blossom Morgana form of base skin {current_base_id}")
-        elif current_base_id == 25080:
-            current_base_id = 25080
-            log.debug(f"[CHROMA] Current skin {self.current_skin_id} is Spirit Blossom Morgana base skin")
-        # Special handling for Radiant Sett forms
-        elif ChromaSpecialCases.is_sett_form(current_base_id):
-            current_base_id = 875066
-            log.debug(f"[CHROMA] Current skin {self.current_skin_id} is Radiant Sett form of base skin {current_base_id}")
-        elif current_base_id == 875066:
-            current_base_id = 875066
-            log.debug(f"[CHROMA] Current skin {self.current_skin_id} is Radiant Sett base skin")
-        # Special handling for KDA Seraphine forms
-        elif ChromaSpecialCases.is_seraphine_form(current_base_id):
-            current_base_id = 147001
-            log.debug(f"[CHROMA] Current skin {self.current_skin_id} is KDA Seraphine form of base skin {current_base_id}")
-        elif current_base_id == 147001:
-            current_base_id = 147001
-            log.debug(f"[CHROMA] Current skin {self.current_skin_id} is KDA Seraphine base skin")
-        # Special handling for Gun Goddess Miss Fortune forms
-        elif ChromaSpecialCases.is_missfortune_form(current_base_id):
-            current_base_id = 21016
-            log.debug(f"[CHROMA] Current skin {self.current_skin_id} is Gun Goddess Miss Fortune form of base skin {current_base_id}")
-        elif current_base_id == 21016:
-            current_base_id = 21016
-            log.debug(f"[CHROMA] Current skin {self.current_skin_id} is Gun Goddess Miss Fortune base skin")
-        elif self.skin_scraper and self.skin_scraper.cache and current_base_id in self.skin_scraper.cache.chroma_id_map:
-            chroma_data = self.skin_scraper.cache.chroma_id_map[current_base_id]
-            current_base_id = chroma_data.get('skinId', current_base_id)
-            log.debug(f"[CHROMA] Current skin {self.current_skin_id} is chroma of base skin {current_base_id}")
-        
-        # Special handling for Elementalist Lux forms
-        if ChromaSpecialCases.is_elementalist_form(new_base_id):
-            new_base_id = 99007
-            log.debug(f"[CHROMA] New skin {skin_id} is Elementalist Lux form of base skin {new_base_id}")
-        elif new_base_id == 99007:
-            new_base_id = 99007
-            log.debug(f"[CHROMA] New skin {skin_id} is Elementalist Lux base skin")
-        # Special handling for Sahn Uzal Mordekaiser forms
-        elif ChromaSpecialCases.is_mordekaiser_form(new_base_id):
-            new_base_id = 82054
-            log.debug(f"[CHROMA] New skin {skin_id} is Sahn Uzal Mordekaiser form of base skin {new_base_id}")
-        elif new_base_id == 82054:
-            new_base_id = 82054
-            log.debug(f"[CHROMA] New skin {skin_id} is Sahn Uzal Mordekaiser base skin")
-        # Special handling for Spirit Blossom Morgana forms
-        elif ChromaSpecialCases.is_morgana_form(new_base_id):
-            new_base_id = 25080
-            log.debug(f"[CHROMA] New skin {skin_id} is Spirit Blossom Morgana form of base skin {new_base_id}")
-        elif new_base_id == 25080:
-            new_base_id = 25080
-            log.debug(f"[CHROMA] New skin {skin_id} is Spirit Blossom Morgana base skin")
-        # Special handling for Radiant Sett forms
-        elif ChromaSpecialCases.is_sett_form(new_base_id):
-            new_base_id = 875066
-            log.debug(f"[CHROMA] New skin {skin_id} is Radiant Sett form of base skin {new_base_id}")
-        elif new_base_id == 875066:
-            new_base_id = 875066
-            log.debug(f"[CHROMA] New skin {skin_id} is Radiant Sett base skin")
-        # Special handling for KDA Seraphine forms
-        elif ChromaSpecialCases.is_seraphine_form(new_base_id):
-            new_base_id = 147001
-            log.debug(f"[CHROMA] New skin {skin_id} is KDA Seraphine form of base skin {new_base_id}")
-        elif new_base_id == 147001:
-            new_base_id = 147001
-            log.debug(f"[CHROMA] New skin {skin_id} is KDA Seraphine base skin")
-        # Special handling for Gun Goddess Miss Fortune forms
-        elif ChromaSpecialCases.is_missfortune_form(new_base_id):
-            new_base_id = 21016
-            log.debug(f"[CHROMA] New skin {skin_id} is Gun Goddess Miss Fortune form of base skin {new_base_id}")
-        elif new_base_id == 21016:
-            new_base_id = 21016
-            log.debug(f"[CHROMA] New skin {skin_id} is Gun Goddess Miss Fortune base skin")
-        elif self.skin_scraper and self.skin_scraper.cache and new_base_id in self.skin_scraper.cache.chroma_id_map:
-            chroma_data = self.skin_scraper.cache.chroma_id_map[new_base_id]
-            new_base_id = chroma_data.get('skinId', new_base_id)
-            log.debug(f"[CHROMA] New skin {skin_id} is chroma of base skin {new_base_id}")
+
+        # One shared resolver for both sides: the two if/elif chains this
+        # replaces had drifted apart (only one of them knew about Viego), so a
+        # form switch cleared the chroma selection instead of keeping it.
+        chroma_map = self.skin_scraper.cache.chroma_id_map if (self.skin_scraper and self.skin_scraper.cache) else None
+        current_base_id = _resolve_base_skin(current_base_id, chroma_map)
+        new_base_id = _resolve_base_skin(new_base_id, chroma_map)
+
+        log.debug(
+            "[CHROMA] Base skin of %s is %s, of %s is %s",
+            self.current_skin_id, current_base_id, skin_id, new_base_id,
+        )
         
         # A base-skin hover must clear a previous chroma selection. Only
         # preserve the selection when the newly detected ID is itself a

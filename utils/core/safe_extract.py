@@ -34,6 +34,15 @@ class ArchiveTooLargeError(UnsafePathError):
     """Raised when a zip file would unpack to more entries or bytes than any real mod"""
 
 
+def validate_archive(zf: zipfile.ZipFile, dest_resolved: Path) -> None:
+    """Public entry point for the entry-count and unpacked-size limits.
+
+    Call this before extracting entry by entry: a loop that only checks for
+    path traversal still writes a zip bomb to disk.
+    """
+    _validate_members(zf, dest_resolved)
+
+
 def _validate_members(zf: zipfile.ZipFile, dest_resolved: Path) -> None:
     """Refuse an archive with a path escaping dest_resolved or an absurd unpacked size.
 

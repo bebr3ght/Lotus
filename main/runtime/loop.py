@@ -79,6 +79,17 @@ def _process_ui_updates(state: SharedState, skin_scraper: LCUSkinScraper) -> boo
     """
     ui_activity = False
 
+    # Worker threads ask for a hide (e.g. right before an injection forces the
+    # base skin) and leave it here; the loop is the only place that may touch the
+    # widgets, so it is the only place that applies it.
+    try:
+        from ui.core.user_interface import get_user_interface
+        user_interface = get_user_interface(state, skin_scraper)
+        if user_interface.apply_pending_hide_all():
+            ui_activity = True
+    except Exception as e:
+        log.debug(f"[MAIN] Could not apply a pending UI hide: {e}")
+
     # For Swiftplay mode, use ui_skin_id and calculate champion_id from skin_id
     # For regular mode, use last_hovered_skin_id and locked_champ_id
     if state.is_swiftplay_mode and state.ui_skin_id:
