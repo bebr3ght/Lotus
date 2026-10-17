@@ -64,6 +64,23 @@
   let bridge = null;
   let isSwiftplayMode = false;
 
+  // Phases the client is in on the reconnect screen, and the one it reaches a
+  // second or two later when the game is relaunched. A mod has to be pickable
+  // in all of them: that screen is where a player ends up when a mod crashed
+  // the game, and there is no champ select left to pick one in.
+  const RECONNECT_PHASES = ["Reconnect", "GameStart", "InProgress"];
+
+  function isReconnectPhase() {
+    return RECONNECT_PHASES.includes(currentPhase);
+  }
+
+  // Whether the skin of the mod list can be picked right now. Outside champ
+  // select it needs the game that is being (re)connected: the wheel is then
+  // opened for the skin it last reported.
+  function canPickSkinMods() {
+    return championLocked || isReconnectPhase() || (isSwiftplayMode && isActuallyInLobby());
+  }
+
   const tr = (text, vars) =>
     window.RoseI18n
       ? window.RoseI18n.t(text, vars)
@@ -348,7 +365,7 @@ function detachButtonToBody() {
 
   function getSelectedSummaryForTab(tabId) {
     if (tabId === "skins") {
-      if (!championLocked && !(isSwiftplayMode && isActuallyInLobby())) return "Waiting for champ lock…";
+      if (!canPickSkinMods()) return "Waiting for champ lock…";
       if (!isSelectedModForSkin()) return "None";
       return visibleNameForId(currentSkinMods, selectedModId, ["relativePath", "modName"]);
     }
@@ -634,7 +651,7 @@ function detachButtonToBody() {
     if (!bridge) return;
     const { championId, skinId } = getCurrentSkinContext();
 
-    if (!championLocked && !(isSwiftplayMode && isActuallyInLobby())) {
+    if (!canPickSkinMods()) {
       if (panel && panel._modsLoading) {
         panel._modsLoading.textContent = tr("Waiting for champ lock…");
         panel._modsLoading.style.display = "block";
@@ -1093,6 +1110,22 @@ function detachButtonToBody() {
     window.dispatchEvent(new CustomEvent(EVENT_PANEL_VISIBILITY, { detail: { visible: !!visible } }));
   }
 
+  // One click outside the panel closes it, so the screen behind it (the reconnect
+  // screen and its Reconnect button, the settings menu) stays usable. The delay
+  // keeps the click that opened the panel from closing it again.
+  function closePanelOnClickOutside() {
+    setTimeout(() => {
+      const closeHandler = (e) => {
+        const flyout = panel ? panel.querySelector(".flyout") : null;
+        if (!panel || !panel.parentNode) { document.removeEventListener("click", closeHandler); return; }
+        if ((flyout && flyout.contains(e.target)) || (button && button.contains(e.target))) return;
+        closePanel();
+        document.removeEventListener("click", closeHandler);
+      };
+      document.addEventListener("click", closeHandler);
+    }, 200);
+  }
+
   function openPanel() {
     if (!panel) createPanel();
 
@@ -1113,17 +1146,7 @@ function detachButtonToBody() {
     }
 
     positionPanel(panel);
-
-    setTimeout(() => {
-      const closeHandler = (e) => {
-        const flyout = panel ? panel.querySelector(".flyout") : null;
-        if (!panel || !panel.parentNode) { document.removeEventListener("click", closeHandler); return; }
-        if ((flyout && flyout.contains(e.target)) || (button && button.contains(e.target))) return;
-        closePanel();
-        document.removeEventListener("click", closeHandler);
-      };
-      document.addEventListener("click", closeHandler);
-    }, 200);
+    closePanelOnClickOutside();
   }
 
   function closePanel() {
@@ -1147,8 +1170,7 @@ function detachButtonToBody() {
 
   function getSelectedModsCount() {
     let count = 0;
-    const inLobby = isActuallyInLobby();
-    if ((championLocked || (isSwiftplayMode && inLobby)) && isSelectedModForSkin()) count += 1;
+    if (canPickSkinMods() && isSelectedModForSkin()) count += 1;
     if (selectedMapId) count += 1;
     if (selectedFontId) count += 1;
     if (selectedAnnouncerId) count += 1;
@@ -1451,7 +1473,7 @@ function detachButtonToBody() {
 
     window.addEventListener("resize", () => { if (isOpen && panel) positionPanel(panel); });
 
-    // Open from Settings (Global Mode)
+    // Open from Settings or from the reconnect screen (Global Mode)
     window.addEventListener("rose-open-custom-wheel", () => {
       isGlobalMode = true;
       if (!panel) createPanel();
@@ -1459,6 +1481,7 @@ function detachButtonToBody() {
 
       panel.style.display = "block";
       isOpen = true;
+      setPanelVisible(true);
 
       if (isFirstOpenInSession) {
         activeTab = "skins";
@@ -1477,7 +1500,11 @@ function detachButtonToBody() {
       }
 
       positionPanel(panel);
+      closePanelOnClickOutside();
     });
+
+    // The button that opened the wheel from outside it is a toggle
+    window.addEventListener("rose-close-custom-wheel", () => closePanel());
 
     setInterval(() => {
       const inCS = !!document.querySelector(".champion-select");

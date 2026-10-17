@@ -16,6 +16,7 @@ from lcu.core.lockfile import SWIFTPLAY_MODES, SWIFTPLAY_QUEUE_IDS
 from state import SharedState
 from utils.core.historic import clear_historic_entry, get_historic_skin_for_champion, write_historic_entry
 from utils.core.logging import get_logger, log_action
+from utils.core.utilities import get_champion_id_from_skin_id
 
 log = get_logger()
 
@@ -49,6 +50,10 @@ class SwiftplayHandler:
         self._last_matchmaking_state = None
         self._swiftplay_champ_check_interval = 0.5
         self._last_swiftplay_champ_check = 0.0
+        # One overlay at a time. It is a plain Lock and not an RLock because the
+        # phase handler asks it whether it is held (threading.RLock has no
+        # locked()), and nothing takes it twice: the re-injection path lets
+        # run_swiftplay_overlay take it instead of holding it around the call.
         self._overlay_lock = threading.Lock()
         self._last_detect_result: tuple[Optional[str], Optional[int]] = (None, None)
         self._last_sync_active_ids: Optional[frozenset] = None
@@ -560,6 +565,31 @@ class SwiftplayHandler:
             log.debug(f"[phase] Failed to get active lobby champion IDs: {e}")
             return None
 
+    def _resolve_loading_name(self, skin_id) -> tuple:
+        """The id and the name the loading screen must show for a skin.
+
+        A chroma id indexes a chroma row of the text table and carries the
+        chroma's own name, so both are resolved to the skin behind it first:
+        the loading screen prints the skin's name, never the chroma's.
+        """
+        scraper = self.skin_scraper
+        resolver = getattr(scraper, "resolve_loading_name", None) if scraper else None
+        if not callable(resolver):
+            return skin_id, None
+        try:
+            champion_id = get_champion_id_from_skin_id(int(skin_id))
+            cache = getattr(scraper, "cache", None)
+            if champion_id and not (cache and cache.is_loaded_for_champion(champion_id)):
+                scraper.scrape_champion_skins(champion_id)
+                # Scraping REPLACES the cache object: the reference taken before
+                # the scrape answers for the previous champion, so it is read
+                # again here instead of being trusted.
+                cache = getattr(scraper, "cache", None) or cache
+            return resolver(skin_id)
+        except Exception as e:
+            log.debug(f"[LOADNAME] Could not resolve the name of skin {skin_id}: {e}")
+            return skin_id, None
+
     def trigger_swiftplay_injection(self):
         """Trigger injection system for Swiftplay mode with all tracked skins and custom mods"""
         with self.state.swiftplay_lock:
@@ -706,24 +736,14 @@ class SwiftplayHandler:
                                 extracted_mods.append(base_mod_folder.name)
                                 log.info(f"[phase] Extracted {injection_name} to mods directory")
 
-                                # Получаем локализованное имя скина для Swiftplay
-                                skin_name_for_loadname = None
-                                chroma_id_map_local = getattr(self.skin_scraper.cache, "chroma_id_map", {}) if self.skin_scraper and self.skin_scraper.cache else {}
-                                if int(skin_id) in chroma_id_map_local:
-                                    skin_name_for_loadname = chroma_id_map_local[int(skin_id)].get('name')
-                                else:
-                                    if self.skin_scraper and self.skin_scraper.cache:
-                                        skin_data = self.skin_scraper.cache.get_skin_by_id(int(skin_id))
-                                        if skin_data:
-                                            skin_name_for_loadname = skin_data.get('skinName')
-
                                 try:
                                     from injection.loadingname.loading_name import build as build_loading_name, parse_skin_id
+                                    loading_skin_id, skin_name_for_loadname = self._resolve_loading_name(skin_id)
                                     loading_name_mod = build_loading_name(
                                         self.injection_manager.injector.game_dir,
                                         self.injection_manager.injector.mods_dir,
                                         base_mod_folder,
-                                        parse_skin_id(injection_name, champion_id),
+                                        loading_skin_id or parse_skin_id(injection_name, champion_id),
                                         localized_name=skin_name_for_loadname,
                                     )
                                     if loading_name_mod:
@@ -786,10 +806,19 @@ class SwiftplayHandler:
                 import traceback
                 log.debug(f"[phase] Traceback: {traceback.format_exc()}")
     
-    def run_swiftplay_overlay(self):
-        """Run overlay injection for Swiftplay mode with previously extracted mods"""
+    def run_swiftplay_overlay(self, prepare=None):
+        """Run overlay injection for Swiftplay mode with previously extracted mods
+
+        prepare, when given, is run first under this same lock: it extracts the
+        mods into the shared directory, which it rebuilds from scratch, so a
+        caller that means to replace the selection (a mod changed on the
+        reconnect screen) must not do that while another build reads it.
+        """
         with self._overlay_lock:
             try:
+                if prepare is not None:
+                    prepare()
+
                 # Atomically snapshot and clear the mods list so no other thread
                 # can attempt injection with the same mods concurrently.
                 with self.state.swiftplay_lock:
@@ -824,12 +853,22 @@ class SwiftplayHandler:
                     from config import get_config_float
                     user_timeout = int(get_config_float("General", "monitor_auto_resume_timeout", 120.0))
 
-                    result = self.injection_manager.injector._mk_run_overlay(
-                        extracted_mods,
-                        timeout=user_timeout,
-                        stop_callback=make_game_ended_callback(self.state),
-                        injection_manager=self.injection_manager
-                    )
+                    def build_overlay():
+                        return self.injection_manager.injector._mk_run_overlay(
+                            extracted_mods,
+                            timeout=user_timeout,
+                            stop_callback=make_game_ended_callback(self.state),
+                            injection_manager=self.injection_manager
+                        )
+
+                    # The build runs while the injection manager holds the mods
+                    # directory: another injection (a mod changed on the reconnect
+                    # screen) cannot wipe the files this overlay is built from.
+                    run_exclusively = getattr(self.injection_manager, "run_injection_exclusively", None)
+                    if callable(run_exclusively):
+                        result = run_exclusively(build_overlay)
+                    else:
+                        result = build_overlay()
 
                     if result == 0:
                         log.info(f"[phase] Successfully injected {len(extracted_mods)} mod(s) for Swiftplay")

@@ -287,6 +287,35 @@ def parse_skin_id(skin_name: str, champion_id: Optional[int] = None) -> int:
         return value
     return 0
 
+def _is_table(data: Optional[bytes]) -> bool:
+    """Whether these bytes are an RST v5 text table."""
+    return bool(data) and data[:3] == b"RST" and data[3] == 5
+
+def _table_to_patch(game_dir: Path, target: Path) -> Optional[bytes]:
+    """The table this build adds its champion to.
+
+    Swiftplay injects every champion in the lobby into one overlay, so the mod
+    has to carry every champion's name at once. mod-tools does not merge two
+    mods that ship the same path: it logs "Conflicting file" and the last one
+    wins whole, which left every champion but the last showing the champion's
+    name on the loading screen and in the scoreboard. One folder is therefore
+    the only shape that works, and a new champion is added on top of what the
+    previous ones wrote.
+    """
+    existing = target / TABLE_PATH
+    if existing.is_file():
+        try:
+            data = existing.read_bytes()
+            if _is_table(data):
+                return data
+        except OSError as e:
+            log.debug(f"[LOADNAME] could not read the table already written: {e}")
+    for wad in _language_wads(Path(game_dir)):
+        data = _read_table(wad)
+        if _is_table(data):
+            return data
+    return None
+
 def build(
     game_dir: Path,
     mods_dir: Path,
@@ -311,49 +340,45 @@ def build(
             log.debug("[LOADNAME] the skin carries no champion wad, skipped")
             return None
 
-        wads = _language_wads(Path(game_dir))
-        if not wads:
-            log.debug("[LOADNAME] no language wad in the game folder, skipped")
+        target = Path(mods_dir) / MOD_FOLDER
+        table = _table_to_patch(game_dir, target)
+        if table is None:
+            log.debug("[LOADNAME] no language table to copy, skipped")
             return None
 
         override = str(localized_name).strip() if localized_name else None
-        for wad in wads:
-            table = _read_table(wad)
-            if not table or table[:3] != b"RST" or table[3] != 5:
+        for alias in aliases:
+            name = override or _text_of(table, _key_hash(f"game_character_skin_displayname_{alias}_{skin_id % 1000}"))
+            if not name:
                 continue
-            for alias in aliases:
-                name = override or _text_of(table, _key_hash(f"game_character_skin_displayname_{alias}_{skin_id % 1000}"))
-                if not name:
-                    continue
-                champion_key = _key_hash(f"{RECORD_KEY}{alias}")
-                champion_name = _text_of(table, champion_key)
-                if champion_name is None:
-                    continue
-                target = Path(mods_dir) / MOD_FOLDER
-                (target / TABLE_PATH.parent).mkdir(parents=True, exist_ok=True)
-                (target / "META").mkdir(parents=True, exist_ok=True)
-                (target / "META" / "info.json").write_text(json.dumps({
-                    "Author": "Rose",
-                    "Description": name,
-                    "Name": "Loading screen name",
-                    "Version": "1.0.0",
-                }), encoding="utf-8")
-                table = _with_text(table, champion_key, name)
+            champion_key = _key_hash(f"{RECORD_KEY}{alias}")
+            champion_name = _text_of(table, champion_key)
+            if champion_name is None:
+                continue
+            (target / TABLE_PATH.parent).mkdir(parents=True, exist_ok=True)
+            (target / "META").mkdir(parents=True, exist_ok=True)
+            (target / "META" / "info.json").write_text(json.dumps({
+                "Author": "Rose",
+                "Description": name,
+                "Name": "Loading screen name",
+                "Version": "1.0.0",
+            }), encoding="utf-8")
+            table = _with_text(table, champion_key, name)
 
-                # the chat and the name over the head keep the champion's name (see the module's note)
-                record = _champion_record(game_dir, mod_folder, alias)
-                own_record = _with_own_record_key(record, alias) if record else None
-                if own_record:
-                    table = _with_text(table, _key_hash(f"{RECORD_KEY_OWN}{alias}"), champion_name)
-                    record_file = target / "RAW" / _record_path(alias)
-                    record_file.parent.mkdir(parents=True, exist_ok=True)
-                    record_file.write_bytes(own_record)
-                else:
-                    log.debug(f"[LOADNAME] {alias}'s record not found, the chat shows the skin's name too")
+            # the chat and the name over the head keep the champion's name (see the module's note)
+            record = _champion_record(game_dir, mod_folder, alias)
+            own_record = _with_own_record_key(record, alias) if record else None
+            if own_record:
+                table = _with_text(table, _key_hash(f"{RECORD_KEY_OWN}{alias}"), champion_name)
+                record_file = target / "RAW" / _record_path(alias)
+                record_file.parent.mkdir(parents=True, exist_ok=True)
+                record_file.write_bytes(own_record)
+            else:
+                log.debug(f"[LOADNAME] {alias}'s record not found, the chat shows the skin's name too")
 
-                (target / TABLE_PATH).write_bytes(table)
-                log.info(f"[LOADNAME] the loading screen will show '{name}'")
-                return MOD_FOLDER
+            (target / TABLE_PATH).write_bytes(table)
+            log.info(f"[LOADNAME] the loading screen will show '{name}'")
+            return MOD_FOLDER
         log.debug("[LOADNAME] the game has no name for skin %s, skipped", skin_id)
         return None
     except Exception as e:

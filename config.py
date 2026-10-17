@@ -327,6 +327,10 @@ PROCESS_ENUM_TIMEOUT_S = 2.0            # Timeout for process enumeration when f
 THREAD_JOIN_TIMEOUT_S = 2               # Timeout for thread.join() on shutdown (increased from 1.0s)
 THREAD_FORCE_EXIT_TIMEOUT_S = 4         # Total timeout before forcing app exit
 INJECTION_LOCK_TIMEOUT_S = 2.0          # Timeout for acquiring injection lock
+# Only one injection may use the mods directory at a time. A new one first has to
+# end the session that still holds it (a patcher serving a dead game) and waits
+# this long for that session to let go, before it is refused rather than run.
+INJECTION_GATE_WAIT_S = 5.0
 
 # Main loop watchdog timeouts (seconds)
 MAIN_LOOP_STALL_THRESHOLD_S = 5.0       # Threshold for detecting main loop stalls

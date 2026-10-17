@@ -15,7 +15,7 @@ from lcu import LCU
 from state import SharedState
 from utils.core.issue_reporter import report_issue
 from utils.core.logging import get_logger, log_action
-from utils.core.utilities import is_default_skin, is_selectable_owned
+from utils.core.utilities import get_champion_id_from_skin_id, is_default_skin, is_selectable_owned
 from injection.config.base_skin_tracker import start_tracking as _start_skin_tracking
 from injection.game.game_monitor import make_game_ended_callback
 from injection.loadingname.loading_name import build as build_loading_name
@@ -398,21 +398,11 @@ class InjectionTrigger:
             elif self._is_selectable_owned(effective_skin_id, owned_skin_ids) and not is_default:
                 self._force_owned_skin(effective_skin_id)
                 if self.injection_manager:
-                    self.injection_manager.inject_skin_immediately(
-                        name,
-                        stop_callback=make_game_ended_callback(self.state),
-                        champion_name=cname,
-                        champion_id=locked_champ_id,
-                    )
+                    self._inject_skin_now(name, locked_champ_id, cname)
             elif (ui_skin_id in owned_skin_ids and ui_skin_id < effective_skin_id < ui_skin_id + 100 and not is_default):
                 self._force_owned_skin(effective_skin_id)
                 if self.injection_manager:
-                    self.injection_manager.inject_skin_immediately(
-                        name,
-                        stop_callback=make_game_ended_callback(self.state),
-                        champion_name=cname,
-                        champion_id=locked_champ_id,
-                    )
+                    self._inject_skin_now(name, locked_champ_id, cname)
             elif self.injection_manager:
                 self._inject_unowned_skin(name, cname, effective_skin_id=effective_skin_id)
 
@@ -509,11 +499,16 @@ class InjectionTrigger:
                     if not self.lcu.ok:
                         return
 
+                    loading_skin_id, loading_name = (
+                        self._resolve_loading_name(current_id) if current_id else (None, None)
+                    )
                     success = self.injection_manager.inject_skin_immediately(
                         name,
                         stop_callback=game_ended_callback,
                         champion_name=cname,
                         champion_id=self.state.locked_champ_id,
+                        localized_name=loading_name,
+                        loading_skin_id=loading_skin_id,
                     )
 
                     if getattr(self.state, 'random_mode_active', False):
@@ -750,12 +745,77 @@ class InjectionTrigger:
         gives up early (missing carrier archive or mod source, nothing to inject,
         an error) must still stop it, or the game stays frozen until the
         monitor's auto-resume timeout.
+
+        The build runs while the injection manager holds the mods directory, so
+        it cannot wipe the files of an injection that is still serving a game.
         """
+        built = []
+
+        def build():
+            built.append(True)
+            return self._run_custom_mod_injection(custom_mod, base_skin_name, champion_name)
+
         try:
-            self._run_custom_mod_injection(custom_mod, base_skin_name, champion_name)
+            run_exclusively = getattr(self.injection_manager, "run_injection_exclusively", None)
+            if callable(run_exclusively):
+                result = run_exclusively(build)
+                if not built and result is not None:
+                    # A manager that answers without running the build has no
+                    # slot to hold: inject the way it always was injected.
+                    build()
+            else:
+                build()
         finally:
             if self.injection_manager:
                 self.injection_manager._stop_monitor()
+
+    def _inject_skin_now(self, name: str, champion_id, champion_name: str = "") -> bool:
+        """Inject a plain skin, naming the skin behind a chroma on the loading screen."""
+        skin_id = None
+        try:
+            if name.startswith("skin_") or name.startswith("chroma_"):
+                skin_id = int(name.split("_", 1)[1])
+        except (IndexError, ValueError):
+            skin_id = None
+
+        loading_skin_id, loading_name = self._resolve_loading_name(skin_id) if skin_id else (None, None)
+
+        return self.injection_manager.inject_skin_immediately(
+            name,
+            stop_callback=make_game_ended_callback(self.state),
+            champion_name=champion_name,
+            champion_id=champion_id,
+            localized_name=loading_name,
+            loading_skin_id=loading_skin_id,
+        )
+
+    def _resolve_loading_name(self, skin_id) -> tuple:
+        """The id and the name the loading screen must show for a skin.
+
+        A chroma id indexes a chroma row of the text table and carries the
+        chroma's own name, so both are resolved to the skin behind it first:
+        the loading screen prints the skin's name, never the chroma's.
+        """
+        scraper = self.skin_scraper
+        resolver = getattr(scraper, "resolve_loading_name", None) if scraper else None
+        if not callable(resolver):
+            return skin_id, None
+        try:
+            champion_id = get_champion_id_from_skin_id(int(skin_id))
+            cache = getattr(scraper, "cache", None)
+            if champion_id and not (cache and cache.is_loaded_for_champion(champion_id)):
+                scraper.scrape_champion_skins(champion_id)
+                # Scraping REPLACES the cache object: the reference taken before
+                # the scrape answers for the previous champion, so it is read
+                # again here instead of being trusted.
+                cache = getattr(scraper, "cache", None) or cache
+            resolved_id, name = resolver(skin_id)
+            if resolved_id != skin_id:
+                log.info(f"[LOADNAME] {skin_id} is a chroma of skin {resolved_id}: the loading screen shows the skin's name")
+            return resolved_id, name
+        except Exception as e:
+            log.debug(f"[LOADNAME] Could not resolve the name of skin {skin_id}: {e}")
+            return skin_id, None
 
     def _run_custom_mod_injection(self, custom_mod: dict, base_skin_name: Optional[str] = None, champion_name: str = ""):
         """Inject custom mod from mods storage (mod should already be extracted)
@@ -916,8 +976,10 @@ class InjectionTrigger:
             skin_folder = mod_folder_name or carrier_mod_folder_name
             if skin_folder and target_skin_id:
                 try:
+                    loading_skin_id, loading_name = self._resolve_loading_name(target_skin_id)
                     loading_name_mod = build_loading_name(
-                        injector.game_dir, injector.mods_dir, injector.mods_dir / skin_folder, int(target_skin_id)
+                        injector.game_dir, injector.mods_dir, injector.mods_dir / skin_folder,
+                        int(loading_skin_id), localized_name=loading_name,
                     )
                     if loading_name_mod:
                         mod_folder_names.append(loading_name_mod)

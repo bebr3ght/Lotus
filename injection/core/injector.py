@@ -162,6 +162,7 @@ class SkinInjector:
         champion_id: int = None,
         extra_mods_callback: Optional[Callable[["SkinInjector"], List[str]]] = None,
         localized_name: Optional[str] = None,
+        loading_skin_id: Optional[int] = None,
         classic: bool = False,
     ) -> bool:
         """Inject a single skin (with optional chroma and party mods)
@@ -174,6 +175,7 @@ class SkinInjector:
             chroma_id: Optional chroma ID to inject specific chroma variant
             extra_mods_callback: Optional callback(injector) -> list of extra mod folder names (e.g. party skins)
             localized_name: Optional localized skin name for the loading screen
+            loading_skin_id: The skin behind a chroma (the id the loading screen names)
             classic: Rift Classic game: inject the stored Classic skin instead
         """
         injection_start_time = time.time()
@@ -235,8 +237,11 @@ class SkinInjector:
 
         # An injected skin runs as the champion's default one, so the loading screen prints the champion's name.
         # This adds a mod that puts the skin's name there instead, built from the player's own game files.
+        # A chroma is named by its own row of the text table, so the caller resolves it to its skin first
+        # (loading_skin_id); parse_skin_id() only knows the id in the name it is given.
+        loading_skin_id = loading_skin_id or parse_skin_id(skin_name, champion_id)
         loading_name_mod = build_loading_name(
-            self.game_dir, self.mods_dir, mod_folder, parse_skin_id(skin_name, champion_id), localized_name=localized_name
+            self.game_dir, self.mods_dir, mod_folder, loading_skin_id, localized_name=localized_name
         )
         if loading_name_mod:
             mod_names.append(loading_name_mod)

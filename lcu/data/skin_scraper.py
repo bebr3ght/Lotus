@@ -8,6 +8,7 @@ from typing import Optional, Dict, List, Tuple
 
 from config import LCU_SKIN_SCRAPER_TIMEOUT_S, SKIN_NAME_MIN_SIMILARITY
 from utils.core.logging import get_logger
+from utils.core.utilities import get_champion_id_from_skin_id
 
 from .skin_cache import ChampionSkinCache
 
@@ -229,4 +230,34 @@ class LCUSkinScraper:
         if skin_data:
             return skin_data.get('chromaDetails', [])
         return None
+
+    def resolve_loading_name(self, skin_id) -> Tuple[int, Optional[str]]:
+        """The id and the name the loading screen must show for a skin.
+
+        A chroma is resolved to the skin it belongs to, because the loading
+        screen prints the skin's name and a chroma id indexes a chroma row of
+        the text table (and the chroma's own name over the skin's). The name is
+        the one the client itself reported, so it is already localised; None
+        when the champion is unknown, and the caller then reads the game's own
+        language table.
+        """
+        try:
+            skin_id = int(skin_id)
+        except (TypeError, ValueError):
+            return skin_id, None
+
+        cache = self.cache
+        try:
+            champion_id = get_champion_id_from_skin_id(skin_id)
+        except (TypeError, ValueError):
+            champion_id = 0
+        if champion_id and not cache.is_loaded_for_champion(champion_id):
+            self.scrape_champion_skins(champion_id)
+            # Scraping REPLACES the cache object. The one taken above now
+            # belongs to the previous champion and answers nothing for this one,
+            # so it is read again here instead of being trusted.
+            cache = getattr(self, "cache", None) or cache
+
+        base_skin_id = cache.get_base_skin_id(skin_id)
+        return base_skin_id, cache.get_skin_display_name(base_skin_id)
 

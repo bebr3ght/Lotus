@@ -76,6 +76,7 @@ Rose includes a suite of JavaScript plugins that extend the League Client UI:
 
 - **Smart Injection**: Never injects skins you already own
 - **Custom Mods**: Custom skins, maps, fonts and announcers (`.fantome`, `.zip` and `.modpkg`)
+- **Change Mods After a Crash**: A mod that crashes the game drops the client on the reconnect screen, where **Change mods** opens the mods panel again: the old mods are unloaded and the ones you pick are injected into the game you reconnect into (champ select and Swiftplay/ARAM alike)
 - **Party Mode**: Friends running Rose 1.4.4 or newer see each other's skins and custom mods in game
 - **Loading Screen Name**: The loading screen shows the injected skin's name; the chat and the name over your champion keep the champion's
 - **Multi-Language Support**: Works with any client language, with Rose's menus in 22 languages

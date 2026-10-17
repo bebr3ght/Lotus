@@ -9,9 +9,10 @@ import threading
 import time
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import Any, Callable, Optional
 
 from config import (
+    INJECTION_GATE_WAIT_S,
     INJECTION_LOCK_TIMEOUT_S,
     get_config_file_path
 )
@@ -24,6 +25,9 @@ from ..game.game_monitor import GameMonitor
 from ..config.threshold_manager import ThresholdManager
 
 log = get_logger()
+
+# How often the gate asks a stale session whether it let go of the directory
+_GATE_POLL_INTERVAL_S = 0.05
 
 
 class InjectionManager:
@@ -39,6 +43,9 @@ class InjectionManager:
         self.last_skin_name = None
         self.last_injection_time = 0.0
         self.injection_lock = threading.Lock()
+        # Only one injection at a time may use the mods directory (see
+        # run_injection_exclusively)
+        self._injection_gate = threading.Lock()
         self._initialized = False
         self.current_champion = None
         self._injection_in_progress = False  # Track if injection is running
@@ -234,7 +241,7 @@ class InjectionManager:
         # This prevents unnecessary suspension for base skins and owned skins
         pass
     
-    def inject_skin_immediately(self, skin_name: str, stop_callback=None, chroma_id: int = None, champion_name: str = None, champion_id: int = None, localized_name: str = None) -> bool:
+    def inject_skin_immediately(self, skin_name: str, stop_callback=None, chroma_id: int = None, champion_name: str = None, champion_id: int = None, localized_name: str = None, loading_skin_id: int = None) -> bool:
         """Immediately inject a specific skin (with optional chroma)
         
         Args:
@@ -244,6 +251,7 @@ class InjectionManager:
             champion_name: Optional champion name
             champion_id: Optional champion ID
             localized_name: Optional localized skin name for the loading screen
+            loading_skin_id: Optional id of the skin behind a chroma (see InjectionTrigger._resolve_loading_name)
         """
         if skin_name and skin_name.startswith("skin_"):
             try:
@@ -292,6 +300,7 @@ class InjectionManager:
                 champion_id=champion_id,
                 extra_mods_callback=extra_mods_callback,
                 localized_name=localized_name,
+                loading_skin_id=loading_skin_id,
                 classic=classic,
             )
 
@@ -321,14 +330,95 @@ class InjectionManager:
 
         return self._run_injection("party skins", inject)
 
+    # ------------------------------------------------------------------
+    # The mods directory slot
+    # ------------------------------------------------------------------
+
+    def run_injection_exclusively(self, build: Callable[[], Any], wait_s: float = INJECTION_GATE_WAIT_S) -> Optional[Any]:
+        """Run build() while holding the mods directory, and return what it returns.
+
+        Every injection clears the mods directory and copies into it, and the
+        session that follows wipes it again, so two overlapping injections
+        delete each other's files mid-copy: the overlay is built half-written
+        and the patcher disables all of it, taking the skin with it.
+
+        The slot is held for the whole session, not just the build, which makes
+        a held slot mean "still serving a game". A stale one is therefore ended
+        (reclaim_injection_slot) rather than refused; a session that still will
+        not let go is refused, because building into a directory in use is the
+        failure this is here to prevent. None is the answer for "refused".
+        """
+        gate = getattr(self, "_injection_gate", None)
+        if gate is None:
+            # A manager without the slot (nothing to coordinate with)
+            return build()
+
+        if not gate.acquire(blocking=False) and not self.reclaim_injection_slot(wait_s=wait_s):
+            # Logged like the cooldown and lock-timeout refusals below: it is a
+            # timing problem the player retries away, not a tuning problem
+            log.warning("[INJECT] Another injection still holds the mods directory - this one is skipped")
+            return None
+        # The slot is held here: either just taken, or reclaim took it over
+        try:
+            return build()
+        finally:
+            gate.release()
+
+    def reclaim_injection_slot(self, wait_s: float = INJECTION_GATE_WAIT_S) -> bool:
+        """End the session holding the mods directory and wait for it to let go.
+
+        Returns with the slot held, or False when it is still held after wait_s
+        (then nothing may touch the directory until that session ends).
+        """
+        gate = getattr(self, "_injection_gate", None)
+        if gate is None:
+            return True
+        if self._acquire_gate(gate, 0.0):
+            return True
+
+        # The holder is a patcher serving a game that is over (a crash the
+        # player reconnects from). Ending it unloads those mods; a new injection
+        # can then prepare the directory from scratch.
+        log.info("[INJECT] A previous injection still holds the mods directory - stopping it")
+        try:
+            self.stop_overlay_process()
+            # A session still inside mkoverlay holds the directory through a
+            # mod-tools.exe it started: ending the host alone would leave that
+            # build running, and this one would clean the directory under it.
+            self.kill_all_modtools_processes()
+        except Exception as e:
+            log.warning(f"[INJECT] Could not stop the previous injection: {e}")
+
+        deadline = time.monotonic() + max(0.0, float(wait_s))
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            if self._acquire_gate(gate, min(remaining, _GATE_POLL_INTERVAL_S)):
+                return True
+
+    @staticmethod
+    def _acquire_gate(gate, timeout_s: float) -> bool:
+        """Take the mods directory slot within timeout_s (and keep it)."""
+        try:
+            return bool(gate.acquire(timeout=timeout_s) if timeout_s else gate.acquire(blocking=False))
+        except TypeError:  # a plain Lock that takes no timeout
+            return bool(gate.acquire(blocking=False))
+
     def _run_injection(self, label: str, inject) -> bool:
-        """Run one injection under the injection lock
+        """Run one injection under the mods directory slot and the injection lock
 
         Args:
             label: What is injected (for logs and issue reports)
             inject: callback(extra_mods_callback) -> bool doing the injection;
                 extra_mods_callback adds party member skins (None without party)
         """
+        # The slot comes before the lock, never after: the session that holds the
+        # slot can be waiting on the lock, and the reverse order would deadlock.
+        return bool(self.run_injection_exclusively(lambda: self._run_injection_locked(label, inject)))
+
+    def _run_injection_locked(self, label: str, inject) -> bool:
+        """Do one injection with the mods directory slot already held"""
         self._ensure_initialized()
         self.refresh_injection_threshold()
 
@@ -338,10 +428,11 @@ class InjectionManager:
             log.error("[INJECT] Please ensure League Client is running or manually set the path in config.ini")
             return False
 
-        # The lock below is the real gate. A plain read of _injection_in_progress first
-        # was a check-then-act: two threads could both see False and both proceed,
-        # and the loser then returned from the INJECTION_LOCK_TIMEOUT path while
-        # the winner was already mid-injection on the shared mods directory.
+        # The lock serialises the injections that hold the mods directory slot.
+        # A plain read of _injection_in_progress first was a check-then-act: two
+        # threads could both see False and both proceed, and the loser then
+        # returned from the INJECTION_LOCK_TIMEOUT path while the winner was
+        # already mid-injection on the shared mods directory.
         lock_acquired = self.injection_lock.acquire(timeout=INJECTION_LOCK_TIMEOUT_S)
         if not lock_acquired:
             log.warning("[INJECT] Could not acquire injection lock - another injection in progress")
@@ -537,6 +628,9 @@ class InjectionManager:
     def prepare_custom_mod(self, mod_dict: dict, mod_type_name: str) -> Optional[str]:
             """Extract or link a custom mod to the active mods directory (Shared Utility)"""
             if not mod_dict or not mod_dict.get("mod_folder_name") or not mod_dict.get("mod_path"):
+                # Silent until now: a mod missing from the overlay had no line
+                # anywhere naming it
+                log.debug(f"[INJECT] {mod_type_name} mod selection is incomplete, ignored: {mod_dict}")
                 return None
                 
             self._ensure_initialized()

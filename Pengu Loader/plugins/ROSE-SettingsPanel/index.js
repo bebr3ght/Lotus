@@ -1780,6 +1780,7 @@
       labelStopInjectionButton(button);
     });
     container.appendChild(button);
+    addOpenModsButton(container);
   }
 
   function labelStopInjectionButton(button) {
@@ -1792,9 +1793,46 @@
     labelStopInjectionButton(button);
   }
 
+  // A mod that crashes the game drops the client on the reconnect screen, and
+  // that screen has no way back to the wheel, so a mod picked by mistake could
+  // only be dropped, never swapped. This opens the wheel right here: whatever is
+  // picked is injected into the game the client relaunches after Reconnect.
+  //
+  // The button is a toggle, not a one-shot: the wheel can be closed again (a
+  // click outside it), and a button that stayed greyed out from then on would
+  // look broken when the player only wanted to look once more.
+  const _openModsButtons = new Set();
+  let _customWheelOpen = false;
+  function addOpenModsButton(container) {
+    if (!container || container.querySelector(".rose-open-mods")) return;
+
+    const button = document.createElement("lol-uikit-flat-button");
+    button.className = "rose-open-mods";
+    button.setAttribute("margin-right", "10px");
+    labelOpenModsButton(button);
+    _openModsButtons.add(button);
+    // Opening the wheel is a DOM event, not a bridge message, so it also works
+    // while the socket is down, which it may well be mid-crash
+    button.addEventListener("click", () => {
+      window.dispatchEvent(new CustomEvent(_customWheelOpen ? "rose-close-custom-wheel" : "rose-open-custom-wheel"));
+    });
+    container.appendChild(button);
+  }
+
+  function labelOpenModsButton(button) {
+    button.title = t("Pick different mods, then reconnect: Rose unloads the old ones and injects the new ones");
+    button.textContent = t("Change mods");
+  }
+
+  // ROSE-CustomWheel says whether the wheel is up, so the button says the same
+  window.addEventListener("rose-custom-wheel-panel-visibility", (e) => {
+    _customWheelOpen = Boolean(e?.detail?.visible);
+  });
+
   // Menus on screen follow a language change
   window.addEventListener("rose-i18n-changed", () => {
     _stopInjectionButtons.forEach(labelStopInjectionButton);
+    _openModsButtons.forEach(labelOpenModsButton);
     const navItem = document.querySelector("lol-uikit-navigation-item.menu_item_Golden.Rose");
     if (settingsPanel && document.getElementById(PANEL_ID) && navItem) {
       createSettingsFlyout(navItem);
@@ -2641,9 +2679,10 @@
     form.appendChild(pathSection);
 
     // Custom Mods Button
+    // Its own string, not "Custom Mods": that one titles the mods wheel itself
     const customModsButton = document.createElement("lol-uikit-flat-button-secondary");
     customModsButton.id = "custom-mods-button";
-    customModsButton.textContent = "Custom Mods";
+    customModsButton.textContent = t("Open mods interface");
     customModsButton.style.marginTop = "8px";
     customModsButton.style.width = "100%";
     customModsButton.addEventListener("click", (e) => {

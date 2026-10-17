@@ -73,7 +73,19 @@ BACKGROUND_MESSAGE_TYPES = frozenset({
     "delete-category-mod",
     "rename-champion-mod",
     "rename-category-mod",
+    # A mod selection extracts the mod, and outside the champ select countdown
+    # it can build a whole overlay (see MessageHandler._mods_ready_for_injection)
+    "select-skin-mod",
+    "select-map",
+    "select-font",
+    "select-announcer",
+    "select-other",
 })
+
+# Phases the client is in while the player sits on the reconnect screen, and the
+# ones it reaches a second or two later when it relaunches the game. The
+# countdown that normally injects a selection is long over in all of them.
+RECONNECT_PHASES = frozenset({"Reconnect", "GameStart", "InProgress"})
 
 
 def _mod_thumbnail(mod_folder: Path) -> Optional[Path]:
@@ -160,6 +172,11 @@ class MessageHandler:
         self.port = port
         self.mod_storage = mod_storage or ModStorageService()
         self.injection_manager = injection_manager
+        # One re-injection at a time, plus a flag for a pick that landed while
+        # one was running (see _reinject_worker)
+        self._reinject_guard = threading.Lock()
+        self._reinject_running = False
+        self._reinject_pending = False
 
     def _is_valid_local_league_path(self, game_path: str) -> bool:
         """Validate a League install path without touching UNC/network paths."""
@@ -561,6 +578,183 @@ class MessageHandler:
         except Exception as e:
             log.error(f"[SkinMonitor] Failed to stop injection: {e}")
         self._send_response(json.dumps({"type": "injection-stopped", "success": stopped}))
+
+    # ------------------------------------------------------------------
+    # Changing mods once the champ select countdown is over
+    # ------------------------------------------------------------------
+
+    def _mods_ready_for_injection(self, *, deselected: bool = False) -> None:
+        """Inject what the player just picked when the countdown cannot do it.
+
+        Every selection is stored and extracted the moment it is made, but the
+        loadout countdown is the only thing that injects it. A mod picked on the
+        reconnect screen therefore sat on disk and never reached the game -
+        which is exactly where a player ends up when a mod crashed it, and the
+        one place they need to pick a different one.
+        """
+        if getattr(self.shared_state, "phase", None) not in RECONNECT_PHASES:
+            return
+        if self._user_stopped_injection():
+            return
+        if not (self._has_staged_mods() or deselected):
+            log.info("[SkinMonitor] No mod left to inject - reconnect to play without Rose's mods")
+            return
+
+        threading.Thread(
+            target=self._reinject_worker, daemon=True, name="ModsReinject"
+        ).start()
+
+    def _reinject_worker(self) -> None:
+        """Run the re-injection off the bridge worker: it holds the mods
+        directory until the game it serves ends, which is not a wait the bridge
+        can afford.
+
+        Picks are collapsed into one run at a time. A re-injection reads the
+        current selection and then rebuilds the shared mods directory from
+        scratch, so two of them at once delete each other's files and the
+        overlay ends up built from neither - which is how a map picked on the
+        reconnect screen went missing. A pick made while a run is in progress
+        is not dropped either: it raises a flag, and the worker injects again
+        once the current run is over, reading the newer selection.
+        """
+        with self._reinject_guard:
+            if self._reinject_running:
+                self._reinject_pending = True
+                log.debug("[SkinMonitor] A re-injection is already running - it will pick up this change")
+                return
+            self._reinject_running = True
+        try:
+            while True:
+                with self._reinject_guard:
+                    self._reinject_pending = False
+                self._inject_mods_on_reconnect()
+                with self._reinject_guard:
+                    if not self._reinject_pending:
+                        return
+                log.info("[SkinMonitor] Mods changed again - injecting the newer selection")
+        except Exception as e:
+            log.error(f"[SkinMonitor] Failed to re-inject the changed mods: {e}")
+        finally:
+            with self._reinject_guard:
+                self._reinject_running = False
+
+    def _has_staged_mods(self) -> bool:
+        """Whether any mod is selected and waiting to be injected."""
+        state = self.shared_state
+        if getattr(state, "selected_custom_mod", None):
+            return True
+        for name in ("selected_map_mod", "selected_font_mod", "selected_announcer_mod",
+                     "selected_other_mod", "selected_other_mods"):
+            if getattr(state, name, None):
+                return True
+        return False
+
+    def _user_stopped_injection(self) -> bool:
+        """Whether the player stopped Rose's mods on the reconnect screen.
+
+        The process manager keeps that answer until the next injection starts,
+        so nothing is injected into the game they chose to play without mods.
+        """
+        process_manager = getattr(getattr(self.injection_manager, "injector", None), "process_manager", None)
+        return getattr(process_manager, "stopped_by_user", None) is True
+
+    def _stop_stale_injection(self) -> None:
+        """Unload the mods of the game that crashed.
+
+        Its patcher is still serving that overlay and would hand the reconnected
+        game the very mods the player came here to replace. The new injection
+        then prepares the mods directory from scratch. It goes through the
+        manager: stop_overlay_process on the overlay manager raises
+        AttributeError, the stale host survives and two hosts end up hooking the
+        same game.
+        """
+        if not self.injection_manager:
+            return
+        try:
+            self.injection_manager.stop_overlay_process()
+        except Exception as e:
+            log.warning(f"[SkinMonitor] Could not stop the previous injection: {e}")
+
+    def _reinject_swiftplay_mods(self) -> bool:
+        """Rebuild the Swiftplay/ARAM overlay with the mods picked just now.
+
+        Those modes inject every champion in the lobby at once, through their
+        own path: the champ select entry point compares the skin's champion
+        against the last champion locked in the lobby, and in a Swiftplay lobby
+        those are different champions, so it refuses and the mod never lands.
+        """
+        state = self.shared_state
+        handler = getattr(state, "swiftplay_handler", None)
+        if handler is None or not getattr(state, "is_swiftplay_mode", False):
+            return False
+
+        self._stop_stale_injection()
+        log.info("[SkinMonitor] Re-injecting the Swiftplay/ARAM mods")
+
+        # The crashed game already served its overlay, and the new selection
+        # has to be extracted again before it can be built.
+        #
+        # run_swiftplay_overlay takes the overlay lock itself, so it is not
+        # taken here: holding it around the call would need a re-entrant lock,
+        # and threading.RLock has no locked(), which the phase handler uses.
+        # Taking it here also meant the extraction ran while another injection
+        # held it, so both were rebuilding the same mods directory at once.
+        handler._overlay_done = False
+        try:
+            handler.run_swiftplay_overlay(prepare=handler.trigger_swiftplay_injection)
+        except Exception as e:
+            log.error(f"[SkinMonitor] Swiftplay re-injection failed: {e}")
+        return True
+
+    def _inject_mods_on_reconnect(self) -> None:
+        """Inject the current selection now, through the countdown's own entry point.
+
+        The re-injection goes through InjectionTrigger.trigger_injection, the
+        same entry point the loadout ticker uses. An earlier version assembled
+        its own overlay here, and the two copies drifted apart one bug at a
+        time: the carrier was dropped, then the champion, then the saved mods.
+        There is now nothing to keep in step.
+        """
+        state = self.shared_state
+        # The reconnect screen does not hold the phase still: the client
+        # relaunches the game and reaches GameStart/InProgress within a second
+        # or two, while the player is still picking mods.
+        if getattr(state, "phase", None) not in RECONNECT_PHASES:
+            return
+        if self._reinject_swiftplay_mods():
+            return
+
+        try:
+            skin_id = int(getattr(state, "last_hovered_skin_id", None) or 0)
+        except (TypeError, ValueError):
+            skin_id = 0
+        if skin_id <= 0:
+            log.debug("[SkinMonitor] No skin to attach the mods to - nothing is injected")
+            return
+
+        # Reconnect is a phase nothing handles, so it falls into the phase
+        # handler's catch-all, which reset locked_champ_id and
+        # hovered_champ_id. The carrier archive is resolved from the champion,
+        # so it has to be put back.
+        if not getattr(state, "locked_champ_id", None):
+            state.locked_champ_id = skin_id // 1000
+
+        self._stop_stale_injection()
+
+        # Imported here so the LCU comes from the skin scraper: this class has
+        # none of its own.
+        from threads.handlers.injection_trigger import InjectionTrigger
+
+        log.info(f"[SkinMonitor] Re-injecting the current mods for skin {skin_id}")
+        trigger = InjectionTrigger(
+            self.skin_scraper.lcu if self.skin_scraper else None,
+            state,
+            self.injection_manager,
+            self.skin_scraper,
+        )
+        # Ticker 0 is never one the countdown mints, so this run can never be
+        # mistaken for the countdown itself.
+        trigger.trigger_injection(f"skin_{skin_id}", 0, "")
 
     def _handle_diagnostics_delete(self, payload: dict) -> None:
         """Delete the Troubleshooting entries the user dismissed, then resend the list."""
@@ -1551,6 +1745,9 @@ class MessageHandler:
                     success=True,
                     operation="deselect",
                 )
+                # The mod is out of the selection, so the game has to be given
+                # what is left of it (or nothing at all)
+                self._mods_ready_for_injection(deselected=True)
             elif selected_custom_mod and requested_mod_id and not selected_matches_requested_mod:
                 log.info("[SkinMonitor] Ignoring stale custom mod deselection for %s", requested_mod_id)
                 self._send_custom_mod_selection_result(
@@ -1742,6 +1939,10 @@ class MessageHandler:
                 operation="select",
                 selected_mod=selected_mod,
             )
+
+            # Answered first: the injection can take seconds, and the wheel waits
+            # for this before it draws the new selection
+            self._mods_ready_for_injection()
 
         except Exception as e:
             log.error(f"[SkinMonitor] Failed to handle mod selection: {e}")
@@ -2243,6 +2444,7 @@ class MessageHandler:
             
             log.info(f"[SkinMonitor] Map mod selected and extracted: {selected_mod.mod_name}")
             log.info(f"[SkinMonitor] Map mod ready for injection alongside skin")
+            self._mods_ready_for_injection()
 
         except Exception as e:
             log.error(f"[SkinMonitor] Failed to handle map selection: {e}")
@@ -2350,6 +2552,7 @@ class MessageHandler:
             
             log.info(f"[SkinMonitor] Font mod selected and extracted: {selected_mod.mod_name}")
             log.info(f"[SkinMonitor] Font mod ready for injection alongside skin")
+            self._mods_ready_for_injection()
 
         except Exception as e:
             log.error(f"[SkinMonitor] Failed to handle font selection: {e}")
@@ -2457,6 +2660,7 @@ class MessageHandler:
             
             log.info(f"[SkinMonitor] Announcer mod selected and extracted: {selected_mod.mod_name}")
             log.info(f"[SkinMonitor] Announcer mod ready for injection alongside skin")
+            self._mods_ready_for_injection()
 
         except Exception as e:
             log.error(f"[SkinMonitor] Failed to handle announcer selection: {e}")
@@ -2512,6 +2716,7 @@ class MessageHandler:
                         clear_historic_mod(cat)
             except Exception as e:
                 log.debug(f"[MOD_HISTORIC] Failed to update category historic after deselect: {e}")
+            self._mods_ready_for_injection(deselected=True)
             return
         
         try:
@@ -2612,6 +2817,8 @@ class MessageHandler:
                         clear_historic_mod(cat)
             except Exception as e:
                 log.debug(f"[MOD_HISTORIC] Failed to update category historic after select: {e}")
+
+            self._mods_ready_for_injection()
 
         except Exception as e:
             log.error(f"[SkinMonitor] Failed to handle other selection: {e}")
