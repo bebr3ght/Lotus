@@ -480,220 +480,44 @@ function installFindMatchObserver() {
   }
 }
 
-// ====== SWIFTPLAY SMART PANEL (FULL TEXT & STABLE HIDE) ======
-let isSmartPanelOpen = false; // По умолчанию скрыта!
+// ====== SWIFTPLAY LOCKS PANEL ======
+// Одно место решает, что видно, и оно же рисует.
+//
+// Раньше здесь стоял setInterval на 150 мс, который каждые 150 мс дёргал
+// getComputedStyle и размеры 16 элементов (принудительный layout всего окна),
+// а на swiftplay-state висело два обработчика сразу, из-за чего панель
+// перерисовывалась дважды на каждое обновление. Это и были и мигание, и лаги
+// клиента. Хуже, кнопка проверяла только "мы вообще в лобби" - и потому
+// появлялась в лобби ранкеда, где панели делать нечего.
+//
+// Теперь: события приходят по подписке, а layout читается только когда он
+// изменился — и только для того, чтобы понять, пора ли перерисовать.
 
-// При открытом меню панель и кнопка остаются на экране, но уходят на нижний
-// слой и перестают перехватывать клики (меню должно кликаться свободно).
-const SMART_PANEL_BASE_Z = 1000;
+const SMART_PANEL_PANEL_ID = "rose-swiftplay-smart-panel";
+const SMART_PANEL_BUTTON_ID = "rose-smart-panel-toggle";
+const SMART_PANEL_STYLE_ID = "rose-smart-panel-style";
+const SMART_PANEL_CONTAINER_ID = "rsp-skins-container";
+
+// Как часто проверяем "мы в лобби" и "открыто ли меню". Оба вопроса требуют
+// чтения layout, поэтому ответы кэшируются, а стили пишутся только при смене.
+const SMART_PANEL_AMBIENT_MS = 1000;
+// Не чаще, чем раз в секунду просим у Rose актуальное состояние
+const SMART_PANEL_REQUEST_MS = 1000;
 
 // Меню клиента живут в собственном слое: lol-uikit-dialog-frame, например,
 // имеет inline z-index: 0. Чтобы гарантированно оказаться ПОД меню, нужен
 // слой ниже нуля, поэтому берём минимальный z-index из открытых меню и
 // вычитаем единицу.
-function resolveBehindZIndex() {
-    let lowest = 0;
-    for (const el of getOpenOverlayElements()) {
-        const parsed = Number.parseInt(getComputedStyle(el).zIndex, 10);
-        const z = Number.isFinite(parsed) ? parsed : 0;
-        if (z < lowest) lowest = z;
-    }
-    return lowest - 1;
-}
+const SMART_PANEL_BASE_Z = 1000;
 
-function applySmartPanelLayer(el, interactiveWhenFree = true) {
-    if (!el) return;
-    const behind = isOverlayOpen();
-    el.style.zIndex = behind ? resolveBehindZIndex() : SMART_PANEL_BASE_Z;
-    el.style.pointerEvents = behind ? 'none' : (interactiveWhenFree ? 'auto' : 'none');
-    el.setAttribute('data-behind', behind ? 'true' : 'false');
-}
+let smartPanelOpen = false;   // переключатель пользователя
+let smartPanelState = null;   // последний swiftplay-state от Rose
+let smartPanelDrawn = "";     // подпись нарисованного содержимого
+let smartPanelInLobby = false;
+let smartPanelBehind = null;  // кэш "панель под открытым меню"
+let smartPanelRequestedAt = 0;
 
-function updateSwiftplaySmartPanel(data) {
-  let panel = document.getElementById('rose-swiftplay-smart-panel');
-  
-  const inLobby = isActuallyInLobby();
-  
-  if (!data.active || !inLobby || !data.skins || data.skins.length === 0) {
-      if (panel) panel.style.display = 'none';
-      return;
-  }
-
-  if (!panel) {
-      panel = document.createElement('div');
-      panel.id = 'rose-swiftplay-smart-panel';
-      panel.innerHTML = `
-          <div class="rsp-header">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#c8aa6e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
-              <span>Swiftplay Locks</span>
-          </div>
-          <div class="rsp-body" id="rsp-skins-container"></div>
-      `;
-      document.body.appendChild(panel);
-      
-      const style = document.createElement('style');
-      style.textContent = `
-          #rose-swiftplay-smart-panel {
-              position: fixed;
-              bottom: 100px;
-              left: 30px;
-              background: rgba(1, 10, 19, 0.98);
-              border: 1px solid #463714;
-              border-top: 2px solid #c8aa6e;
-              padding: 12px;
-              z-index: 1000;
-              display: flex;
-              flex-direction: column;
-              gap: 10px;
-              box-shadow: 0 8px 16px rgba(0,0,0,0.8);
-              min-width: 260px;
-              max-width: 450px;
-              pointer-events: none;
-          }
-          .rsp-header {
-              color: #c8aa6e;
-              font-size: 11px;
-              font-weight: bold;
-              text-transform: uppercase;
-              letter-spacing: 1px;
-              display: flex;
-              align-items: center; gap: 8px;
-              margin-bottom: 4px;
-              border-bottom: 1px solid rgba(200, 170, 110, 0.2);
-              padding-bottom: 6px;
-          }
-          .rsp-item { display: flex; align-items: flex-start; gap: 12px; margin: 4px 0; }
-          .rsp-icon { width: 34px; height: 34px; border-radius: 50%; border: 1px solid #785a28; flex-shrink: 0; }
-          .rsp-text { display: flex; flex-direction: column; min-width: 0; }
-          .rsp-champ { color: #a09b8c; font-size: 9px; text-transform: uppercase; font-weight: bold; }
-          .rsp-skin { 
-              color: #f0e6d2; 
-              font-size: 13px; 
-              font-weight: bold; 
-              line-height: 1.2;
-              white-space: normal; 
-              word-wrap: break-word; 
-              overflow: visible; 
-              text-overflow: clip; 
-          }
-      `;
-      document.head.appendChild(style);
-  }
-
-  const container = document.getElementById('rsp-skins-container');
-  container.innerHTML = data.skins.map(skin => {
-      const ownedBadge = skin.isOwned 
-          ? `<span style="color: #0acbe6; font-size: 10px; margin-left: 6px; text-shadow: 0 0 4px rgba(10, 203, 230, 0.5); vertical-align: baseline;">✔ OWNED</span>` 
-          : '';
-      const borderColor = skin.isOwned ? '#0acbe6' : '#785a28';
-      const opacity = skin.isOwned ? '0.85' : '1';
-      
-      return `
-          <div class="rsp-item" style="opacity: ${opacity};">
-              <img class="rsp-icon" src="/lol-game-data/assets/v1/champion-icons/${skin.championId}.png" style="border-color: ${borderColor};">
-              <div class="rsp-text">
-                  <span class="rsp-champ">${skin.championName}</span>
-                  <span class="rsp-skin">${skin.skinName}${ownedBadge}</span>
-              </div>
-          </div>
-      `;
-  }).join('');
-  
-  if (isSmartPanelOpen) {
-      panel.style.display = 'flex';
-  } else {
-      panel.style.display = 'none';
-  }
-  applySmartPanelLayer(panel, false);
-}
-
-// ====== КНОПКА ПЕРЕКЛЮЧАТЕЛЯ ======
-function ensurePanelToggleButton() {
-    const inLobby = isActuallyInLobby();
-    let btn = document.getElementById('rose-smart-panel-toggle');
-
-    // При выходе из лобби уничтожаем кнопку
-    if (!inLobby) {
-        if (btn) btn.remove();
-        return;
-    }
-
-    if (!btn) {
-        btn = document.createElement('div');
-        btn.id = 'rose-smart-panel-toggle';
-        btn.title = 'Swiftplay Locks';
-        btn.innerHTML = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"></line><line x1="8" y1="12" x2="21" y2="12"></line><line x1="8" y1="18" x2="21" y2="18"></line><line x1="3" y1="6" x2="3.01" y2="6"></line><line x1="3" y1="12" x2="3.01" y2="12"></line><line x1="3" y1="18" x2="3.01" y2="18"></line></svg>`;
-        
-        btn.style.position = 'fixed';
-        btn.style.width = '22px';
-        btn.style.height = '22px';
-        btn.style.background = 'transparent';
-        btn.style.border = 'none';
-        btn.style.outline = 'none';
-        btn.style.boxShadow = 'none';
-        btn.style.display = 'none';
-        btn.style.alignItems = 'center';
-        btn.style.justifyContent = 'center';
-        btn.style.cursor = 'pointer';
-        btn.style.zIndex = '1000';
-        btn.style.transition = 'color 0.2s';
-        
-        btn.addEventListener('mouseenter', () => {
-            btn.style.color = '#f0e6d2';
-        });
-        btn.addEventListener('mouseleave', () => {
-            btn.style.color = isSmartPanelOpen ? '#0acbe6' : '#c8aa6e';
-        });
-        
-        btn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            isSmartPanelOpen = !isSmartPanelOpen;
-            
-            // Только смена цвета иконки, без цветного фона
-            btn.style.color = isSmartPanelOpen ? '#0acbe6' : '#c8aa6e';
-            
-            const panel = document.getElementById('rose-swiftplay-smart-panel');
-            if (panel) {
-                panel.style.display = isSmartPanelOpen ? 'flex' : 'none';
-                applySmartPanelLayer(panel, false);
-            }
-            applySmartPanelLayer(btn, true);
-            if (isSmartPanelOpen && window.__roseBridge && window.__roseBridge.ready) {
-                window.__roseBridge.send({type: "request-swiftplay-state"});
-            }
-        });
-        
-        document.body.appendChild(btn);
-    }
-
-    // Кнопка не прячется при открытом меню, а уходит на нижний слой
-    // Синхронизация состояния (решает проблему "кнопка OFF, панель ON" при переоткрытии лобби)
-    btn.style.color = isSmartPanelOpen ? '#0acbe6' : '#c8aa6e';
-    btn.style.background = 'transparent';
-
-    // Позиционируем справа от lol-uikit-info-icon
-    const infoIcon = document.querySelector('.lobby-header lol-uikit-info-icon, .parties-game-info-panel lol-uikit-info-icon, lol-uikit-info-icon');
-    if (infoIcon) {
-        const rect = infoIcon.getBoundingClientRect();
-        if (rect.right > 0 && rect.top > 0) {
-            btn.style.left = `${Math.round(rect.right + 8)}px`;
-            btn.style.top = `${Math.round(rect.top + (rect.height - 22) / 2)}px`;
-        }
-    }
-    btn.style.display = 'flex';
-    applySmartPanelLayer(btn, true);
-}
-
-// ====== КОНТРОЛЛЕР ВИДИМОСТИ ======
-function isActuallyInLobby() {
-    const lobbyBanners = document.querySelector('.v2-banner-component.local-player');
-    return !!(lobbyBanners && lobbyBanners.offsetParent !== null);
-}
-
-let isPanelRequested = false;
-let panelRequestTimer = null;
-
-const OVERLAY_SELECTORS = [
+const SMART_PANEL_OVERLAY_SELECTORS = [
     'lol-perks-v2-editor',
     'lol-perks-v2-main-view',
     '.perks-editor-modal',
@@ -715,11 +539,16 @@ const OVERLAY_SELECTORS = [
     '#champion-mods-manage-dialog'
 ];
 
+function isActuallyInLobby() {
+    const lobbyBanners = document.querySelector('.v2-banner-component.local-player');
+    return !!(lobbyBanners && lobbyBanners.offsetParent !== null);
+}
+
 // Видимые (не пустые, не скрытые) элементы-меню — их реальные слои нужны,
 // чтобы встать под самый нижний из них.
 function getOpenOverlayElements() {
     const open = [];
-    for (const selector of OVERLAY_SELECTORS) {
+    for (const selector of SMART_PANEL_OVERLAY_SELECTORS) {
         const el = document.querySelector(selector);
         if (el && (el.offsetWidth > 0 || el.offsetHeight > 0)) open.push(el);
     }
@@ -727,10 +556,7 @@ function getOpenOverlayElements() {
 }
 
 function isOverlayOpen() {
-    if (typeof isGlobalMode !== 'undefined' && isGlobalMode) return false;
-
-    const open = getOpenOverlayElements();
-    if (open.length) return true;
+    if (getOpenOverlayElements().length) return true;
 
     const flyouts = document.querySelectorAll('lol-uikit-flyout-frame');
     for (const f of flyouts) {
@@ -742,62 +568,264 @@ function isOverlayOpen() {
     return false;
 }
 
-setInterval(() => {
-    const panel = document.getElementById('rose-swiftplay-smart-panel');
-    const btn = document.getElementById('rose-smart-panel-toggle');
-    const inLobby = isActuallyInLobby();
+function resolveBehindZIndex() {
+    let lowest = 0;
+    for (const el of getOpenOverlayElements()) {
+        const parsed = Number.parseInt(getComputedStyle(el).zIndex, 10);
+        const z = Number.isFinite(parsed) ? parsed : 0;
+        if (z < lowest) lowest = z;
+    }
+    return lowest - 1;
+}
 
-    if (!inLobby) {
-        if (panel) panel.remove();
-        if (btn) btn.remove();
-        isPanelRequested = false;
-        if (panelRequestTimer) {
-            clearTimeout(panelRequestTimer);
-            panelRequestTimer = null;
+// Панель и кнопка не исчезают при открытом меню, а уходят под него и
+// перестают перехватывать клики (меню должно кликаться свободно).
+function applySmartPanelLayer(el, interactive, behind) {
+    if (!el) return;
+    el.style.zIndex = behind ? resolveBehindZIndex() : SMART_PANEL_BASE_Z;
+    el.style.pointerEvents = behind ? 'none' : (interactive ? 'auto' : 'none');
+}
+
+function escapeSmartPanelText(value) {
+    return String(value == null ? '' : value)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+}
+
+function ensureSmartPanelStyle() {
+    // Один раз на страницу: раньше <style> добавлялся при каждом создании панели,
+    // то есть один и тот же блок правил накапливался в <head> за весь сеанс
+    if (document.getElementById(SMART_PANEL_STYLE_ID)) return;
+    const style = document.createElement('style');
+    style.id = SMART_PANEL_STYLE_ID;
+    style.textContent = `
+        #${SMART_PANEL_PANEL_ID} {
+            position: fixed;
+            bottom: 100px;
+            left: 30px;
+            background: rgba(1, 10, 19, 0.98);
+            border: 1px solid #463714;
+            border-top: 2px solid #c8aa6e;
+            padding: 12px;
+            z-index: ${SMART_PANEL_BASE_Z};
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            box-shadow: 0 8px 16px rgba(0,0,0,0.8);
+            min-width: 260px;
+            max-width: 450px;
+            pointer-events: none;
         }
+        #${SMART_PANEL_PANEL_ID} .rsp-header {
+            color: #c8aa6e;
+            font-size: 11px;
+            font-weight: bold;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            display: flex;
+            align-items: center; gap: 8px;
+            margin-bottom: 4px;
+            border-bottom: 1px solid rgba(200, 170, 110, 0.2);
+            padding-bottom: 6px;
+        }
+        #${SMART_PANEL_PANEL_ID} .rsp-item { display: flex; align-items: flex-start; gap: 12px; margin: 4px 0; }
+        #${SMART_PANEL_PANEL_ID} .rsp-icon { width: 34px; height: 34px; border-radius: 50%; border: 1px solid #785a28; flex-shrink: 0; }
+        #${SMART_PANEL_PANEL_ID} .rsp-text { display: flex; flex-direction: column; min-width: 0; }
+        #${SMART_PANEL_PANEL_ID} .rsp-champ { color: #a09b8c; font-size: 9px; text-transform: uppercase; font-weight: bold; }
+        #${SMART_PANEL_PANEL_ID} .rsp-skin {
+            color: #f0e6d2;
+            font-size: 13px;
+            font-weight: bold;
+            line-height: 1.2;
+            white-space: normal;
+            word-wrap: break-word;
+            overflow: visible;
+            text-overflow: clip;
+        }
+        #${SMART_PANEL_PANEL_ID} .rsp-empty { color: #a09b8c; font-size: 12px; }
+    `;
+    document.head.appendChild(style);
+}
+
+function ensureSmartPanel() {
+    let panel = document.getElementById(SMART_PANEL_PANEL_ID);
+    if (panel) return panel;
+    ensureSmartPanelStyle();
+    panel = document.createElement('div');
+    panel.id = SMART_PANEL_PANEL_ID;
+    panel.innerHTML = `
+        <div class="rsp-header">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#c8aa6e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+            <span>Swiftplay Locks</span>
+        </div>
+        <div class="rsp-body" id="${SMART_PANEL_CONTAINER_ID}"></div>
+    `;
+    document.body.appendChild(panel);
+    smartPanelDrawn = "";
+    return panel;
+}
+
+function ensureSmartPanelToggle() {
+    let btn = document.getElementById(SMART_PANEL_BUTTON_ID);
+    if (btn) return btn;
+    ensureSmartPanelStyle();
+    btn = document.createElement('div');
+    btn.id = SMART_PANEL_BUTTON_ID;
+    btn.title = 'Swiftplay Locks';
+    btn.innerHTML = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"></line><line x1="8" y1="12" x2="21" y2="12"></line><line x1="8" y1="18" x2="21" y2="18"></line><line x1="3" y1="6" x2="3.01" y2="6"></line><line x1="3" y1="12" x2="3.01" y2="12"></line><line x1="3" y1="18" x2="3.01" y2="18"></line></svg>`;
+
+    btn.style.position = 'fixed';
+    btn.style.width = '22px';
+    btn.style.height = '22px';
+    btn.style.background = 'transparent';
+    btn.style.border = 'none';
+    btn.style.outline = 'none';
+    btn.style.boxShadow = 'none';
+    btn.style.display = 'flex';
+    btn.style.alignItems = 'center';
+    btn.style.justifyContent = 'center';
+    btn.style.cursor = 'pointer';
+    btn.style.zIndex = String(SMART_PANEL_BASE_Z);
+    btn.style.transition = 'color 0.2s';
+
+    btn.addEventListener('mouseenter', () => { btn.style.color = '#f0e6d2'; });
+    btn.addEventListener('mouseleave', () => { btn.style.color = smartPanelOpen ? '#0acbe6' : '#c8aa6e'; });
+    btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        smartPanelOpen = !smartPanelOpen;
+        if (smartPanelOpen) requestSmartPanelState();
+        applySmartPanel();
+    });
+
+    document.body.appendChild(btn);
+    return btn;
+}
+
+function positionSmartPanelToggle(btn) {
+    // Справа от lol-uikit-info-icon
+    const infoIcon = document.querySelector('.lobby-header lol-uikit-info-icon, .parties-game-info-panel lol-uikit-info-icon, lol-uikit-info-icon');
+    if (!infoIcon) return;
+    const rect = infoIcon.getBoundingClientRect();
+    if (rect.right > 0 && rect.top > 0) {
+        btn.style.left = `${Math.round(rect.right + 8)}px`;
+        btn.style.top = `${Math.round(rect.top + (rect.height - 22) / 2)}px`;
+    }
+}
+
+function removeSmartPanel() {
+    const panel = document.getElementById(SMART_PANEL_PANEL_ID);
+    if (panel) panel.remove();
+    const btn = document.getElementById(SMART_PANEL_BUTTON_ID);
+    if (btn) btn.remove();
+    smartPanelDrawn = "";
+    smartPanelBehind = null;
+}
+
+// Содержимое перерисовывается только когда оно действительно изменилось:
+// пересборка innerHTML на каждое событие и была причиной мигания.
+function drawSmartPanel(panel, skins) {
+    const signature = skins
+        .map(s => `${s.championId}:${s.skinId}:${s.skinName}:${s.isOwned ? 1 : 0}`)
+        .join('|');
+    if (signature === smartPanelDrawn) return;
+    smartPanelDrawn = signature;
+
+    const container = panel.querySelector(`#${SMART_PANEL_CONTAINER_ID}`);
+    if (!container) return;
+    if (!skins.length) {
+        container.innerHTML = '<div class="rsp-empty">No champions picked yet</div>';
+        return;
+    }
+    container.innerHTML = skins.map(skin => {
+        const ownedBadge = skin.isOwned
+            ? `<span style="color: #0acbe6; font-size: 10px; margin-left: 6px; text-shadow: 0 0 4px rgba(10, 203, 230, 0.5); vertical-align: baseline;">&#10004; OWNED</span>`
+            : '';
+        const borderColor = skin.isOwned ? '#0acbe6' : '#785a28';
+        const opacity = skin.isOwned ? '0.85' : '1';
+
+        return `
+            <div class="rsp-item" style="opacity: ${opacity};">
+                <img class="rsp-icon" src="/lol-game-data/assets/v1/champion-icons/${skin.championId}.png" style="border-color: ${borderColor};">
+                <div class="rsp-text">
+                    <span class="rsp-champ">${escapeSmartPanelText(skin.championName)}</span>
+                    <span class="rsp-skin">${escapeSmartPanelText(skin.skinName)}${ownedBadge}</span>
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+// Единственное место, где решается что видно
+function applySmartPanel() {
+    const state = smartPanelState;
+    // Панель - только для лобби Swiftplay. Флаг active приходит от Rose, но он
+    // обновляется не мгновенно, поэтому в нём не полагаемся: за лобби раньше
+    // цеплялся и рейтинг, где такой панели быть не должно вообще.
+    if (!smartPanelInLobby || !state || !state.active) {
+        removeSmartPanel();
         return;
     }
 
-    ensurePanelToggleButton();
+    const skins = Array.isArray(state.skins) ? state.skins : [];
+    const btn = ensureSmartPanelToggle();
+    const panel = ensureSmartPanel();
+    btn.style.color = smartPanelOpen ? '#0acbe6' : '#c8aa6e';
+    positionSmartPanelToggle(btn);
+    drawSmartPanel(panel, skins);
+    panel.style.display = smartPanelOpen ? 'flex' : 'none';
 
-    const shouldShowPanel = isSmartPanelOpen;
+    // Слой читаем один раз на обновление, а не на каждый элемент
+    const behind = isOverlayOpen();
+    smartPanelBehind = behind;
+    applySmartPanelLayer(btn, true, behind);
+    applySmartPanelLayer(panel, false, behind);
+}
 
-    if (shouldShowPanel) {
-        if ((!panel || panel.style.display === 'none') && !isPanelRequested) {
-            isPanelRequested = true;
-            if (window.__roseBridge && window.__roseBridge.ready) {
-                window.__roseBridge.send({type: "request-swiftplay-state"});
-            }
-            panelRequestTimer = setTimeout(() => { isPanelRequested = false; }, 1000);
-        } else if (panel && panel.style.display === 'none') {
-            panel.style.display = 'flex';
-        }
-    } else {
-        if (panel && panel.style.display !== 'none') {
-            panel.style.display = 'none';
-        }
-    }
-
-    // Открытое меню не прячет панель — только опускает её под меню
-    if (panel) applySmartPanelLayer(panel, false);
-}, 150);
-
-function setupPhaseSubscription() {
-    if (window.__roseBridge && window.__roseBridge.subscribe) {
-        window.__roseBridge.subscribe("phase-change", (data) => {
-            if (data.phase !== "Lobby") {
-                const panel = document.getElementById('rose-swiftplay-smart-panel');
-                const btn = document.getElementById('rose-smart-panel-toggle');
-                if (panel) panel.remove();
-                if (btn) btn.remove();
-            }
-        });
-        window.__roseBridge.subscribe("swiftplay-state", updateSwiftplaySmartPanel);
-    } else {
-        setTimeout(setupPhaseSubscription, 500);
+function requestSmartPanelState() {
+    const now = Date.now();
+    if (now - smartPanelRequestedAt < SMART_PANEL_REQUEST_MS) return;
+    smartPanelRequestedAt = now;
+    if (window.__roseBridge && window.__roseBridge.ready) {
+        window.__roseBridge.send({ type: "request-swiftplay-state" });
     }
 }
-setupPhaseSubscription();
+
+function updateSmartPanelState(data) {
+    smartPanelState = data || null;
+    applySmartPanel();
+}
+
+function handleSmartPanelPhaseChange(data) {
+    const phase = data && data.phase;
+    smartPanelInLobby = phase === "Lobby";
+    if (smartPanelInLobby) {
+        requestSmartPanelState();
+    } else {
+        removeSmartPanel();
+    }
+    applySmartPanel();
+}
+
+// Раз в секунду: поправка на то, что события не приходят, когда клиент просто
+// перерисовал лобби. Ничего не пишется, если ничего не изменилось.
+setInterval(() => {
+    const inLobby = isActuallyInLobby();
+    if (inLobby !== smartPanelInLobby) {
+        smartPanelInLobby = inLobby;
+        if (inLobby) {
+            requestSmartPanelState();
+        } else {
+            removeSmartPanel();
+        }
+        applySmartPanel();
+        return;
+    }
+    if (!inLobby) return;
+    // Меню могло открыться или закрыться - слой надо поправить, но только если он
+    // изменился. Пересчёт layout без нужды и был тем самым лагом.
+    if (isOverlayOpen() !== smartPanelBehind) applySmartPanel();
+}, SMART_PANEL_AMBIENT_MS);
 
 async function start() {
   if (!document.body) {
@@ -822,18 +850,11 @@ async function start() {
       get ready() { return bridgeReady; },
     });
     
-    subscribe("swiftplay-state", updateSwiftplaySmartPanel);
-    subscribe("phase-change", (data) => { 
-      if (bridgeSocket && bridgeReady) {
-          sendBridgePayload({type: "request-swiftplay-state"});
-      }
-      if (data.phase !== "Lobby") {
-          const panel = document.getElementById('rose-swiftplay-smart-panel');
-          const btn = document.getElementById('rose-smart-panel-toggle');
-          if (panel) panel.remove();
-          if (btn) btn.remove();
-      }
-    });
+    // Подписки панели ровно в одном месте. Раньше их было два: здесь и в
+    // setupPhaseSubscription(), вызванной сразу при загрузке файла, - и каждое
+    // обновление перерисовывало панель дважды.
+    subscribe("swiftplay-state", updateSmartPanelState);
+    subscribe("phase-change", handleSmartPanelPhaseChange);
   }
 
   installFindMatchObserver();

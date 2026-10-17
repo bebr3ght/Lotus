@@ -417,7 +417,17 @@ class Broadcaster:
         import json
         if not self.websocket_server.loop or not self.websocket_server.connections:
             return
-            
+
+        if not self._is_swiftplay_lobby():
+            # Ни лобби, ни панели: не ходим в LCU за слотами, их всё равно
+            # никто не увидит
+            self._send_message(json.dumps({
+                "type": "swiftplay-state",
+                "active": False,
+                "skins": [],
+            }))
+            return
+
         tracking = getattr(self.shared_state, 'swiftplay_skin_tracking', {})
         owned_skins = getattr(self.shared_state, 'owned_skin_ids', set())
         skins_data =[]
@@ -509,8 +519,38 @@ class Broadcaster:
             
         payload = {
             "type": "swiftplay-state",
-            "active": getattr(self.shared_state, 'is_swiftplay_mode', False),
+            "active": True,
             "skins": skins_data
         }
         
         self._send_message(json.dumps(payload))
+
+    def _is_swiftplay_lobby(self) -> bool:
+        """Whether this really is a Swiftplay lobby.
+
+        is_swiftplay_mode is only recomputed when the lobby detector or the
+        champ select entry point runs, so for a moment after leaving Swiftplay
+        it still says True. The panel then showed up in a ranked lobby - and
+        the skins it showed were the stale Swiftplay ones. The live game mode
+        is what cannot be stale, so a mode that is known and is not Swiftplay
+        wins over the flag.
+
+        A mode we have not identified yet (None, "UNKNOWN") is left to the flag:
+        failing to recognise a Swiftplay lobby for a moment only costs the panel
+        a moment, while the reverse is the bug this guards.
+        """
+        from lcu.core.lockfile import SWIFTPLAY_MODES, SWIFTPLAY_QUEUE_IDS
+
+        if not getattr(self.shared_state, 'is_swiftplay_mode', False):
+            return False
+
+        game_mode = getattr(self.shared_state, 'current_game_mode', None)
+        if isinstance(game_mode, str) and game_mode.upper() not in ("UNKNOWN", "") \
+                and game_mode.upper() not in SWIFTPLAY_MODES:
+            return False
+
+        queue_id = getattr(self.shared_state, 'current_queue_id', None)
+        if queue_id is not None and queue_id not in SWIFTPLAY_QUEUE_IDS:
+            return False
+
+        return True
