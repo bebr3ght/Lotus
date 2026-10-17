@@ -128,6 +128,8 @@ def is_registered_for_autostart():
             ['schtasks', '/Query', '/TN', 'Rose'],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             creationflags=subprocess.CREATE_NO_WINDOW,
             timeout=SCHTASKS_TIMEOUT_S,
         )
@@ -171,12 +173,13 @@ def register_autostart():
             '/RL', 'HIGHEST',  # Run with highest privileges (admin)
             '/F'  # Force create (overwrite if exists)
         ]
-        
+
         result = subprocess.run(
             cmd,
             capture_output=True,
             text=True,
-            errors='replace',
+            encoding="utf-8",
+            errors="replace",
             creationflags=subprocess.CREATE_NO_WINDOW,
             timeout=SCHTASKS_TIMEOUT_S,
         )
@@ -212,12 +215,13 @@ def unregister_autostart():
             '/TN', 'Rose',  # Task name
             '/F'  # Force delete without confirmation
         ]
-        
+
         result = subprocess.run(
             cmd,
             capture_output=True,
             text=True,
-            errors='replace',
+            encoding="utf-8",
+            errors="replace",
             creationflags=subprocess.CREATE_NO_WINDOW,
             timeout=SCHTASKS_TIMEOUT_S,
         )

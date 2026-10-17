@@ -22,6 +22,7 @@ from urllib.parse import quote
 
 from config import get_config_float, get_config_option, set_config_option
 from injection.mods.storage import ModStorageService
+from injection.overlay.overlay_manager import ltk_failure_cause
 from utils.core.paths import get_user_data_dir, get_asset_path, get_injection_dir, open_folder_in_explorer
 from utils.core.issue_reporter import clear_issues, read_issues_tail, remove_issues
 from utils.core.junction import is_junction, safe_remove_entry, link_or_extract
@@ -252,7 +253,7 @@ class MessageHandler:
 
     def _route(self, payload_type: Optional[str], payload: dict) -> None:
         # Route to appropriate handler
-        if payload_type == "chroma-log":
+        if payload_type in {"chroma-log", "plugin-log"}:
             self._handle_chroma_log(payload)
         elif payload_type == "request-local-preview":
             self._handle_request_local_preview(payload)
@@ -361,11 +362,22 @@ class MessageHandler:
             self._handle_skin_detection(payload)
     
     def _handle_chroma_log(self, payload: dict) -> None:
-        """Handle chroma log message"""
-        source = payload.get("source", "ChromaWheel")
+        """Forward structured plugin logs at their requested severity."""
+        source = str(payload.get("source") or "UnknownPlugin")[:64]
         event = payload.get("event") or payload.get("message") or "unknown"
-        details = payload.get("data") or payload
-        log.info("[%s] %s | %s", source, event, details)
+        level = str(payload.get("level") or "info").lower()
+        logger = {
+            "debug": log.debug,
+            "warn": log.warning,
+            "warning": log.warning,
+            "error": log.error,
+            "critical": log.critical,
+        }.get(level, log.info)
+        details = payload.get("data")
+        if details is None:
+            logger("[PLUGIN:%s] %s", source, event)
+        else:
+            logger("[PLUGIN:%s] %s | %s", source, event, details)
     
     def _handle_request_local_preview(self, payload: dict) -> None:
         """Handle request for local preview image"""
@@ -1093,10 +1105,14 @@ class MessageHandler:
                         return {'code': 'LTK_PATCHER_EOL', 'text': 'LTK patcher outdated -> update'}
                     if 'missing' in ml:
                         return {'code': 'LTK_PATCHER_MISSING', 'text': 'LTK patcher missing -> add files'}
+                    detail = msg.split('LTK patcher error:', 1)[-1].strip()
                     return {
                         'code': 'LTK_PATCHER_FAILED',
                         'text': 'LTK patcher error',
-                        'detail': msg.split('LTK patcher error:', 1)[-1].strip(),
+                        'detail': detail,
+                        # Picks the panel's hint: most failures have nothing to
+                        # do with outdated patcher files
+                        'cause': ltk_failure_cause(detail),
                     }
 
                 # Fallback: keep it short

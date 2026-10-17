@@ -2,8 +2,8 @@
 ; This creates a proper Windows installer that registers the app
 
 #define MyAppName "Lotus"
-#define MyAppVersion "1.4.8"
-#define MyAppVersionInfo "1.4.8.0"
+#define MyAppVersion "1.4.9"
+#define MyAppVersionInfo "1.4.9.0"
 #define MyAppPublisher "Rose Team + Lotus Edited"
 #define MyAppURL "https://github.com/bebr3ght/Lotus"
 #define MyAppExeName "Lotus.exe"
