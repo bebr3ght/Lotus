@@ -132,7 +132,7 @@ def organize_output():
     """Organize output files and verify"""
     print_step(4, 4, "Organizing Output & Verification")
     
-    dist_folder = ROOT / "dist/Rose"
+    dist_folder = product.dist_dir()
     
     if not dist_folder.exists():
         print("[ERROR] Build output not found!")

@@ -73,6 +73,23 @@ def _iss_define(name: str) -> str | None:
     return match.group(1) if match else None
 
 
+def _normalise_path(value: str) -> str:
+    """Case- and separator-insensitive form, so comparisons match Windows."""
+    return value.replace("\\", "/").rstrip("/").lower()
+
+
+def _iss_source_folders() -> list[str]:
+    """The folders installer.iss packs from [Files], relative to the repo root."""
+    source = INSTALLER_ISS.read_text(encoding="utf-8")
+    folders = []
+    for entry in re.findall(r'^\s*Source:\s*"([^"]+)"', source, re.MULTILINE | re.IGNORECASE):
+        # Drop the trailing wildcard: dist\Lotus\* names the dist\Lotus folder
+        head = re.split(r"[\\/]", entry.rstrip("*"))[0]
+        if head.lower() == "dist":
+            folders.append(entry)
+    return folders
+
+
 def check_identity() -> None:
     """Fail loudly when config.py, installer.iss and the spec disagree.
 
@@ -97,6 +114,19 @@ def check_identity() -> None:
             f"Rose.spec builds {spec_name.group(1) if spec_name else 'nothing'!r}, "
             f"config.py says {app_name()!r}"
         )
+
+    # The [Files] source is spelled out, not derived from a #define, so renaming
+    # the app can leave it pointing at a dist folder that is never produced --
+    # which only surfaces as ISCC's "No files found matching".
+    expected_dist = _normalise_path(f"dist/{app_name()}")
+    for entry in _iss_source_folders():
+        # Compare the folder, not the wildcard, but keep the entry for the message
+        folder = _normalise_path(re.sub(r"[\\/]\*$", "", entry))
+        if folder != expected_dist:
+            problems.append(
+                f"installer.iss [Files] reads {entry!r} but config.py builds into "
+                f"dist\\{app_name()}"
+            )
 
     if problems:
         raise SystemExit(
