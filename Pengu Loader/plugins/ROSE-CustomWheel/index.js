@@ -451,60 +451,9 @@
   }
 
   const CSS_RULES = `
-    .${BUTTON_CLASS} {
-      pointer-events: auto;
-      -webkit-user-select: none;
-      cursor: pointer;
-      box-sizing: border-box;
-      height: 20px;
-      width: 20px;
-      position: absolute !important;
-      display: block !important;
-      z-index: 1;
-      margin: 0;
-      padding: 0;
-    }
-
     /* Button and Badge Styles */
-    lol-uikit-flat-button.rose-custom-wheel-button,
-    .rose-custom-wheel-button {
-      display: inline-block !important;
-      white-space: nowrap !important;
-      /* Keep badge stacking self-contained (prevents weird overlap with other UI) */
+    .${BUTTON_CLASS} {
       isolation: isolate !important;
-    }
-
-    .rose-custom-wheel-button .count-badge.social-count-badge,
-    lol-uikit-flat-button.rose-custom-wheel-button .count-badge.social-count-badge,
-    .rose-custom-wheel-button > .count-badge.social-count-badge,
-    lol-uikit-flat-button.rose-custom-wheel-button > .count-badge.social-count-badge {
-      position: absolute !important;
-      /* Positioning: edit these via CSS variables on the element (DevTools-friendly) */
-      top: var(--rose-badge-top, -4px) !important;
-      right: var(--rose-badge-right, -17px) !important;
-      left: var(--rose-badge-left, auto) !important;
-      min-width: 18px !important;
-      height: 18px !important;
-      padding: 0 5px !important;
-      background: #c89b3c !important;
-      color: #000 !important;
-      border-radius: 3px !important;
-      font-size: 11px !important;
-      font-weight: 600 !important;
-      display: flex !important;
-      align-items: center !important;
-      justify-content: center !important;
-      line-height: 1 !important;
-      box-sizing: border-box !important;
-      pointer-events: none !important;
-      /* Above button contents, but not globally "high" */
-      z-index: 1 !important;
-      transform: translate(
-        var(--rose-badge-translate-x, 60%),
-        var(--rose-badge-translate-y, -60%)
-      ) !important;
-      margin: 0 !important;
-      bottom: auto !important;
     }
 
     .${BUTTON_CLASS}[data-hidden],
@@ -513,38 +462,6 @@
       cursor: default !important;
       visibility: hidden !important;
     }
-
-    .${BUTTON_CLASS} .button-image {
-      pointer-events: auto;
-      -webkit-user-select: none;
-      cursor: pointer;
-      display: block;
-      width: 100%;
-      height: 100%;
-      background-size: contain;
-      background-position: center;
-      background-repeat: no-repeat;
-      transition: opacity 0.1s ease;
-      position: absolute;
-      top: 0;
-      left: 0;
-      min-width: 20px;
-      min-height: 20px;
-      background-color: transparent !important;
-      border: none !important;
-    }
-    
-    .${BUTTON_CLASS} .button-image.default {
-      background-color: transparent;
-      border: none;
-      border-radius: 2px;
-    }
-
-    .${BUTTON_CLASS} .button-image.default { opacity: 1; }
-    .${BUTTON_CLASS} .button-image.pressed { opacity: 0; background-color: transparent !important; border: none !important; }
-    .${BUTTON_CLASS}.pressed .button-image.default { opacity: 0; }
-    .${BUTTON_CLASS}.pressed .button-image.pressed { opacity: 1; }
-
 
     /* Main Panel Container */
     .${PANEL_CLASS} {
@@ -901,6 +818,80 @@
       background: rgba(200, 170, 110, 0.1);
       box-shadow: 0 0 8px rgba(200, 170, 110, 0.2);
     }
+
+    /* The button, as the wheel has always looked in this build */
+    .${BUTTON_CLASS} {
+      position: absolute !important;
+      display: flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      white-space: nowrap !important;
+      width: auto !important;
+      min-width: 130px !important;
+      height: 30px !important;
+      font-size: 12px !important;
+      font-weight: 700 !important;
+      letter-spacing: 0.05em !important;
+      text-transform: uppercase !important;
+      background: #1e2328 !important;
+      color: #cdbe91 !important;
+      border: 1px solid #c8aa6e !important;
+      transition: background 0.2s, color 0.2s !important;
+      cursor: pointer !important;
+      pointer-events: auto !important;
+      font-family: "Beaufort for LOL", serif !important;
+      box-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
+      box-sizing: border-box;
+      padding: 0 12px !important;
+      z-index: 50 !important;
+    }
+    .${BUTTON_CLASS}:hover {
+      background: #463714 !important;
+      color: #f0e6d2 !important;
+    }
+    .${BUTTON_CLASS}:active {
+      background: #1e2328 !important;
+    }
+    .${BUTTON_CLASS} .count-badge {
+      position: absolute !important;
+      top: -6px !important;
+      right: -6px !important;
+      left: auto !important;
+      bottom: auto !important;
+      transform: none !important;
+      min-width: 18px !important;
+      height: 18px !important;
+      padding: 0 4px !important;
+      background: #c89b3c !important;
+      color: #010a13 !important;
+      border: 1px solid #f0e6d2 !important;
+      border-radius: 9px !important;
+      font-size: 11px !important;
+      font-weight: bold !important;
+      display: none;
+      align-items: center !important;
+      justify-content: center !important;
+      line-height: 1 !important;
+      box-sizing: border-box !important;
+      box-shadow: 0 2px 5px rgba(0, 0, 0, 0.7) !important;
+      z-index: 51 !important;
+      pointer-events: none !important;
+    }
+
+    .${PANEL_CLASS} .rose-wheel-close-button {
+      background: transparent;
+      border: none;
+      color: #a09b8c;
+      font-size: 24px;
+      cursor: pointer;
+      line-height: 0.5;
+      padding: 0 2px;
+      flex-shrink: 0;
+      transition: color 0.2s;
+    }
+    .${PANEL_CLASS} .rose-wheel-close-button:hover {
+      color: #f0e6d2;
+    }
   `;
 
   function injectCSS() {
@@ -920,31 +911,16 @@
       return button;
     }
 
-    try {
-      button = document.createElement("lol-uikit-flat-button");
-    } catch (e) {
-      button = document.createElement("div");
-    }
-    button.className = "lol-uikit-flat-button idle rose-custom-wheel-button";
+    button = document.createElement("button");
+    button.className = BUTTON_CLASS;
     button.textContent = tr("Custom mods");
-
-    // Ensure button has relative positioning for badge (only if not already positioned)
-    const computedStyle = window.getComputedStyle(button);
-    if (computedStyle.position === "static" || computedStyle.position === "") {
-      button.style.position = "relative";
-    }
+    button.style.position = "relative";
 
     // Create count badge
     const countBadge = document.createElement("div");
-    countBadge.className = "count-badge social-count-badge";
+    countBadge.className = "count-badge";
     countBadge.textContent = "0";
     countBadge.style.display = "none"; // Hidden by default
-    // Defaults (can be overridden live in DevTools on the element via CSS variables)
-    countBadge.style.setProperty("--rose-badge-top", "-4px");
-    countBadge.style.setProperty("--rose-badge-right", "-17px");
-    countBadge.style.setProperty("--rose-badge-left", "auto");
-    countBadge.style.setProperty("--rose-badge-translate-x", "60%");
-    countBadge.style.setProperty("--rose-badge-translate-y", "-60%");
     button.appendChild(countBadge);
     button._countBadge = countBadge; // Store reference
 
@@ -1212,7 +1188,18 @@
     backBtn.textContent = tr("Back");
     backBtn.style.display = "none";
 
+    const closeBtn = document.createElement("button");
+    closeBtn.className = "rose-wheel-close-button";
+    closeBtn.innerHTML = "&times;";
+    closeBtn.title = tr("Close");
+    closeBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      closePanel();
+    });
+
     headerButtons.appendChild(backBtn);
+    headerButtons.appendChild(closeBtn);
 
     rightHeader.appendChild(rightTitle);
     rightHeader.appendChild(headerButtons);
@@ -1957,10 +1944,88 @@
     refreshButtonBadgeFromSelections();
   }
 
-  function findButtonContainer() {
-    // Find the bottom-right-buttons container to position the button above it
-    return document.querySelector(".bottom-right-buttons");
+  // Menus (runes/perks editor, settings, other Rose panels and dialogs) live on
+  // a higher layer. The Custom mods button stays on screen but drops below them
+  // and stops taking clicks, instead of being drawn on top of the menu.
+  const MENU_OVERLAY_SELECTORS = [
+    "lol-perks-v2-editor",
+    "lol-perks-v2-main-view",
+    ".perks-editor-modal",
+    "lol-uikit-full-page-modal",
+    "lol-uikit-dialog-frame",
+    ".champion-customization-flyout",
+    ".modal-root",
+    "#rose-settings-panel",
+    "#lu-custom-skin-panel-container",
+    "#lu-chroma-panel-container",
+    "#forms-wheel-panel-container",
+    "#champion-selection-dialog",
+    "#skin-selection-dialog",
+    "#add-custom-mods-dialog",
+    "#category-mods-manage-dialog",
+    "#champion-mods-manage-dialog",
+  ];
+
+  function getOpenMenuElements() {
+    const open = [];
+    for (const selector of MENU_OVERLAY_SELECTORS) {
+      const el = document.querySelector(selector);
+      if (el && (el.offsetWidth > 0 || el.offsetHeight > 0)) open.push(el);
+    }
+    return open;
   }
+
+  function isMenuOverlayOpen() {
+    return getOpenMenuElements().length > 0;
+  }
+
+  // Client menus live in their own layer: lol-uikit-dialog-frame, for one, has
+  // inline z-index 0. To land below a menu the layer has to be below zero: take
+  // the lowest open menu's z-index and step one under it.
+  function resolveBehindZIndex() {
+    let lowest = 0;
+    for (const el of getOpenMenuElements()) {
+      const parsed = Number.parseInt(getComputedStyle(el).zIndex, 10);
+      const z = Number.isFinite(parsed) ? parsed : 0;
+      if (z < lowest) lowest = z;
+    }
+    return lowest - 1;
+  }
+
+  // The button lives inside .champion-select, which can be a stacking context.
+  // Its own z-index then cannot compare with the menu layer: the menu ends up
+  // under it either way. So while a menu is open the button moves to body (the
+  // root of the stack) and honestly drops below the menu layer there.
+  function detachButtonToBody() {
+    if (!button || button.parentNode === document.body) return;
+    const rect = button.getBoundingClientRect();
+    button.__csRect = rect;
+    document.body.appendChild(button);
+    button.style.setProperty("position", "fixed", "important");
+    button.style.setProperty("left", `${Math.round(rect.left)}px`, "important");
+    button.style.setProperty("top", `${Math.round(rect.top)}px`, "important");
+    button.style.setProperty("right", "auto", "important");
+    button.style.setProperty("bottom", "auto", "important");
+  }
+
+  function applyButtonLayer() {
+    if (!button) return;
+    const behind = isMenuOverlayOpen();
+
+    if (behind) {
+      detachButtonToBody();
+      button.style.setProperty("z-index", String(resolveBehindZIndex()), "important");
+      button.style.setProperty("pointer-events", "none", "important");
+      button.setAttribute("data-behind-menu", "true");
+      return;
+    }
+
+    button.style.setProperty("z-index", "50", "important");
+    button.style.setProperty("pointer-events", "auto", "important");
+    button.removeAttribute("data-behind-menu");
+  }
+
+
 
   function attachToChampionSelect() {
     // Attach as soon as champ select UI exists (even before a champion is locked)
@@ -1971,80 +2036,46 @@
     createButton();
     createPanel();
 
-    const targetContainer = findButtonContainer();
-    if (!targetContainer) {
+    const inCS = !!document.querySelector(".champion-select");
+    if (!inCS) {
       if (isReconnectPhase()) {
         // The champion select UI is gone on the reconnect screen: keep the
         // button on screen so a mod can be changed before reconnecting.
         if (button.parentNode !== document.body) {
           document.body.appendChild(button);
         }
-        button.style.position = "fixed";
-        button.style.right = "80px";
-        button.style.bottom = "180px";
-        button.style.left = "auto";
-        button.style.top = "auto";
-        button.style.display = "block";
+        button.style.setProperty("position", "fixed", "important");
+        button.style.setProperty("right", "80px", "important");
+        button.style.setProperty("bottom", "180px", "important");
+        button.style.setProperty("left", "auto", "important");
+        button.style.setProperty("top", "auto", "important");
         return;
       }
-      // Retry after a short delay if container not found (DOM might not be ready)
+      // Retry after a short delay if the champ select DOM is not ready yet
       setTimeout(() => {
         if (championSelectRoot) {
-          const retryContainer = findButtonContainer();
-          if (retryContainer) {
-            attachToChampionSelect();
-          }
+          attachToChampionSelect();
         }
       }, 100);
       return;
     }
 
-    // Remove button from old parent if it exists
-    if (button.parentNode) {
-      button.parentNode.removeChild(button);
+    const csRoot = document.querySelector(".champion-select");
+    const behind = isMenuOverlayOpen();
+    // An open menu keeps the button in body (see applyButtonLayer): it can only
+    // return into .champion-select once the menu is closed.
+    if (!behind && csRoot && button.parentNode !== csRoot) {
+      csRoot.appendChild(button);
+      button.style.setProperty("position", "absolute", "important");
+      button.style.setProperty("right", "25px", "important");
+      button.style.setProperty("bottom", "75px", "important");
+      button.style.setProperty("left", "auto", "important");
+      button.style.setProperty("top", "auto", "important");
     }
 
-    // Ensure container has relative positioning for absolute child
-    const containerStyles = window.getComputedStyle(targetContainer);
-    if (containerStyles.position === "static") {
-      targetContainer.style.position = "relative";
-    }
-
-    // Position button absolutely above the container buttons
-    button.style.position = "absolute";
-    button.style.right = "0"; // Align with right edge of container
-    button.style.bottom = "100%"; // Position above container
-    button.style.marginBottom = "10px"; // 10px spacing above buttons
-    button.style.left = "";
-    button.style.top = "";
-    button.style.width = "auto";
-    button.style.height = "auto";
-    button.style.padding = "";
-    button.style.display = "block";
-    button.style.visibility = "visible";
-    button.style.opacity = "1";
-    button.style.zIndex = "";
-    button.style.transform = "";
-
-    // Ensure badge positioning works - button needs to be relative for badge absolute positioning
-    // But we need absolute for button positioning, so we'll use a wrapper or ensure badge uses button as reference
-    // Actually, absolute children can still position relative to absolute parents, so this should work
-
-    // Append to container (same structure as QUIT button)
-    targetContainer.appendChild(button);
-
-    // Store reference to container for repositioning
-    button._container = targetContainer;
-
-    // Force badge positioning after button is attached
-    if (button._countBadge) {
-      const badge = button._countBadge;
-      badge.style.position = "absolute";
-      badge.style.top = "0";
-      badge.style.left = "0";
-      badge.style.transform = "translate(-170%, -70%)";
-      badge.style.zIndex = "10";
-    }
+    // z-index is owned by applyButtonLayer so an open menu can push the button
+    // down a layer.
+    applyButtonLayer();
 
     if (panel.parentNode !== document.body) {
       document.body.appendChild(panel);
@@ -2125,6 +2156,26 @@
     }
   });
 
+  // The settings panel offers a "Change mods" button on the reconnect screen,
+  // where no champion select exists: the wheel opens anyway.
+  window.addEventListener("rose-open-custom-wheel", () => {
+    if (!document.querySelector(".champion-select")) {
+      championSelectRoot = "reconnect";
+    }
+    attachToChampionSelect();
+    openPanel();
+  });
+
+  window.addEventListener("rose-close-custom-wheel", () => closePanel());
+
+  function broadcastPanelVisibility(visible) {
+    window.dispatchEvent(
+      new CustomEvent("rose-custom-wheel-panel-visibility", {
+        detail: { visible: Boolean(visible) },
+      })
+    );
+  }
+
   function openPanel() {
     if (!championSelectRoot) {
       return;
@@ -2192,6 +2243,7 @@
     }, 0);
 
     isOpen = true;
+    broadcastPanelVisibility(true);
 
     // Update button pressed state
     if (button) {
@@ -2227,6 +2279,7 @@
   function closePanel() {
     if (!panel) {
       isOpen = false;
+      broadcastPanelVisibility(false);
       // Update button pressed state
       if (button) {
         button.classList.remove("pressed");
@@ -2239,6 +2292,7 @@
       panel.style.pointerEvents = "none";
     }
     isOpen = false;
+    broadcastPanelVisibility(false);
 
     // Update button pressed state
     if (button) {
@@ -2360,12 +2414,6 @@
       return;
     }
     const badge = button._countBadge;
-    // Ensure badge positioning is always correct
-    badge.style.position = "absolute";
-    badge.style.top = "0";
-    badge.style.left = "0";
-    badge.style.transform = "translate(-170%, -70%)";
-    badge.style.zIndex = "10";
 
     if (count > 0) {
       badge.textContent = String(count);
