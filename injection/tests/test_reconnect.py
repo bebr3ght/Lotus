@@ -47,6 +47,14 @@ class ReconnectTests(unittest.TestCase):
         self.assertTrue(reconnect_to_game(lcu, timeout=5))
         self.assertEqual(lcu.posts, [lcu.base + RECONNECT_URI])
 
+    def test_a_game_killed_while_launching_is_reconnected_too(self):
+        """The client says FailedToLaunch rather than Reconnect when the game
+        died before it connected: same match, same reconnect"""
+        lcu = FakeLcu(["FailedToLaunch"])
+
+        self.assertTrue(reconnect_to_game(lcu, timeout=5))
+        self.assertEqual(lcu.posts, [lcu.base + RECONNECT_URI])
+
     def test_a_refused_reconnect_is_asked_again(self):
         lcu = FakeLcu(["Reconnect"], reconnect_status=500)
         answers = iter([500, 204])
@@ -70,6 +78,13 @@ class ReconnectTests(unittest.TestCase):
 
 
 class KillGameTests(unittest.TestCase):
+    def setUp(self):
+        # The taskkill fallback must never reach the real Windows in a test
+        self.taskkill = patch.object(reconnect.subprocess, "run")
+        self.run = self.taskkill.start()
+        self.addCleanup(self.taskkill.stop)
+        self.run.return_value = SimpleNamespace(returncode=1)
+
     def test_the_game_is_killed_and_waited_for(self):
         game = MagicMock()
 
@@ -89,6 +104,27 @@ class KillGameTests(unittest.TestCase):
 
         self.assertFalse(kill_game(game))
         self.assertFalse(kill_game(None))
+
+    def test_a_held_game_is_woken_before_it_is_killed(self):
+        """A suspended game does not always terminate: the kernel queues the
+        kill, the frozen threads never run it out, and the client gives up."""
+        game = MagicMock()
+        game.status.return_value = psutil.STATUS_STOPPED
+
+        self.assertTrue(kill_game(game))
+        game.resume.assert_called_once()
+        game.kill.assert_called_once()
+
+    def test_taskkill_takes_over_when_the_wait_times_out(self):
+        game = MagicMock()
+        game.pid = 4242
+        game.wait.side_effect = psutil.TimeoutExpired(10)
+        self.run.return_value = SimpleNamespace(returncode=0)
+
+        self.assertTrue(kill_game(game))
+        args = self.run.call_args[0][0]
+        self.assertEqual(args[:4], ["taskkill", "/F", "/T", "/PID"])
+        self.assertEqual(args[4], "4242")
 
 
 if __name__ == "__main__":

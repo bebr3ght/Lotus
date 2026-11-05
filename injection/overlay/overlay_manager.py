@@ -1530,10 +1530,13 @@ class OverlayManager:
                      "once LTK Manager is ready.",
             )
             return False
-        session["reconnects"] = session.get("reconnects", 0) + 1
         log.warning("[INJECT] Restarting the game for the LTK patcher: closing it, then reconnecting to the match")
         if not kill_game(game):
+            # Not counted: the game is still up, and a later check may still
+            # restart it once it is closable
+            log.warning("[INJECT] Could not close the game - it plays on without the overlay")
             return None
+        session["reconnects"] = session.get("reconnects", 0) + 1
         session["restarted_at"] = time.time()
         if not reconnect_to_game(stopped=lambda: self._session_stopped(session)):
             log.error("[INJECT] The game was closed, but the client did not reconnect - use Reconnect in the client")
@@ -1765,17 +1768,16 @@ class OverlayManager:
         game = self._take_held_game(session)
         if game is None:
             return False
-        session["reconnects"] = session.get("reconnects", 0) + 1
         log.info(
             f"[INJECT] The LTK patcher scans after holding the game {waited:.1f}s - "
             "closing it, then reconnecting to the match"
         )
         if not kill_game(game):
-            try:
-                game.resume()
-            except (psutil.Error, OSError, AttributeError):
-                pass
+            # Leave the budget untouched: the later check may still restart it,
+            # and the player is left in a match with no overlay either way.
+            log.warning("[INJECT] Could not close the held game - it plays on without the overlay")
             return False
+        session["reconnects"] = session.get("reconnects", 0) + 1
         session["restarted_at"] = time.time()
         if not reconnect_to_game(stopped=lambda: self._session_stopped(session)):
             log.error("[INJECT] The game was closed, but the client did not reconnect - use Reconnect in the client")

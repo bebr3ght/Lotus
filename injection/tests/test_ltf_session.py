@@ -1185,6 +1185,27 @@ class RestartMissedGameTests(LtfSessionTestCase):
         self.assertIsNone(session.get("held_game"))
         self.assertNotIn("AUTO_RESUME_TRIGGERED", self.reported_codes())
 
+    def test_a_kill_that_fails_does_not_use_up_the_restart(self):
+        """A game that will not close leaves the client on its own: the attempt
+        is not counted, so a later check can still restart it once it is
+        closable (it was a suspended game that would not terminate)."""
+        self.game = self.running = self._game()
+        self.game.create_time.return_value = time.time() - 5
+        session = self._session()
+        FakeBridge.patcher_statuses = [self.BUILDING, self.BUILDING, self.BUILDING, self.READY]
+
+        with patch.object(overlay_manager, "kill_game", return_value=False):
+            self.assertTrue(self.overlay._wait_for_patcher(session))
+
+        self.game.suspend.assert_called_once()
+        self.assertEqual(self.reconnects, [])
+        self.assertEqual(session.get("reconnects", 0), 0)
+
+        # The game is still up: a later check restarts it
+        self.assertTrue(self.overlay._restart_missed_game(session, self.game))
+        self.assertEqual(len(self.reconnects), 1)
+        self.assertEqual(session["reconnects"], 1)
+
     def test_the_auto_resume_timeout_resumes_the_held_game(self):
         self.window = 0.05
         self.game = self.running = self._game()
