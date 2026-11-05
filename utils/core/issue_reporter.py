@@ -36,6 +36,7 @@ _ALLOWED_CODES = {
     'LTK_MANAGER_MISSING',    # LTK Manager, which Rose drives through the bridge, is not installed
     'LTF_FAILED',             # The LTF session (bridge or LTK patcher) reported an error
     'LTF_IMPORT_FAILED',      # A mod could not be imported into LTK Manager's library
+    'PATCHER_READY_TIMEOUT',  # The game was released before the patcher had built the overlay
     'PENGU_ACTIVATION_FAILED',  # Pengu Loader could not be activated: Rose is missing from the client
     'WINDOWS_ADMIN_SHELL',    # Windows runs every program as administrator: LTK Manager refuses to patch
 }

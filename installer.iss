@@ -49,10 +49,6 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 Name: "quicklaunchicon"; Description: "{cm:CreateQuickLaunchIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked; OnlyBelowVersion: 6.1; Check: not IsAdminInstallMode
-; Restore the patcher files a previous uninstall saved. Hidden when there is no
-; backup, so it never shows an option that would do nothing; see
-; _ShouldOfferLtkRestore() in [Code].
-Name: "restoreltk"; Description: "Restore the LTK patcher files saved by a previous uninstall"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked; Check: _ShouldOfferLtkRestore
 
 [Files]
 ; Main application files
@@ -78,9 +74,8 @@ Filename: "{sys}\schtasks.exe"; Parameters: "/Delete /TN Rose /F"; Flags: runhid
 ; NOTE: the install root is never deleted recursively. "Source: dist\Lotus\*"
 ; with recursesubdirs records the whole tree, and Inno fails the uninstall with
 ; "location not accessible" when a recorded directory still holds a file it
-; never recorded -- the user's own ltk_patcher binaries and the excluded
-; hashes.game.txt. CurUninstallStepChanged removes the root only when it is
-; empty.
+; never recorded -- the excluded, user-managed hashes.game.txt.
+; CurUninstallStepChanged removes the root only when it is empty.
 ;
 ; The runtime caches below are Rose's own, so they go with the uninstall.
 
@@ -96,153 +91,11 @@ Type: filesandordirs; Name: "{app}\injection\mods"
 var
   { The uninstaller's keep-data page. Left nil in silent mode. }
   KeepUserDataBox: TNewCheckBox;
-  BackupLtkToolsBox: TNewCheckBox;
-  { One line per file, built while copying so the user is told what really
-    happened instead of assuming the promised backup exists. }
-  LtkBackupReport: String;
-
-const
-  LtkBackupFolderName = 'LtkPatcher';
-  LtkHostFileName = 'ltk_patcher_host.exe';
-  LtkDllFileName = 'ltk_patcher_dll.dll';
 
 function _UserDataFolder(): String;
 begin
   { Rose stores user data in %LOCALAPPDATA%\Rose }
   Result := ExpandConstant('{localappdata}\Rose');
-end;
-
-function _LtkBackupFolder(): String;
-begin
-  Result := _UserDataFolder() + '\' + LtkBackupFolderName;
-end;
-
-{ PyInstaller onedir ships the tools under _internal (see
-  launcher/update/update_installer.py); the bare path is the layout older
-  installs still carry, and hash_updater.py looks in both. }
-function _LtkToolPath(const FileName: String): String;
-begin
-  if FileExists(ExpandConstant('{app}\_internal\injection\tools\') + FileName) then
-    Result := ExpandConstant('{app}\_internal\injection\tools\') + FileName
-  else
-    Result := ExpandConstant('{app}\injection\tools\') + FileName;
-end;
-
-{ Where a restored file has to be written. Unlike _LtkToolPath, which looks
-  for a file that is already there, this has to decide by folder: during a
-  restore the file does not exist yet, so the check above would pick the bare
-  path and drop it outside _internal, where the patcher host would not see it. }
-function _LtkToolsDir(): String;
-begin
-  if DirExists(ExpandConstant('{app}\_internal\injection\tools')) then
-    Result := ExpandConstant('{app}\_internal\injection\tools')
-  else
-    Result := ExpandConstant('{app}\injection\tools');
-end;
-
-{ Rose does not ship the patcher binaries, so an install may have neither or
-  only one of them. There is nothing to offer a checkbox for in that case. }
-function _HasLtkFiles(): Boolean;
-begin
-  Result := FileExists(_LtkToolPath(LtkHostFileName)) or
-            FileExists(_LtkToolPath(LtkDllFileName));
-end;
-
-{ A previous uninstall left copies behind. They are only worth offering when
-  the install does not already ship the files, so restoring stays a choice
-  rather than something that silently overwrites. }
-function _ShouldOfferLtkRestore(): Boolean;
-begin
-  Result := (FileExists(_LtkBackupFolder() + '\' + LtkHostFileName) or
-             FileExists(_LtkBackupFolder() + '\' + LtkDllFileName)) and
-            not _HasLtkFiles();
-end;
-
-{ Put a saved patcher file back where the patcher host expects to find it. }
-procedure _RestoreLtkFile(const FileName: String);
-var
-  Source, ToolsDir: String;
-begin
-  Source := _LtkBackupFolder() + '\' + FileName;
-  if not FileExists(Source) then
-    Exit;
-
-  ToolsDir := _LtkToolsDir();
-  if not DirExists(ToolsDir) then
-    CreateDir(ToolsDir);
-  FileCopy(Source, ToolsDir + '\' + FileName, False);
-end;
-
-procedure _RestoreLtkFiles();
-begin
-  _RestoreLtkFile(LtkHostFileName);
-  _RestoreLtkFile(LtkDllFileName);
-end;
-
-{ The patcher binaries come from the user's own LTK Manager install and cannot
-  be downloaded again, so copy them out before Inno removes them. Rose does not
-  ship them, so a missing file is normal and is reported, not treated as an
-  error. }
-procedure _AddLtkReportLine(const Line: String);
-begin
-  if LtkBackupReport <> '' then
-    LtkBackupReport := LtkBackupReport + #13#10;
-  LtkBackupReport := LtkBackupReport + Line;
-end;
-
-procedure _BackupLtkFile(const FileName: String);
-var
-  Source: String;
-begin
-  Source := _LtkToolPath(FileName);
-
-  if not FileExists(Source) then
-  begin
-    _AddLtkReportLine(FileName + ': not in the install folder, nothing to copy');
-    Exit;
-  end;
-
-  { CreateDir only makes the last level, so make sure the parent is there }
-  if not DirExists(_UserDataFolder()) then
-    CreateDir(_UserDataFolder());
-  CreateDir(_LtkBackupFolder());
-
-  if FileCopy(Source, _LtkBackupFolder() + '\' + FileName, False) then
-    _AddLtkReportLine(FileName + ': saved')
-  else
-    _AddLtkReportLine(FileName + ': COULD NOT BE COPIED');
-end;
-
-{ A tick that promises a backup and silently makes none is the worst outcome
-  here, so every file gets a line saying what happened to it. }
-procedure _ReportLtkBackup();
-var
-  Message: String;
-  Failed: Boolean;
-begin
-  if LtkBackupReport = '' then
-    Exit;
-
-  Failed := Pos('COULD NOT BE COPIED', LtkBackupReport) > 0;
-  Message := 'LTK patcher backup:' + #13#10 + LtkBackupReport + #13#10#13#10 +
-             'Saved to: ' + _LtkBackupFolder();
-
-  if Failed then
-  begin
-    Message := Message + #13#10#13#10 +
-               'Anything marked COULD NOT BE COPIED is deleted with the install. ' +
-               'Close a running patcher or antivirus scan and uninstall again.';
-  end
-  else if Pos(': saved', LtkBackupReport) = 0 then
-  begin
-    Message := Message + #13#10#13#10 +
-               'Neither file was in the install folder, so nothing was saved.';
-  end;
-
-  if Failed then
-    MsgBox(Message, mbError, MB_OK)
-  else
-    MsgBox(Message, mbInformation, MB_OK);
 end;
 
 function _KeepUserData(): Boolean;
@@ -251,19 +104,11 @@ begin
   Result := (KeepUserDataBox = nil) or KeepUserDataBox.Checked;
 end;
 
-function _BackupLtkTools(): Boolean;
-begin
-  { No checkbox means nothing to back up: no files, or a silent uninstall. }
-  Result := (BackupLtkToolsBox <> nil) and BackupLtkToolsBox.Checked;
-end;
-
-{ Deletes the user data folder. A backup the user asked for survives even when
-  the rest is deleted; one they turned off goes with everything else. }
+{ Deletes the user data folder when the player did not ask to keep it. }
 procedure _DeleteUserData();
 var
   FindRec: TFindRec;
   Root, Item: String;
-  IsBackup: Boolean;
 begin
   Root := _UserDataFolder();
   if not DirExists(Root) then
@@ -275,15 +120,11 @@ begin
       repeat
         if (FindRec.Name <> '.') and (FindRec.Name <> '..') then
         begin
-          IsBackup := CompareText(FindRec.Name, LtkBackupFolderName) = 0;
-          if not (IsBackup and _BackupLtkTools) then
-          begin
-            Item := Root + '\' + FindRec.Name;
-            if DirExists(Item) then
-              DelTree(Item, True, True, True)
-            else
-              DeleteFile(Item);
-          end;
+          Item := Root + '\' + FindRec.Name;
+          if DirExists(Item) then
+            DelTree(Item, True, True, True)
+          else
+            DeleteFile(Item);
         end;
       until not FindNext(FindRec);
     finally
@@ -340,18 +181,6 @@ begin
   KeepUserDataBox.Width := Width0;
   KeepUserDataBox.Caption := 'Keep my data in ' + _UserDataFolder();
   KeepUserDataBox.Checked := True;
-
-  { Only offer this when there is something in the install folder to copy. }
-  if _HasLtkFiles() then
-  begin
-    BackupLtkToolsBox := TNewCheckBox.Create(UninstallProgressForm);
-    BackupLtkToolsBox.Parent := Page;
-    BackupLtkToolsBox.Left := Left0;
-    BackupLtkToolsBox.Top := Top0 + ScaleY(80);
-    BackupLtkToolsBox.Width := Width0;
-    BackupLtkToolsBox.Caption := 'Save a copy of the LTK patcher files in ' + _LtkBackupFolder();
-    BackupLtkToolsBox.Checked := True;
-  end;
 
   { The uninstaller form only has a Cancel button, on the right. Take its spot
     for the button that continues and shift Cancel to the left of it. }
@@ -570,17 +399,6 @@ begin
   if CurUninstallStep = usUninstall then
   begin
     _CleanupStartupRegistry();
-
-    { Inno has not removed the installed files yet, so this is the last point
-      at which the user's own patcher binaries can be copied out. }
-    if _BackupLtkTools then
-    begin
-      LtkBackupReport := '';
-      _BackupLtkFile(LtkHostFileName);
-      _BackupLtkFile(LtkDllFileName);
-      _ReportLtkBackup();
-    end;
-
     _CleanupLegacyUninstallEntry();
   end;
 
@@ -601,11 +419,6 @@ procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep = ssPostInstall then
   begin
-    { Put back the patcher files a previous uninstall saved, before anything
-      reads them. [Files] has already unpacked the install by now. }
-    if WizardIsTaskSelected('restoreltk') then
-      _RestoreLtkFiles();
-
     { Clean up a dead hook left by an older Rose uninstall }
     _RemoveDeadPenguIfeo();
 

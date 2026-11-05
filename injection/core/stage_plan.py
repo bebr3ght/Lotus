@@ -29,7 +29,7 @@ from utils.core.junction import is_junction, link_or_extract, safe_remove_entry
 from utils.core.logging import get_logger
 from utils.core.paths import get_injection_dir
 
-from ..loadingname.loading_name import build as build_loading_name
+from ..loadingname.loading_name import build as build_loading_name, parent_skin_id
 from ..mods.mod_manager import ModManager
 
 log = get_logger()
@@ -123,6 +123,7 @@ def prepare_plan(injector, plan: StagePlan, target_dir: Path) -> Optional[List[s
     names: List[str] = []
     custom_folder: Optional[str] = None
     carrier_folder: Optional[str] = None
+    carrier_archive: Optional[Path] = None
     for step in plan.steps:
         if isinstance(step, SkinStep):
             prepared = injector.prepare_skin_mods(
@@ -133,7 +134,7 @@ def prepare_plan(injector, plan: StagePlan, target_dir: Path) -> Optional[List[s
                 return None
             names.extend(prepared)
         elif isinstance(step, CarrierStep):
-            folder = _prepare_carrier(injector, step, target_dir)
+            folder, carrier_archive = _prepare_carrier(injector, step, target_dir)
             if folder is None:
                 return None
             carrier_folder = folder
@@ -150,8 +151,11 @@ def prepare_plan(injector, plan: StagePlan, target_dir: Path) -> Optional[List[s
         elif isinstance(step, LoadingNameStep):
             skin_folder = custom_folder or carrier_folder
             if skin_folder:
+                # A chroma shows its skin's name; the archive says which skin
+                loading_skin_id = parent_skin_id(carrier_archive, step.skin_id) \
+                    if carrier_archive is not None else step.skin_id
                 loading_name = build_loading_name(
-                    injector.game_dir, target_dir, target_dir / skin_folder, step.skin_id,
+                    injector.game_dir, target_dir, target_dir / skin_folder, loading_skin_id,
                     other_mods=[target_dir / name for name in names if name != skin_folder],
                 )
                 if loading_name:
@@ -163,19 +167,23 @@ def prepare_plan(injector, plan: StagePlan, target_dir: Path) -> Optional[List[s
     return names or None
 
 
-def _prepare_carrier(injector, step: CarrierStep, target_dir: Path) -> Optional[str]:
-    """Extract the carrier skin archive (InjectionTrigger._run_custom_mod_injection)."""
+def _prepare_carrier(injector, step: CarrierStep, target_dir: Path) -> Tuple[Optional[str], Optional[Path]]:
+    """Extract the carrier skin archive (InjectionTrigger._run_custom_mod_injection).
+
+    Returns its folder name and the archive it came from, which names the skin
+    behind a chroma for the loading screen.
+    """
     zp = injector._resolve_zip(
         step.skin_name, skin_name=step.skin_name, champion_name=step.champion_name,
         champion_id=step.champion_id,
     )
     if not zp or not Path(zp).exists():
         log.debug(f"[STAGE] Skin carrier archive not found: {step.skin_name}")
-        return None
+        return None, None
     folder = ModManager(target_dir).extract_zip_to_mod(Path(zp))
     if not folder or not (folder.exists() or is_junction(folder)):
-        return None
-    return folder.name
+        return None, None
+    return folder.name, Path(zp)
 
 
 def _link_mod(step: ModStep, target_dir: Path) -> Optional[str]:

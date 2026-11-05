@@ -72,6 +72,7 @@ class OverlayStagingTests(LtfSessionTestCase):
         super().setUp()
         self.stage_dir = self.root / "injection" / "stage"
         self.stage_dir.mkdir(parents=True)
+        self.cache_root = self.root / "injection" / "fantome_cache"
         self.overlay.open_staging()
 
     def stage(self, name="1001-EternalAspect", display="Eternal Aspect Leona", wad=b"wad"):
@@ -251,13 +252,17 @@ class OverlayStagingTests(LtfSessionTestCase):
         mod = self.make_mod(where=self.stage_dir)
         archives = self.overlay.pack_mods(self.stage_dir, [mod])
 
-        self.assertEqual(archives, {mod: self.stage_dir / f"{mod}.fantome"})
-        with patch.object(overlay_manager, "write_fantome_zip") as pack:
+        # The archive comes from the content-addressed cache, not from next to
+        # the folder: the same bytes are reused by the injection after the
+        # staging and by the next game
+        self.assertEqual(list(archives), [mod])
+        self.assertEqual(archives[mod].parent.parent, self.cache_root)
+        with patch.object(overlay_manager, "packed_fantome") as pack:
             self.assertTrue(self.overlay.stage_mods(self.stage_dir, [mod], archives=archives))
 
         pack.assert_not_called()  # nothing left to pack on the way to the scan
         imported = [call[1] for call in self.bridge.calls if call[0] == "import"]
-        self.assertEqual(imported, [str(self.stage_dir / f"{mod}.fantome")])
+        self.assertEqual(imported, [str(archives[mod])])
 
     def test_a_mod_staged_for_an_earlier_pick_is_not_packed_again(self):
         skin = self.make_mod(where=self.stage_dir)
@@ -269,10 +274,11 @@ class OverlayStagingTests(LtfSessionTestCase):
 
         archives = self.overlay.pack_mods(next_pick, [other, rift])
 
-        self.assertEqual(archives, {other: next_pick / f"{other}.fantome"})
+        self.assertEqual(list(archives), [other])
+        self.assertEqual(archives[other].parent.parent, self.cache_root)
         self.assertTrue(self.overlay.stage_mods(next_pick, [other, rift], archives=archives))
         imported = [call[1] for call in self.bridge.calls if call[0] == "import"]
-        self.assertEqual(imported[2:], [str(next_pick / f"{other}.fantome")])  # the map stays as it is
+        self.assertEqual(imported[2:], [str(archives[other])])  # the map stays as it is
 
     def test_a_missing_packed_archive_is_packed_by_the_install(self):
         mod = self.make_mod(where=self.stage_dir)
@@ -281,7 +287,8 @@ class OverlayStagingTests(LtfSessionTestCase):
 
         self.assertTrue(staged)
         imported = Path([call[1] for call in self.bridge.calls if call[0] == "import"][0])
-        self.assertEqual(imported.parent.parent, self.root / "injection" / "ltf_staging")
+        self.assertEqual(imported.parent.parent, self.cache_root)
+        self.assertTrue(imported.is_file(), "the install packs it from the cache")
 
     def test_the_time_from_the_pick_is_kept_for_a_late_join(self):
         mod = self.make_mod(where=self.stage_dir)

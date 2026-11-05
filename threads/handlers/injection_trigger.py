@@ -1484,6 +1484,7 @@ class InjectionTrigger:
             missing_announcer_mod_path = None
             missing_other_mod_paths = []
             carrier_mod_folder_name = None
+            carrier_zip_path = None
             
             # Extract and add the carrier skin archive if provided. A non-base
             # custom skin requires both this archive and the custom mod; do
@@ -1523,6 +1524,7 @@ class InjectionTrigger:
                         )
                         return
 
+                    carrier_zip_path = zp
                     carrier_mod_folder_name = base_mod_folder.name
                     mod_folder_names.append(carrier_mod_folder_name)
                     mod_names_list.append(f"Skin Carrier ({base_skin_name})")
@@ -1699,13 +1701,16 @@ class InjectionTrigger:
                             self.state.selected_other_mod = None
             
             # A custom skin runs as the default one too, so the loading screen gets the skin's name here as it does for a
-            # regular skin (SkinInjector.inject_skin). skin_id is the skin the mod targets; a chroma's mod targets its
-            # base skin, which is the name the game has. It never fails the injection.
+            # regular skin (SkinInjector.inject_skin). skin_id can be a chroma's, whose row of the text table carries the
+            # chroma's own name ("... - Ruby"), so it is resolved to the skin the archive belongs to first. It never
+            # fails the injection.
             skin_folder = mod_folder_name or carrier_mod_folder_name
             if skin_folder and skin_id:
                 try:
+                    from injection.loadingname.loading_name import parent_skin_id
+                    loading_skin_id = parent_skin_id(Path(carrier_zip_path), int(skin_id)) if carrier_zip_path else int(skin_id)
                     loading_name_mod = build_loading_name(
-                        injector.game_dir, injector.mods_dir, injector.mods_dir / skin_folder, int(skin_id),
+                        injector.game_dir, injector.mods_dir, injector.mods_dir / skin_folder, loading_skin_id,
                         other_mods=[injector.mods_dir / name for name in mod_folder_names if name != skin_folder],
                     )
                     if loading_name_mod:

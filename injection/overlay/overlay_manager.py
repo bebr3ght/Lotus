@@ -32,7 +32,6 @@ import subprocess
 import sys
 import threading
 import time
-import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
@@ -54,11 +53,15 @@ from ..tools.bridge import (
     find_bridge,
 )
 from ..tools.tools_manager import LTF_BRIDGE_DLL, LTF_LAUNCHER, ToolsManager
-from ..mods.fantome import fantome_display_name, write_fantome_zip
+from ..mods.fantome import fantome_display_name
+from ..mods.fantome_cache import packed as packed_fantome, prune as prune_fantome_cache
 from ..mods.fingerprint import mod_fingerprint
 from .process_manager import LTK_MANAGER_PROCESSES
 from config import (
     GAME_EXECUTABLE_NAMES,
+    MONITOR_AUTO_RESUME_TIMEOUT_DEFAULT_S,
+    MONITOR_AUTO_RESUME_TIMEOUT_MAX_S,
+    MONITOR_AUTO_RESUME_TIMEOUT_MIN_S,
     PROCESS_MONITOR_SLEEP_S,
 )
 
@@ -68,14 +71,22 @@ log = get_logger()
 PATCHER_STATUS_POLL_TICKS = 4
 # After start_patcher, the game stays suspended until the patcher has built
 # the overlay and is scanning: resumed earlier, the game can load its files
-# before the patcher hooks it. The game monitor resumes it at 60s anyway.
-PATCHER_READY_TIMEOUT_S = 45.0
+# before the patcher hooks it. The wait is the auto-resume timeout (config.py):
+# the same window, so one setting covers both.
 PATCHER_READY_POLL_S = 0.25
 # A patcher still idle this long after start_patcher answered did not start
 PATCHER_IDLE_GRACE_S = 3.0
 # Unanswered status polls in a row (CDP busy, a slow eval) before the session
 # counts as broken: one failed poll is not the end of a game
 STATUS_FAILURE_LIMIT = 5
+
+# A late overlay may restart the game this long after the patcher started
+# scanning: past that the player is in the game already, and a restart would
+# cost them more than the missing mods.
+LATE_RESTART_WINDOW_S = 120.0
+# How long to wait for the client to offer Reconnect after the late game is
+# terminated, before leaving the click to the player
+LATE_RECONNECT_WAIT_S = 20.0
 
 # The DLL caps a request line at 64 MB and base64 adds a third, so only an
 # archive up to this size can be sent inline when LTK Manager cannot read it
@@ -519,6 +530,7 @@ class OverlayManager:
             "game_seen": False,
             "status_failures": 0,
             "late_join_reported": False,
+            "late_restart_requested": False,
             "refused_reported": False,
             "early_stop_logged": False,
             "lock": threading.Lock(),
@@ -759,6 +771,10 @@ class OverlayManager:
         if self.process_manager:
             self.process_manager.current_overlay_process = None
 
+        # The session is over: trim the packed-archive cache so it cannot grow
+        # without bound. The next game repacks only what was evicted.
+        prune_fantome_cache(self.mods_dir)
+
     def _check_bridge(self, session: dict) -> bool:
         """Whether the bridge inside LTK Manager still answers."""
         bridge = session.get("bridge")
@@ -860,7 +876,9 @@ class OverlayManager:
                     raise
                 # Refused before anything was installed: sending it again is safe
                 log.info(f"[INJECT] LTK Manager cannot read {archive.name} ({e}) - sending its bytes instead")
-                response = bridge.import_fantome_bytes(archive.read_bytes(), name=archive.name)
+                # The archive is content-addressed, so its name is a digest: the
+                # library shows the mod's own name instead
+                response = bridge.import_fantome_bytes(archive.read_bytes(), name=display_name)
         except (BridgeUnavailable, BridgeCommandError):
             self._track_late_install(session, before_ids, folder, display_name)
             raise
@@ -965,48 +983,45 @@ class OverlayManager:
         if unwanted and not self._remove_unwanted(session, unwanted):
             return False
 
-        staging = self._staging_root() / uuid.uuid4().hex
         # One read of the library for all the imports (and _disable_other_mods
         # after them): each read is a round trip through LTK Manager
         library: Optional[list] = None
-        try:
-            for name, folder, fingerprint in to_import:
-                if stopped():
-                    log.info("[INJECT] Stopped while the mods were being installed")
-                    return False
-                display_name = fantome_display_name(folder)
-                try:
-                    if library is None:
-                        library = bridge.library()
-                    archive = (archives or {}).get(name)
-                    if archive is None or not Path(archive).is_file():
-                        staging.mkdir(parents=True, exist_ok=True)
-                        archive = staging / f"{name}.fantome"
-                        write_fantome_zip(folder, archive)
-                    before_ids = {str(e.get("id")) for e in library if e.get("id")}
-                    entry = self._import_archive(session, Path(archive), folder, display_name, fingerprint,
-                                                 before_ids=before_ids)
-                    library.append(entry)
-                    if not entry.get("enabled"):
-                        bridge.toggle(str(entry.get("id")), True)
-                    log.info(f"[INJECT] Installed {display_name} into LTK Manager")
-                except (OSError, BridgeUnavailable, BridgeCommandError) as e:
-                    log.error(f"[INJECT] Could not install {display_name}: {e}")
-                    if report and not stopped():
-                        if _cdp_unreachable(e):
-                            self._report_ltf_failure(_cdp_unreachable_reason())
-                        elif not self._report_low_disk_space_failure(mod_names):
-                            report_issue(
-                                "LTF_IMPORT_FAILED",
-                                "error",
-                                f"Injection failed: could not install {display_name} ({e}).",
-                                details={"mod": folder.name, "error": str(e)},
-                                hint=f"Free some disk space, then retry. {LTF_LOGS_HINT}",
-                            )
-                    return False
-            session["library_snapshot"] = library
-        finally:
-            shutil.rmtree(staging, ignore_errors=True)
+        for name, folder, fingerprint in to_import:
+            if stopped():
+                log.info("[INJECT] Stopped while the mods were being installed")
+                return False
+            display_name = fantome_display_name(folder)
+            try:
+                if library is None:
+                    library = bridge.library()
+                archive = (archives or {}).get(name)
+                if archive is None or not Path(archive).is_file():
+                    # Packed once per content and reused by the next game
+                    archive = packed_fantome(folder, self.mods_dir)
+                    if archive is None:
+                        raise OSError(f"could not pack {folder.name}")
+                before_ids = {str(e.get("id")) for e in library if e.get("id")}
+                entry = self._import_archive(session, Path(archive), folder, display_name, fingerprint,
+                                             before_ids=before_ids)
+                library.append(entry)
+                if not entry.get("enabled"):
+                    bridge.toggle(str(entry.get("id")), True)
+                log.info(f"[INJECT] Installed {display_name} into LTK Manager")
+            except (OSError, BridgeUnavailable, BridgeCommandError) as e:
+                log.error(f"[INJECT] Could not install {display_name}: {e}")
+                if report and not stopped():
+                    if _cdp_unreachable(e):
+                        self._report_ltf_failure(_cdp_unreachable_reason())
+                    elif not self._report_low_disk_space_failure(mod_names):
+                        report_issue(
+                            "LTF_IMPORT_FAILED",
+                            "error",
+                            f"Injection failed: could not install {display_name} ({e}).",
+                            details={"mod": folder.name, "error": str(e)},
+                            hint=f"Free some disk space, then retry. {LTF_LOGS_HINT}",
+                        )
+                return False
+        session["library_snapshot"] = library
         return True
 
     def pack_mods(self, folder_dir: Path, mod_names: List[str]) -> Dict[str, Path]:
@@ -1014,21 +1029,21 @@ class OverlayManager:
 
         The countdown's stager packs while the selection settles, so its
         install only has to import (stage_mods(archives=...)). Each archive
-        lands next to its folder (<folder_dir>/<name>.fantome); a folder that
-        cannot be packed is left out and packed by the install instead. So is
-        a mod an earlier pick already staged (a saved map or voiceover mod,
-        the same for every skin): the install keeps it as it is.
+        comes from the content-addressed cache, so the injection that follows
+        reuses it instead of packing the same folder again. So is a mod an
+        earlier pick already staged (a saved map or voiceover mod, the same for
+        every skin): the install keeps it as it is.
         """
         staged = self._staged_fingerprints()
         archives: Dict[str, Path] = {}
         for name in mod_names:
             folder = Path(folder_dir) / name
-            archive = Path(folder_dir) / f"{name}.fantome"
             try:
                 if staged and mod_fingerprint(folder) in staged:
                     continue
-                write_fantome_zip(folder, archive)
-                archives[name] = archive
+                archive = packed_fantome(folder, self.mods_dir)
+                if archive is not None:
+                    archives[name] = archive
             except OSError as e:
                 log.debug(f"[STAGE] Could not pack {name} ahead of the install: {e}")
         return archives
@@ -1262,6 +1277,23 @@ class OverlayManager:
         log_event(log, "Mods installed - resuming game for the LTK patcher", "❄️")
         return self._run_session(session, stop_callback, injection_manager)
 
+    def _injection_wait_timeout(self) -> float:
+        """How long the game stays frozen waiting for the injection.
+
+        One setting covers the whole wait: the overlay being built and the
+        patcher hooking the game are the same window, and the game monitor
+        resumes the game at this same value anyway.
+        """
+        try:
+            from config import get_config_float
+            value = get_config_float(
+                "General", "monitor_auto_resume_timeout", MONITOR_AUTO_RESUME_TIMEOUT_DEFAULT_S)
+            return max(MONITOR_AUTO_RESUME_TIMEOUT_MIN_S,
+                       min(MONITOR_AUTO_RESUME_TIMEOUT_MAX_S, float(value)))
+        except Exception as exc:  # noqa: BLE001
+            log.debug(f"[INJECT] Could not read monitor_auto_resume_timeout: {exc}")
+            return MONITOR_AUTO_RESUME_TIMEOUT_DEFAULT_S
+
     def _wait_for_patcher(self, session: dict) -> bool:
         """Wait until the patcher has built the overlay and is scanning.
 
@@ -1270,7 +1302,8 @@ class OverlayManager:
         game monitor would resume it soon.
         """
         start = time.monotonic()
-        deadline = start + PATCHER_READY_TIMEOUT_S
+        timeout_s = self._injection_wait_timeout()
+        deadline = start + timeout_s
         while time.monotonic() < deadline:
             if self._session_stopped(session):
                 return False
@@ -1295,8 +1328,18 @@ class OverlayManager:
                     return False
             time.sleep(PATCHER_READY_POLL_S)
         log.warning(
-            f"[INJECT] The LTK patcher is not ready after {PATCHER_READY_TIMEOUT_S:.0f}s "
+            f"[INJECT] The LTK patcher is not ready after {timeout_s:.0f}s "
             f"(phase={session['state'] or 'unknown'}) - resuming the game anyway"
+        )
+        # The game is released without the overlay: the mods will not appear,
+        # and a load frozen through its boot can hang until a reconnect. Worth
+        # a Troubleshooting entry rather than only a log line.
+        report_issue(
+            "PATCHER_READY_TIMEOUT",
+            "warning",
+            f"The patcher was still building after {timeout_s:.0f}s, so the game was released without the mods.",
+            details={"patience_s": f"{timeout_s:.0f}", "phase": session["state"] or "unknown"},
+            hint="Raise Monitor Auto-Resume Timeout, or use fewer mods so the overlay builds faster.",
         )
         return True
 
@@ -1503,6 +1546,7 @@ class OverlayManager:
                     "the game started before the LTK patcher was scanning (joined too late"
                     + (f": {detail})" if detail else ")")
                 )
+                self._restart_late_game(session)
         refused = session["ltk_refused"]
         if refused and not session["refused_reported"]:
             session["refused_reported"] = True
@@ -1513,6 +1557,104 @@ class OverlayManager:
                 self._report_ltf_failure(
                     f"LTK Manager's patcher refused the overlay (host verification failed: {described})"
                 )
+
+    def _restart_late_game(self, session: dict) -> bool:
+        """Restart a game the patcher could not overlay.
+
+        LTK Manager only overlays a game the client creates after its scan
+        started. The client creates the game a second or two after champ select
+        ends, while Rose is still installing the mods, so a skin picked late
+        lands the game before the scan - and suspending it does not change when
+        it was created. Left alone the game loads without the mods, and because
+        Rose held it frozen through its boot it can hang until the player kills
+        it. Terminating it instead makes the client offer Reconnect, and the
+        game created then lands under the scan that is already running, with
+        the mods still installed.
+
+        Only done early: past LATE_RESTART_WINDOW_S the player is in the game,
+        and a restart would cost more than playing it without the mods.
+        """
+        if session.get("late_restart_requested") or not PSUTIL_AVAILABLE:
+            return False
+        session["late_restart_requested"] = True
+
+        started = session.get("scan_started_at")
+        if started is not None and time.time() - float(started) > LATE_RESTART_WINDOW_S:
+            log.info("[INJECT] The overlay joined too late, but the game has been running for a while - "
+                     "leaving it as it is")
+            return False
+
+        game = self._running_game()
+        if game is None:
+            log.debug("[INJECT] No game process to restart for the late overlay")
+            return False
+
+        try:
+            pid = game.pid
+            game.terminate()
+            try:
+                game.wait(timeout=5)
+            except (psutil.TimeoutExpired, psutil.Error, OSError):
+                game.kill()
+        except (psutil.Error, OSError) as e:
+            log.debug(f"[INJECT] Could not restart the late game: {e}")
+            return False
+
+        log.warning(
+            "[INJECT] Restarting the game so the overlay can apply - it was created before the patcher "
+            f"started scanning (pid {pid})"
+        )
+        # The client notices the killed game and offers Reconnect; asking it to
+        # take that offer is the difference between the mods applying and the
+        # player having to do it by hand
+        threading.Thread(
+            target=self._reconnect_after_restart, daemon=True, name="LateGameReconnect"
+        ).start()
+        return True
+
+    def _reconnect_after_restart(self) -> None:
+        """Ask the client to relaunch the game once it noticed the old one is gone.
+
+        The game it creates now is created after the patcher started scanning,
+        so the overlay applies. Polled: the client needs a moment to move to
+        Reconnect after its game process dies.
+        """
+        try:
+            from lcu.core.client import LCU
+            lcu = LCU()
+        except Exception as e:  # noqa: BLE001 - never break the session
+            log.debug(f"[INJECT] No LCU to relaunch the game: {e}")
+            return
+
+        deadline = time.monotonic() + LATE_RECONNECT_WAIT_S
+        while time.monotonic() < deadline:
+            if self._stopped_by_rose():
+                return
+            try:
+                phase = lcu.get("/lol-gameflow/v1/gameflow-phase", timeout=1.0, use_cache=False)
+            except Exception as e:  # noqa: BLE001
+                # Logged: a call that is wrong every time (a bad keyword, say)
+                # would otherwise look like "the client never reached Reconnect"
+                log.debug(f"[INJECT] Could not read the client's phase: {e}")
+                phase = None
+            if phase == "Reconnect":
+                break
+            time.sleep(0.5)
+        else:
+            log.warning("[INJECT] The client did not move to Reconnect in time - reconnect it manually")
+            return
+
+        try:
+            session = lcu.s
+            if session is None or not lcu.base:
+                raise RuntimeError("the client connection is not ready")
+            response = session.post(f"{lcu.base}/lol-gameflow/v1/reconnect", timeout=10)
+            log.warning(
+                "[INJECT] Asked the client to relaunch the game for the overlay "
+                f"(HTTP {getattr(response, 'status_code', '?')})"
+            )
+        except Exception as e:  # noqa: BLE001
+            log.warning(f"[INJECT] Could not relaunch the game automatically ({e}) - reconnect manually")
 
     def _poll_patcher_status(self, session: dict) -> None:
         """Record what the LTK patcher reports while the game runs.

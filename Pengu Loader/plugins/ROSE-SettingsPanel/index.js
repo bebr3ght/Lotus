@@ -1648,8 +1648,8 @@
       const recs = (errors || [])
         .map((e) => e?.recommendedMonitorTimeoutS ?? e?.recommendedTimeoutS ?? e?.recommendedAutoResumeTimeoutS)
         .filter((v) => typeof v === "number" && Number.isFinite(v));
-      if (recs.length) return _clamp(Math.max(...recs), 20, 600);
-      if (typeof snapTimeout === "number") return _clamp(Math.max(snapTimeout + 30, 90), 20, 600);
+      if (recs.length) return _clamp(Math.max(...recs), 20, 180);
+      if (typeof snapTimeout === "number") return _clamp(Math.max(snapTimeout + 30, 90), 20, 180);
       return null;
     }
 
@@ -2546,7 +2546,8 @@
     timeoutSlider.id = "timeout-slider";
     // Minimum Auto-Resume Timeout: 20s
     timeoutSlider.min = "20";
-    timeoutSlider.max = "600";
+    // Matches MONITOR_AUTO_RESUME_TIMEOUT_MAX_S in config.py: the backend clamps here
+    timeoutSlider.max = "180";
     timeoutSlider.value = "60";
     timeoutSlider.style.width = "100%";
     timeoutSlider.style.height = "100%";
@@ -2607,6 +2608,7 @@
     timeoutSliderContainer.appendChild(timeoutSliderWrapper);
     timeoutSection.appendChild(timeoutSliderContainer);
     form.appendChild(timeoutSection);
+
 
     // Auto-start and hide-empty-categories checkboxes share one row
     const checkboxRow = document.createElement("div");
@@ -3267,12 +3269,13 @@
         timeoutFill,
         timeoutValue,
         parseInt(timeoutSlider.min || "20", 10),
-        parseInt(timeoutSlider.max || "600", 10),
+        parseInt(timeoutSlider.max || "180", 10),
         (value) => {
           return parseInt(value);
       }, (value) => {
         return `${value} s`;
       });
+
     }, 100);
 
     settingsPanel = panel;
@@ -3477,16 +3480,19 @@
     }
 
     if (timeoutSlider && timeoutValue && timeoutButton && timeoutFill) {
-      timeoutSlider.value = currentSettings.monitorAutoResumeTimeout;
-      timeoutValue.textContent = `${currentSettings.monitorAutoResumeTimeout} s`;
       const min = parseInt(timeoutSlider.min || "20", 10);
-      const max = parseInt(timeoutSlider.max || "600", 10);
-      const percentage = ((currentSettings.monitorAutoResumeTimeout - min) / (max - min)) * 100;
+      const max = parseInt(timeoutSlider.max || "180", 10);
+      // An older config may hold a value the backend now clamps (e.g. 228)
+      const resumeTimeout = Math.max(min, Math.min(max, currentSettings.monitorAutoResumeTimeout));
+      timeoutSlider.value = resumeTimeout;
+      timeoutValue.textContent = `${resumeTimeout} s`;
+      const percentage = ((resumeTimeout - min) / (max - min)) * 100;
       const maxPosition = 400 - 30; // 370px max
       const buttonPosition = (percentage / 100) * maxPosition;
       timeoutButton.style.left = `${buttonPosition}px`;
       timeoutFill.style.width = `${buttonPosition}px`;
     }
+
 
     if (autostartCheckbox) {
       autostartCheckbox.checked = currentSettings.autostart;
@@ -3584,7 +3590,7 @@
 
     const clampedThreshold = Math.max(THRESHOLD_MIN_S, Math.min(THRESHOLD_MAX_S, threshold));
     // Clamp timeout between 20 and 180
-    const clampedTimeout = Math.max(20, Math.min(600, monitorAutoResumeTimeout));
+    const clampedTimeout = Math.max(20, Math.min(180, monitorAutoResumeTimeout));
 
     // Track what we're trying to save; we only clear warnings after the save succeeds.
     _pendingSave = { threshold: clampedThreshold, monitorAutoResumeTimeout: clampedTimeout };
@@ -5168,7 +5174,7 @@
           const timeoutAtMax =
             typeof curMonitorTimeout === "number" &&
             Number.isFinite(curMonitorTimeout) &&
-            curMonitorTimeout >= (600 - 1e-6);
+            curMonitorTimeout >= (180 - 1e-6);
           return {
             title: t("Injection exceeded the timeout (process was stopped)"),
             details: [
@@ -5176,6 +5182,16 @@
               timeoutAtMax
                 ? t("Fix: you're already at the maximum Monitor Auto-Resume Timeout. This usually means the injection is extremely slow. Try lighter mods, close heavy apps, move League/mods to an SSD, and consider adding antivirus exclusions for the League and Rose folders. Then retry.")
                 : t('Fix: increase "Monitor Auto-Resume Timeout (seconds)" and click Save. If the warning is still there, increase it again and Save again. Once the warning is gone, try again.'),
+            ],
+          };
+        }
+
+        if (code === "PATCHER_READY_TIMEOUT") {
+          return {
+            title: t("The game was released before the patcher was ready"),
+            details: [
+              t("What it means: the overlay was still being built when the game had to start, so it started without the mods. The first load can also hang and need a reconnect."),
+              t('Fix: raise "Monitor Auto-Resume Timeout (seconds)" and click Save. If it is already at its maximum, use fewer or lighter mods, then retry.'),
             ],
           };
         }

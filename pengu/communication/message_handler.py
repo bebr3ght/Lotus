@@ -548,11 +548,16 @@ class MessageHandler:
     def _handle_settings_request(self, payload: dict) -> None:
         """Handle settings request"""
         try:
-            from config import INJECTION_THRESHOLD_DEFAULT_S, clamp_injection_threshold
+            from config import (
+                INJECTION_THRESHOLD_DEFAULT_S,
+                MONITOR_AUTO_RESUME_TIMEOUT_DEFAULT_S,
+                clamp_injection_threshold,
+            )
             threshold = clamp_injection_threshold(
                 get_config_float("General", "injection_threshold", INJECTION_THRESHOLD_DEFAULT_S)
             )
-            monitor_auto_resume_timeout = get_config_float("General", "monitor_auto_resume_timeout", 60.0)
+            monitor_auto_resume_timeout = get_config_float(
+                "General", "monitor_auto_resume_timeout", MONITOR_AUTO_RESUME_TIMEOUT_DEFAULT_S)
             autostart = is_registered_for_autostart()
             hide_empty_categories = (get_config_option("General", "hide_empty_categories", "false") or "false").lower() == "true"
             game_path = get_config_option("General", "leaguePath") or ""
@@ -1039,6 +1044,15 @@ class MessageHandler:
                         return max(lo, min(hi, float(v)))
                     except Exception:
                         return float(lo)
+
+                # Category: the game was released before the patcher was ready.
+                # Before the auto-resume branch: its fix text names the same
+                # setting, and that branch would claim this report.
+                if 'released without the mods' in ml:
+                    return {
+                        'code': 'PATCHER_READY_TIMEOUT',
+                        'text': 'Patcher still building -> game started without mods',
+                    }
 
                 # Category: Monitor Auto-Resume Timeout (AUTO_RESUME_TRIGGERED)
                 if "monitor auto-resume timeout" in fl or "auto-resume safety" in ml:
@@ -3015,9 +3029,17 @@ class MessageHandler:
     def _handle_settings_save(self, payload: dict) -> None:
         """Handle settings save"""
         try:
-            from config import INJECTION_THRESHOLD_DEFAULT_S, clamp_injection_threshold
+            from config import (
+                INJECTION_THRESHOLD_DEFAULT_S,
+                MONITOR_AUTO_RESUME_TIMEOUT_MAX_S,
+                MONITOR_AUTO_RESUME_TIMEOUT_MIN_S,
+                clamp_injection_threshold,
+            )
             threshold = clamp_injection_threshold(payload.get("threshold", INJECTION_THRESHOLD_DEFAULT_S))
-            monitor_auto_resume_timeout = max(1, min(180, int(payload.get("monitorAutoResumeTimeout", 60))))
+            monitor_auto_resume_timeout = max(
+                MONITOR_AUTO_RESUME_TIMEOUT_MIN_S,
+                min(MONITOR_AUTO_RESUME_TIMEOUT_MAX_S, int(payload.get("monitorAutoResumeTimeout", 60))),
+            )
             autostart = payload.get("autostart", False)
             hide_empty_categories = bool(payload.get("hideEmptyCategories", False))
             game_path = payload.get("gamePath", "")

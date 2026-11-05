@@ -22,11 +22,7 @@ PERSISTENT_ROOT_FILES = ("icon.ico", "unins000.exe", "unins000.dat")
 
 # User-provided files that should survive updates (relative to install dir)
 # In frozen builds, files are under _internal/
-PERSISTENT_USER_FILES = (
-    # User-provided LTK patcher, not redistributed with Lotus
-    "_internal/injection/tools/ltk_patcher_host.exe",
-    "_internal/injection/tools/ltk_patcher_dll.dll",
-)
+PERSISTENT_USER_FILES = ()
 
 UPDATE_RESULT_FILE = "last_update_result.txt"
 
@@ -82,7 +78,7 @@ if defined PID (
     powershell -NoProfile -NonInteractive -Command "Wait-Process -Id %PID% -Timeout 30 -ErrorAction SilentlyContinue" >nul 2>&1
 )
 echo [%date% %time%] Mirroring files >> "%LOG%"
-robocopy "%SOURCE%" "%DEST%" /MIR /R:5 /W:2 /NFL /NDL /NJH /NJS /XD __pycache__ "%PLUGINS%" /XF config.ini ltk_patcher_host.exe ltk_patcher_dll.dll hashes.game.txt >> "%LOG%" 2>&1
+robocopy "%SOURCE%" "%DEST%" /MIR /R:5 /W:2 /NFL /NDL /NJH /NJS /XD __pycache__ "%PLUGINS%" /XF config.ini hashes.game.txt >> "%LOG%" 2>&1
 set "RC=%ERRORLEVEL%"
 echo [%date% %time%] robocopy exit code %RC% >> "%LOG%"
 if %RC% GEQ 8 goto :robofail

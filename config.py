@@ -286,6 +286,15 @@ def clamp_injection_threshold(value) -> float:
     if seconds != seconds:  # NaN
         return INJECTION_THRESHOLD_DEFAULT_S
     return max(INJECTION_THRESHOLD_MIN_S, min(INJECTION_THRESHOLD_MAX_S, seconds))
+
+
+# How long the game may stay frozen waiting for the injection: first for the
+# overlay to be built, then for the patcher to hook the game. One setting,
+# because both are the same window of time. The settings UI offers the same
+# bounds.
+MONITOR_AUTO_RESUME_TIMEOUT_MIN_S = 1.0
+MONITOR_AUTO_RESUME_TIMEOUT_MAX_S = 180.0
+MONITOR_AUTO_RESUME_TIMEOUT_DEFAULT_S = 60.0
 BASE_SKIN_VERIFICATION_WAIT_S = 0.15        # Seconds to wait for LCU to process base skin change
 PERSISTENT_MONITOR_START_SECONDS = 1        # Seconds remaining when persistent game monitor starts
 PERSISTENT_MONITOR_CHECK_INTERVAL_S = 0.05  # Seconds between game process checks

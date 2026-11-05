@@ -240,8 +240,10 @@ class InjectionSessionTests(LtfSessionTestCase):
         self.overlay.mk_run_overlay([mod], stop_callback=lambda: True)
 
         path = Path([call for call in self.bridge.calls if call[0] == "import"][0][1])
-        self.assertEqual(path.parent.parent, self.root / "injection" / "ltf_staging")
-        self.assertFalse(path.exists())  # removed once imported
+        # The content-addressed cache lives in Rose's injection folder, which is
+        # readable by the desktop user LTK Manager restarts as; tempfile is not
+        self.assertEqual(path.parent.parent, self.root / "injection" / "fantome_cache")
+        self.assertTrue(path.is_file(), "the archive stays for the next game")
 
     def test_an_archive_ltk_manager_cannot_read_is_sent_as_bytes(self):
         mod = self.make_mod()
@@ -256,7 +258,9 @@ class InjectionSessionTests(LtfSessionTestCase):
         self.assertEqual(result, 0)
         bytes_calls = [call for call in self.bridge.calls if call[0] == "import_bytes"]
         self.assertEqual(len(bytes_calls), 1)
-        self.assertEqual(bytes_calls[0][2], f"{mod}.fantome")
+        # The cache name is a content digest, so the library gets the mod's own
+        # name instead of a hash
+        self.assertEqual(bytes_calls[0][2], "Eternal Aspect Leona")
         self.assertEqual(self.reported_codes(), [])
 
     def test_a_large_unreadable_archive_is_not_sent_as_bytes(self):
