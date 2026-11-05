@@ -81,6 +81,15 @@ BACKGROUND_MESSAGE_TYPES = frozenset({
     "select-font",
     "select-announcer",
     "select-other",
+    # A list request can put a historic mod back by itself
+    # (_auto_select_historic_mod), so it must not run alongside a selection on
+    # another thread: it read the saved mod before the deselect cleared it and
+    # then re-selected what the player had just turned off.
+    "request-maps",
+    "request-fonts",
+    "request-announcers",
+    "request-category-mods",
+    "request-others",
 })
 
 # Phases the client is in while the player sits on the reconnect screen, and the
@@ -178,6 +187,11 @@ class MessageHandler:
         self._reinject_guard = threading.Lock()
         self._reinject_running = False
         self._reinject_pending = False
+        # Mod categories the player cleared by hand ("None"). A list response
+        # must not put such a mod back: the auto-restore reads "nothing is
+        # selected" as "restore the saved mod", which is exactly the state a
+        # deselection leaves behind.
+        self._player_deselected: set = set()
 
     def _is_valid_local_league_path(self, game_path: str) -> bool:
         """Validate a League install path without touching UNC/network paths."""
@@ -2371,6 +2385,7 @@ class MessageHandler:
         if map_id is None:
             if hasattr(self.shared_state, 'selected_map_mod') and self.shared_state.selected_map_mod:
                 self.shared_state.selected_map_mod = None
+                self._player_deselected.add("map")
                 log.info(f"[SkinMonitor] Map mod deselected")
                 # Clear historic mod when deselected
                 try:
@@ -2379,6 +2394,11 @@ class MessageHandler:
                     log.debug("[MOD_HISTORIC] Cleared historic map mod")
                 except Exception as e:
                     log.debug(f"[MOD_HISTORIC] Failed to clear historic map mod: {e}")
+                # The mod is out of the selection, so the game has to be given
+                # what is left of it. Without this the overlay built for the old
+                # selection kept being served, and a mod that crashes the game
+                # kept crashing it on every reconnect.
+                self._mods_ready_for_injection(deselected=True)
             return
         
         try:
@@ -2449,6 +2469,7 @@ class MessageHandler:
                 "mod_folder_name": mod_folder_name,
                 "relative_path": str(selected_mod.path.relative_to(self.mod_storage.mods_root)).replace("\\", "/"),
             }
+            self._player_deselected.discard("map")
 
             # === МГНОВЕННОЕ СОХРАНЕНИЕ КАРТЫ ===
             try:
@@ -2480,6 +2501,7 @@ class MessageHandler:
         if font_id is None:
             if hasattr(self.shared_state, 'selected_font_mod') and self.shared_state.selected_font_mod:
                 self.shared_state.selected_font_mod = None
+                self._player_deselected.add("font")
                 log.info(f"[SkinMonitor] Font mod deselected")
                 # Clear historic mod when deselected
                 try:
@@ -2488,6 +2510,9 @@ class MessageHandler:
                     log.debug("[MOD_HISTORIC] Cleared historic font mod")
                 except Exception as e:
                     log.debug(f"[MOD_HISTORIC] Failed to clear historic font mod: {e}")
+                # See _handle_select_map: a deselection on the reconnect screen
+                # has to reach the game too
+                self._mods_ready_for_injection(deselected=True)
             return
         
         try:
@@ -2557,6 +2582,7 @@ class MessageHandler:
                 "mod_folder_name": mod_folder_name,
                 "relative_path": str(selected_mod.path.relative_to(self.mod_storage.mods_root)).replace("\\", "/"),
             }
+            self._player_deselected.discard("font")
 
             # === МГНОВЕННОЕ СОХРАНЕНИЕ ШРИФТА ===
             try:
@@ -2588,6 +2614,7 @@ class MessageHandler:
         if announcer_id is None:
             if hasattr(self.shared_state, 'selected_announcer_mod') and self.shared_state.selected_announcer_mod:
                 self.shared_state.selected_announcer_mod = None
+                self._player_deselected.add("announcer")
                 log.info(f"[SkinMonitor] Announcer mod deselected")
                 # Clear historic mod when deselected
                 try:
@@ -2596,6 +2623,9 @@ class MessageHandler:
                     log.debug("[MOD_HISTORIC] Cleared historic announcer mod")
                 except Exception as e:
                     log.debug(f"[MOD_HISTORIC] Failed to clear historic announcer mod: {e}")
+                # See _handle_select_map: a deselection on the reconnect screen
+                # has to reach the game too
+                self._mods_ready_for_injection(deselected=True)
             return
         
         try:
@@ -2665,6 +2695,7 @@ class MessageHandler:
                 "mod_folder_name": mod_folder_name,
                 "relative_path": str(selected_mod.path.relative_to(self.mod_storage.mods_root)).replace("\\", "/"),
             }
+            self._player_deselected.discard("announcer")
 
             # === МГНОВЕННОЕ СОХРАНЕНИЕ ДИКТОРA ===
             try:
@@ -3023,6 +3054,10 @@ class MessageHandler:
             mod_list: List of available mods (dicts with id, name, path, etc.)
         """
         try:
+            if mod_type in self._player_deselected:
+                log.debug(f"[MOD_HISTORIC] {mod_type} was cleared by the player - not restoring it")
+                return
+
             # Find the mod in the list by matching relative path
             selected_mod_dict = None
             for mod_dict in mod_list:
