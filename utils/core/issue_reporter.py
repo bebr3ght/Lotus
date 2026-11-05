@@ -35,6 +35,7 @@ _ALLOWED_CODES = {
     'LTF_MISSING',            # Rose's LTF bridge files (ltk_launcher.exe + LeagueToolFlop.dll) are missing
     'LTK_MANAGER_MISSING',    # LTK Manager, which Rose drives through the bridge, is not installed
     'LTF_FAILED',             # The LTF session (bridge or LTK patcher) reported an error
+    'LTK_HEAVY_BUILTINS',     # LTK Manager's built-in mods put every champion's archive into the overlay
     'LTF_IMPORT_FAILED',      # A mod could not be imported into LTK Manager's library
     'PATCHER_READY_TIMEOUT',  # The game was released before the patcher had built the overlay
     'PENGU_ACTIVATION_FAILED',  # Pengu Loader could not be activated: Rose is missing from the client

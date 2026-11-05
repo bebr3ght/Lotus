@@ -191,7 +191,6 @@ class MessageHandler:
         # must not put such a mod back: the auto-restore reads "nothing is
         # selected" as "restore the saved mod", which is exactly the state a
         # deselection leaves behind.
-        self._player_deselected: set = set()
 
     def _is_valid_local_league_path(self, game_path: str) -> bool:
         """Validate a League install path without touching UNC/network paths."""
@@ -550,14 +549,13 @@ class MessageHandler:
         try:
             from config import (
                 INJECTION_THRESHOLD_DEFAULT_S,
-                MONITOR_AUTO_RESUME_TIMEOUT_DEFAULT_S,
                 clamp_injection_threshold,
             )
             threshold = clamp_injection_threshold(
                 get_config_float("General", "injection_threshold", INJECTION_THRESHOLD_DEFAULT_S)
             )
             monitor_auto_resume_timeout = get_config_float(
-                "General", "monitor_auto_resume_timeout", MONITOR_AUTO_RESUME_TIMEOUT_DEFAULT_S)
+                "General", "monitor_auto_resume_timeout", 60.0)
             autostart = is_registered_for_autostart()
             hide_empty_categories = (get_config_option("General", "hide_empty_categories", "false") or "false").lower() == "true"
             game_path = get_config_option("General", "leaguePath") or ""
@@ -1122,6 +1120,16 @@ class MessageHandler:
                     if tracker_samples is not None:
                         result["trackerSamples"] = tracker_samples
                     return result
+
+                # Category: LTK Manager's built-in mods hold every champion's
+                # archive (before the LTF category: it names LTK Manager too)
+                if "built-in mods put every champion" in ml:
+                    builtins = msg.split('(', 1)[1].rsplit(')', 1)[0].strip() if '(' in msg else ''
+                    return {
+                        'code': 'LTK_HEAVY_BUILTINS',
+                        'text': 'LTK Manager built-in mods slow every game -> turn them off',
+                        'detail': builtins,
+                    }
 
                 # Category: the League client runs as administrator (checked on
                 # each client connection; before the Windows account category)
@@ -2167,6 +2175,7 @@ class MessageHandler:
                 "success": deleted,
                 "championId": champion_id,
                 "modName": mod_name,
+                "relativePath": relative_path,
             }
             if not deleted:
                 response_payload["error"] = "Mod not found"
@@ -2453,7 +2462,6 @@ class MessageHandler:
         if map_id is None:
             if hasattr(self.shared_state, 'selected_map_mod') and self.shared_state.selected_map_mod:
                 self.shared_state.selected_map_mod = None
-                self._player_deselected.add("map")
                 log.info(f"[SkinMonitor] Map mod deselected")
                 # Clear historic mod when deselected
                 try:
@@ -2537,7 +2545,6 @@ class MessageHandler:
                 "mod_folder_name": mod_folder_name,
                 "relative_path": str(selected_mod.path.relative_to(self.mod_storage.mods_root)).replace("\\", "/"),
             }
-            self._player_deselected.discard("map")
 
             # === МГНОВЕННОЕ СОХРАНЕНИЕ КАРТЫ ===
             try:
@@ -2569,7 +2576,6 @@ class MessageHandler:
         if font_id is None:
             if hasattr(self.shared_state, 'selected_font_mod') and self.shared_state.selected_font_mod:
                 self.shared_state.selected_font_mod = None
-                self._player_deselected.add("font")
                 log.info(f"[SkinMonitor] Font mod deselected")
                 # Clear historic mod when deselected
                 try:
@@ -2650,7 +2656,6 @@ class MessageHandler:
                 "mod_folder_name": mod_folder_name,
                 "relative_path": str(selected_mod.path.relative_to(self.mod_storage.mods_root)).replace("\\", "/"),
             }
-            self._player_deselected.discard("font")
 
             # === МГНОВЕННОЕ СОХРАНЕНИЕ ШРИФТА ===
             try:
@@ -2682,7 +2687,6 @@ class MessageHandler:
         if announcer_id is None:
             if hasattr(self.shared_state, 'selected_announcer_mod') and self.shared_state.selected_announcer_mod:
                 self.shared_state.selected_announcer_mod = None
-                self._player_deselected.add("announcer")
                 log.info(f"[SkinMonitor] Announcer mod deselected")
                 # Clear historic mod when deselected
                 try:
@@ -2763,7 +2767,6 @@ class MessageHandler:
                 "mod_folder_name": mod_folder_name,
                 "relative_path": str(selected_mod.path.relative_to(self.mod_storage.mods_root)).replace("\\", "/"),
             }
-            self._player_deselected.discard("announcer")
 
             # === МГНОВЕННОЕ СОХРАНЕНИЕ ДИКТОРA ===
             try:
@@ -3031,14 +3034,11 @@ class MessageHandler:
         try:
             from config import (
                 INJECTION_THRESHOLD_DEFAULT_S,
-                MONITOR_AUTO_RESUME_TIMEOUT_MAX_S,
-                MONITOR_AUTO_RESUME_TIMEOUT_MIN_S,
                 clamp_injection_threshold,
             )
             threshold = clamp_injection_threshold(payload.get("threshold", INJECTION_THRESHOLD_DEFAULT_S))
             monitor_auto_resume_timeout = max(
-                MONITOR_AUTO_RESUME_TIMEOUT_MIN_S,
-                min(MONITOR_AUTO_RESUME_TIMEOUT_MAX_S, int(payload.get("monitorAutoResumeTimeout", 60))),
+                1, min(180, int(payload.get("monitorAutoResumeTimeout", 60)))
             )
             autostart = payload.get("autostart", False)
             hide_empty_categories = bool(payload.get("hideEmptyCategories", False))
@@ -3136,10 +3136,6 @@ class MessageHandler:
             mod_list: List of available mods (dicts with id, name, path, etc.)
         """
         try:
-            if mod_type in self._player_deselected:
-                log.debug(f"[MOD_HISTORIC] {mod_type} was cleared by the player - not restoring it")
-                return
-
             # Find the mod in the list by matching relative path
             selected_mod_dict = None
             for mod_dict in mod_list:

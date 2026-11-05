@@ -93,6 +93,17 @@
       will-change: filter, opacity;
     }
 
+    /* Troubleshooting button with errors: the whole button glows red */
+    @keyframes roseTroubleshootGlow {
+      0%, 100% { box-shadow: 0 0 4px 0 rgba(232, 70, 70, 0.45), inset 0 0 6px rgba(232, 70, 70, 0.20); }
+      50%      { box-shadow: 0 0 12px 2px rgba(232, 70, 70, 0.85), inset 0 0 10px rgba(232, 70, 70, 0.35); }
+    }
+
+    #troubleshoot-button.rose-troubleshoot-alert {
+      display: block;
+      animation: roseTroubleshootGlow 1.6s ease-in-out infinite;
+    }
+
     @font-face {
       font-family: "Beaufort for LOL";
       src: url("http://127.0.0.1:${window.__roseBridge ? window.__roseBridge.port : 50000}/asset/BeaufortforLOL-Regular.ttf") format("truetype");
@@ -1942,32 +1953,23 @@
       }
     }
 
-    // Troubleshooting button warning overlay (only when settings flyout is open)
+    // Troubleshooting button: glows red, with the error count after its label
     const tb = document.getElementById("troubleshoot-button");
     if (tb) {
-      tb.style.position = tb.style.position || "relative";
-      let warn = tb.querySelector("#rose-troubleshoot-warning");
+      let count = tb.querySelector("#rose-troubleshoot-count");
+      tb.classList.toggle("rose-troubleshoot-alert", errorBadgeState.hasErrors);
       if (errorBadgeState.hasErrors) {
-        if (!warn) {
-          warn = document.createElement("div");
-          warn.id = "rose-troubleshoot-warning";
-          warn.classList.add("rose-warning-glow");
-
-          warn.style.position = "absolute";
-          warn.style.top = "-15px";
-          warn.style.right = "-9px";
-          warn.style.width = "14px";
-          warn.style.height = "14px";
-          warn.style.backgroundImage = `url(http://127.0.0.1:${window.__roseBridge ? window.__roseBridge.port : 50000}/asset/red-warning.png)`;
-          warn.style.backgroundSize = "contain";
-          warn.style.backgroundRepeat = "no-repeat";
-          warn.style.backgroundPosition = "center";
-          warn.style.pointerEvents = "none";
-
-          tb.appendChild(warn);
+        if (!count) {
+          count = document.createElement("span");
+          count.id = "rose-troubleshoot-count";
+          count.style.marginLeft = "6px";
+          count.style.color = "#e8615a";
+          count.style.pointerEvents = "none";
+          tb.appendChild(count);
         }
-      } else if (warn) {
-        warn.remove();
+        count.textContent = errorBadgeState.count > 0 ? `(${errorBadgeState.count})` : "";
+      } else if (count) {
+        count.remove();
       }
     }
   }
@@ -2514,7 +2516,7 @@
     timeoutLabelText.textContent = t("Monitor Auto-Resume Timeout (seconds):");
     timeoutLabel.appendChild(
       createTooltipButton(
-        t("Auto-resume is a safety feature.\n\nIf the injection process takes longer than the value you set, the app will automatically cancel the injection and let the game start normally.\n\nThis prevents the injection from looping and blocking the game from launching.\n\nIf you use a lot of custom mods, you may need to adjust this value."),
+        t("How long Rose may hold the game while LTK Manager prepares your skin.\n\nWhen LTK Manager is not ready before the game starts, Rose freezes the game, then restarts it and reconnects you once LTK Manager is ready. Past this time, the game starts without the skin.\n\nIf you use heavy mods, you may need a higher value."),
         t("Auto-resume info")
       )
     );
@@ -5176,22 +5178,12 @@
             Number.isFinite(curMonitorTimeout) &&
             curMonitorTimeout >= (180 - 1e-6);
           return {
-            title: t("Injection exceeded the timeout (process was stopped)"),
+            title: t("LTK Manager was not ready in time"),
             details: [
-              t("What it means: injection took longer than the allowed time, so ROSE stopped the process."),
+              t("What it means: LTK Manager was not ready within the Monitor Auto-Resume Timeout, so Rose let the game play on without the skin."),
               timeoutAtMax
                 ? t("Fix: you're already at the maximum Monitor Auto-Resume Timeout. This usually means the injection is extremely slow. Try lighter mods, close heavy apps, move League/mods to an SSD, and consider adding antivirus exclusions for the League and Rose folders. Then retry.")
                 : t('Fix: increase "Monitor Auto-Resume Timeout (seconds)" and click Save. If the warning is still there, increase it again and Save again. Once the warning is gone, try again.'),
-            ],
-          };
-        }
-
-        if (code === "PATCHER_READY_TIMEOUT") {
-          return {
-            title: t("The game was released before the patcher was ready"),
-            details: [
-              t("What it means: the overlay was still being built when the game had to start, so it started without the mods. The first load can also hang and need a reconnect."),
-              t('Fix: raise "Monitor Auto-Resume Timeout (seconds)" and click Save. If it is already at its maximum, use fewer or lighter mods, then retry.'),
             ],
           };
         }
@@ -5255,6 +5247,17 @@
           };
         }
 
+        if (code === 'LTK_HEAVY_BUILTINS') {
+          const detail = String(e?.detail || '').trim();
+          return {
+            title: t("LTK Manager's built-in mods slow down every game"),
+            details: [
+              t("What it means: {detail} put every champion's archive (about 16 GB) into LTK Manager's overlay, so each build takes minutes and the game starts before the patcher.", { detail }),
+              t("Fix: quit Rose, open LTK Manager from the Start menu > Settings > Built-in mods, set Base skins to Off (or Modded champions) and limit Character inking to chosen champions, then close LTK Manager (also from the system tray) and start Rose again."),
+            ],
+          };
+        }
+
         if (code === 'LTK_MANAGER_MISSING') {
           return {
             title: t('LTK Manager is not installed'),
@@ -5293,6 +5296,11 @@
             crashed: () => t('Fix: LTK Manager crashed. Retry the next game. If it crashes every game, report it with your Rose logs.'),
             cdp: () => t(CDP_FIX),
             league_admin: () => t('Fix: League is set to run as administrator, and LTK Manager does not patch it then. Right-click League of Legends.exe and LeagueClient.exe (in the League of Legends folder) > Properties > Compatibility, untick "Run this program as an administrator" (also under "Change settings for all users"), then restart League.'),
+            signature: () => t("Fix: Windows could not verify the digital signature of LTK Manager's files: one was modified or damaged, and its patcher refuses to run. Reinstall LTK Manager from its official release (github.com/LeagueToolkit/ltk-manager/releases), then retry."),
+            host_missing: () => t("Fix: LTK Manager's own patcher (ltk_patcher_host.exe) is missing from its folder, most often removed by an antivirus. Reinstall LTK Manager, then add its folder (C:\\Program Files\\LTK Manager) to your antivirus exclusions."),
+            disabled: () => t("Fix: LTK Manager's integrity check turned the overlay off because of a mod (named above). LTK Manager refuses a custom skin made of another skin's files: use another custom skin or the official one."),
+            corrupt: () => t("Fix: League could not read a file of the overlay, most often a mod made for an older patch. Turn your mods off, then back on one at a time to find it. LTK Manager's incident file (named above) lists the mods it suspects."),
+            incident: () => t("Fix: LTK Manager's incident file (named above) says what went wrong in the game and which mods it suspects."),
             manager_admin: () => t('Fix: LTK Manager runs as administrator, and it does not patch League then. Turn User Account Control back on, or use a regular Windows account (not the built-in Administrator), then restart the PC.'),
           };
           const fix = fixes[e?.cause];

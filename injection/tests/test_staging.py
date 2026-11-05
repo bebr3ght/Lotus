@@ -72,7 +72,6 @@ class OverlayStagingTests(LtfSessionTestCase):
         super().setUp()
         self.stage_dir = self.root / "injection" / "stage"
         self.stage_dir.mkdir(parents=True)
-        self.cache_root = self.root / "injection" / "fantome_cache"
         self.overlay.open_staging()
 
     def stage(self, name="1001-EternalAspect", display="Eternal Aspect Leona", wad=b"wad"):
@@ -94,15 +93,13 @@ class OverlayStagingTests(LtfSessionTestCase):
         self.stage()
         before = list(self.bridge.calls)
         mod = self.make_mod()  # the same skin, extracted again by the injection
-        injection_manager = MagicMock()
 
-        result = self.overlay.mk_run_overlay([mod], stop_callback=lambda: True, injection_manager=injection_manager)
+        result = self.overlay.mk_run_overlay([mod], stop_callback=lambda: True)
 
         self.assertEqual(result, 0)
         during = [call[0] for call in self.bridge.calls[len(before):]]
         self.assertNotIn("import", during)
         self.assertNotIn("start_patcher", during)
-        injection_manager.resume_game.assert_called_once()
         self.assertEqual(self.bridge.library_entries, [])  # removed after the game
         self.assertEqual(self.reported_codes(), [])
 
@@ -116,7 +113,7 @@ class OverlayStagingTests(LtfSessionTestCase):
         self.make_mod()  # the injection extracts the skin and links the map again
         link_or_extract(cache / "Rift", self.mods / "Rift", cache_dir=cache)
 
-        result = self.overlay.mk_run_overlay([skin, "Rift"], stop_callback=lambda: True, injection_manager=MagicMock())
+        result = self.overlay.mk_run_overlay([skin, "Rift"], stop_callback=lambda: True)
 
         self.assertEqual(result, 0)
         during = [call[0] for call in self.bridge.calls[len(before):]]
@@ -252,17 +249,13 @@ class OverlayStagingTests(LtfSessionTestCase):
         mod = self.make_mod(where=self.stage_dir)
         archives = self.overlay.pack_mods(self.stage_dir, [mod])
 
-        # The archive comes from the content-addressed cache, not from next to
-        # the folder: the same bytes are reused by the injection after the
-        # staging and by the next game
-        self.assertEqual(list(archives), [mod])
-        self.assertEqual(archives[mod].parent.parent, self.cache_root)
-        with patch.object(overlay_manager, "packed_fantome") as pack:
+        self.assertEqual(archives, {mod: self.stage_dir / f"{mod}.fantome"})
+        with patch.object(overlay_manager, "write_fantome_zip") as pack:
             self.assertTrue(self.overlay.stage_mods(self.stage_dir, [mod], archives=archives))
 
         pack.assert_not_called()  # nothing left to pack on the way to the scan
         imported = [call[1] for call in self.bridge.calls if call[0] == "import"]
-        self.assertEqual(imported, [str(archives[mod])])
+        self.assertEqual(imported, [str(self.stage_dir / f"{mod}.fantome")])
 
     def test_a_mod_staged_for_an_earlier_pick_is_not_packed_again(self):
         skin = self.make_mod(where=self.stage_dir)
@@ -274,11 +267,10 @@ class OverlayStagingTests(LtfSessionTestCase):
 
         archives = self.overlay.pack_mods(next_pick, [other, rift])
 
-        self.assertEqual(list(archives), [other])
-        self.assertEqual(archives[other].parent.parent, self.cache_root)
+        self.assertEqual(archives, {other: next_pick / f"{other}.fantome"})
         self.assertTrue(self.overlay.stage_mods(next_pick, [other, rift], archives=archives))
         imported = [call[1] for call in self.bridge.calls if call[0] == "import"]
-        self.assertEqual(imported[2:], [str(archives[other])])  # the map stays as it is
+        self.assertEqual(imported[2:], [str(next_pick / f"{other}.fantome")])  # the map stays as it is
 
     def test_a_missing_packed_archive_is_packed_by_the_install(self):
         mod = self.make_mod(where=self.stage_dir)
@@ -287,8 +279,7 @@ class OverlayStagingTests(LtfSessionTestCase):
 
         self.assertTrue(staged)
         imported = Path([call[1] for call in self.bridge.calls if call[0] == "import"][0])
-        self.assertEqual(imported.parent.parent, self.cache_root)
-        self.assertTrue(imported.is_file(), "the install packs it from the cache")
+        self.assertEqual(imported.parent.parent, self.root / "injection" / "ltf_staging")
 
     def test_the_time_from_the_pick_is_kept_for_a_late_join(self):
         mod = self.make_mod(where=self.stage_dir)
@@ -357,7 +348,7 @@ class LtkLogReadingTests(LtfSessionTestCase):
             return answer
 
         with patch.object(FakeBridge, "start_patcher", start_then_fail):
-            result = self.overlay.mk_run_overlay([mod], stop_callback=lambda: True, injection_manager=MagicMock())
+            result = self.overlay.mk_run_overlay([mod], stop_callback=lambda: True)
 
         self.assertEqual(result, 1)
         reason = next(call.kwargs["details"]["reason"] for call in self.report_issue.call_args_list
@@ -475,6 +466,30 @@ class LtkLogTests(LtfSessionTestCase):
 
         self.assertEqual(result, 0)
         self.assertEqual(self.reported_causes(), ["refused"])
+
+    def test_a_refusal_over_ltk_managers_own_signature_names_it(self):
+        """#442: the chain's inner check was WinVerifyTrust's 0x80096010 on
+        ltk-manager.exe: a damaged LTK Manager, fixed by reinstalling it"""
+        mod = self.make_mod()
+        polls = {"count": 0}
+
+        def stop():
+            polls["count"] += 1
+            if polls["count"] == 2:
+                self.write_log(
+                    "[ltk-host] injected: dll attached\n"
+                    "[ltk-dll pid=21108 tid=20400 ERROR] ltk_patcher_dll::verify: host verification failed, "
+                    "refusing overlay: [VRF00000009] (3168) -> [VRF00000001] (80096010)\n"
+                )
+            return polls["count"] > 4
+
+        self.overlay.mk_run_overlay([mod], stop_callback=stop)
+
+        self.assertEqual(self.reported_causes(), ["signature"])
+        (reason,) = [call.args[2] for call in self.report_issue.call_args_list if call.args[0] == "LTF_FAILED"]
+        self.assertIn("VRF00000009 (3168)", reason)
+        self.assertIn("0x80096010", reason)
+        self.assertIn("Reinstall LTK Manager", overlay_manager.OverlayManager._ltk_failure_hint(reason))
 
     def test_an_attached_patcher_is_not_reported(self):
         mod = self.make_mod()
