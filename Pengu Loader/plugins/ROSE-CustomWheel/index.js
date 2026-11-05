@@ -28,6 +28,12 @@
   let selectedModSkinId = null; // Track which skin the selected mod belongs to
   let pythonChromaState = null;
   let currentPhase = null;
+
+  // The client shows these while the player sits on the reconnect screen, which
+  // is where a player ends up when a mod crashed the game. A mod has to stay
+  // changeable there, before reconnecting.
+  const RECONNECT_PHASES = ["Reconnect", "GameStart", "InProgress"];
+  const isReconnectPhase = () => RECONNECT_PHASES.includes(currentPhase);
   let selectionRequestCounter = 0;
   let skinModsRequestCounter = 0;
   let latestSkinModsRequestId = null;
@@ -128,6 +134,9 @@
     ) {
       resetCustomSkinSessionState();
     }
+
+    // The reconnect screen may appear without any DOM replacement to observe
+    updateChampionSelectTarget();
   }
   let lastChampionSelectSession = null; // Track current champ select session
   let isFirstOpenInSession = true; // Track if this is first open in current session
@@ -1964,6 +1973,20 @@
 
     const targetContainer = findButtonContainer();
     if (!targetContainer) {
+      if (isReconnectPhase()) {
+        // The champion select UI is gone on the reconnect screen: keep the
+        // button on screen so a mod can be changed before reconnecting.
+        if (button.parentNode !== document.body) {
+          document.body.appendChild(button);
+        }
+        button.style.position = "fixed";
+        button.style.right = "80px";
+        button.style.bottom = "180px";
+        button.style.left = "auto";
+        button.style.top = "auto";
+        button.style.display = "block";
+        return;
+      }
       // Retry after a short delay if container not found (DOM might not be ready)
       setTimeout(() => {
         if (championSelectRoot) {
@@ -2053,6 +2076,21 @@
       if (target && (!button || !button.parentNode)) {
         refreshUIVisibility();
       }
+      return;
+    }
+    if (!target && isReconnectPhase()) {
+      // The reconnect screen has no champion select UI; the wheel stays
+      // available so a mod can be changed before reconnecting.
+      if (championSelectRoot !== "reconnect") {
+        championSelectRoot = "reconnect";
+        isFirstOpenInSession = true;
+        refreshUIVisibility();
+      }
+      return;
+    }
+    if (!target && championSelectRoot === "reconnect") {
+      championSelectRoot = null;
+      refreshUIVisibility();
       return;
     }
     // New champion select detected - reset session tracking
@@ -2213,8 +2251,9 @@
   function requestModsForCurrentSkin() {
     const { championId, skinId } = getCurrentSkinContext();
 
-    // Skins are only meaningful once a champion is locked in champ select.
-    if (!championLocked) {
+    // Skins are only meaningful once a champion is locked in champ select,
+    // except on the reconnect screen: that is where a crashed mod is changed.
+    if (!championLocked && !isReconnectPhase()) {
       // Badge reflects selected mods across categories; don't zero it here.
       if (panel && panel._modsLoading) {
         panel._modsLoading.textContent = tr("Waiting for champ lock…");
