@@ -254,24 +254,18 @@ class ModStorageService:
     def _load_target_manifest(
         self,
         champion_id: int,
-    ) -> Optional[tuple[tuple[int, ...], dict[str, dict]]]:
-        """The champion's targets, or None when the manifest exists but is unreadable.
-
-        None has to stay distinguishable from an empty result: a caller that
-        rewrites the manifest from an empty read drops every mod it held.
-        """
+        *,
+        require_readable: bool = False,
+    ) -> tuple[tuple[int, ...], dict[str, dict]]:
         champion_dir = self.get_champion_dir(champion_id)
         payload = None
         for metadata_name in (self.TARGET_METADATA, self.LEGACY_TARGET_METADATA):
             manifest_path = champion_dir / metadata_name
             payload = self._load_manifest(manifest_path)
+            if payload is None and require_readable:
+                raise ValueError("The saved skin mod targets could not be read, so they were left unchanged")
             if payload:
                 break
-        if payload is None and any(
-            (champion_dir / name).exists()
-            for name in (self.TARGET_METADATA, self.LEGACY_TARGET_METADATA)
-        ):
-            return None
         if not isinstance(payload, dict):
             return (), {}
 
@@ -407,14 +401,7 @@ class ModStorageService:
 
         champion_dir = self.get_champion_dir(champion_id_int)
         champion_dir.mkdir(parents=True, exist_ok=True)
-        loaded = self._load_target_manifest(champion_id_int)
-        if loaded is None:
-            # Rewriting it would drop every other mod registered for this champion
-            raise ValueError(
-                "This champion's mod list could not be read, so it was left unchanged. "
-                f"Delete or repair {champion_dir / self.TARGET_METADATA} and try again."
-            )
-        default_targets, mod_targets = loaded
+        default_targets, mod_targets = self._load_target_manifest(champion_id_int, require_readable=True)
         if mod_name:
             if mod_path is not None:
                 folder_hash, wad_hashes = self._hash_mod_folder(Path(mod_path))
@@ -627,11 +614,13 @@ class ModStorageService:
                 dir=str(champion_dir),
             )
         )
+        target_created = False
         try:
             extract_mod_archive(source, temporary_dir)
             if not any(temporary_dir.iterdir()):
                 raise ValueError("The selected mod archive contains no files")
             temporary_dir.replace(target_dir)
+            target_created = True
             manifest_path = self.set_champion_target_ids(
                 champion_id_int,
                 skin_ids,
@@ -641,6 +630,8 @@ class ModStorageService:
             return target_dir, manifest_path, mod_name
         except Exception:
             safe_remove_entry(temporary_dir)
+            if target_created:
+                safe_remove_entry(target_dir)
             raise
 
     def _resolve_mod_path(self, base_dir: Path, relative_path: object) -> Optional[Path]:
@@ -718,12 +709,7 @@ class ModStorageService:
             resolved_mod_name = mod_name or target.stem
             safe_remove_entry(target)
 
-            loaded = self._load_target_manifest(champion_id_int)
-            if loaded is None:
-                # The mod folder is already gone; leave the unreadable manifest alone
-                # rather than replacing it with one that lists nothing
-                return False
-            default_targets, mod_targets = loaded
+            default_targets, mod_targets = self._load_target_manifest(champion_id_int)
             removed = False
             for key in list(mod_targets.keys()):
                 metadata = mod_targets[key]
@@ -786,6 +772,24 @@ class ModStorageService:
                 temporary_manifest.replace(manifest_path)
 
             return True
+
+    def _load_category_manifest(self, category: str) -> set[str]:
+        manifest_path = self.mods_root / category / self.CATEGORY_METADATA
+        payload = self._load_manifest(manifest_path)
+        if not payload:
+            return set()
+
+        raw_mods = payload.get("mods") or {}
+        if not isinstance(raw_mods, dict):
+            return set()
+
+        registered = set()
+        for mod_key, raw_metadata in raw_mods.items():
+            metadata = raw_metadata if isinstance(raw_metadata, dict) else {}
+            mod_path = str(metadata.get("path") or mod_key).replace("\\", "/").strip("/")
+            if mod_path and "/" not in mod_path:
+                registered.add(mod_path.casefold())
+        return registered
 
     def import_category_mod_file(
         self,
@@ -933,10 +937,7 @@ class ModStorageService:
 
         champion_storage_id = champion_id_int * 1000
         champion_directory = self.get_champion_dir(champion_id_int)
-        loaded = self._load_target_manifest(champion_id_int)
-        # An unreadable manifest means the mods are unknown, not absent: list what
-        # is on disk with no target associations rather than showing nothing
-        default_targets, mod_targets = loaded if loaded is not None else ((), {})
+        default_targets, mod_targets = self._load_target_manifest(champion_id_int)
         entries = self._list_mods_in_directory(
             champion_directory,
             champion_id_int,
@@ -972,6 +973,9 @@ class ModStorageService:
             tuple(entries),
         )
         return list(entries)
+
+    def has_mods_for_skin(self, skin_id: int | str) -> bool:
+        return bool(self.list_mods_for_skin(skin_id))
 
     def categories_with_mods(self) -> List[str]:
         """Root categories holding at least one mod, in menu order."""
@@ -1014,16 +1018,14 @@ class ModStorageService:
         if not category_dir.exists() or not category_dir.is_dir():
             return []
 
+        registered_mods = self._load_category_manifest(category)
         display_names = self._load_category_display_names(category)
         entries = []
         for candidate in sorted(category_dir.iterdir(), key=lambda p: p.name.lower()):
-            if candidate.name.startswith(".") or candidate.name == self.CATEGORY_METADATA:
+            if not candidate.is_dir() or candidate.name == self.CATEGORY_METADATA:
                 continue
-            if candidate.is_dir():
-                mod_name = candidate.name
-            elif candidate.is_file() and candidate.suffix.lower() in {".zip", ".fantome"}:
-                mod_name = candidate.stem
-            else:
+            mod_name = candidate.name
+            if mod_name.casefold() not in registered_mods:
                 continue
 
             try:

@@ -5,14 +5,15 @@ Injection Manager
 Manages the injection process and coordinates with UI detection system
 """
 
+import shutil
 import threading
 import time
 import sys
+import uuid
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Optional
 
 from config import (
-    INJECTION_GATE_WAIT_S,
     INJECTION_LOCK_TIMEOUT_S,
     get_config_file_path
 )
@@ -20,14 +21,18 @@ from utils.core.logging import get_logger, log_action, log_success
 from utils.core.issue_reporter import report_issue
 
 from .injector import SkinInjector
+from .stage_plan import PARTY_SKINS_LABEL, StagePlan, describe, prepare_plan, skin_plan
 from ..classic import is_classic_game_mode
 from ..game.game_monitor import GameMonitor
 from ..config.threshold_manager import ThresholdManager
 
 log = get_logger()
 
-# How often the gate asks a stale session whether it let go of the directory
-_GATE_POLL_INTERVAL_S = 0.05
+# A selection is staged once it has rested this long (hovering through the
+# skins stages only the one the player stops on)
+STAGE_SETTLE_S = 0.5
+# The staging worker exits after this long without anything to stage
+STAGE_WORKER_IDLE_S = 30.0
 
 
 class InjectionManager:
@@ -43,9 +48,6 @@ class InjectionManager:
         self.last_skin_name = None
         self.last_injection_time = 0.0
         self.injection_lock = threading.Lock()
-        # Only one injection at a time may use the mods directory (see
-        # run_injection_exclusively)
-        self._injection_gate = threading.Lock()
         self._initialized = False
         self.current_champion = None
         self._injection_in_progress = False  # Track if injection is running
@@ -58,13 +60,32 @@ class InjectionManager:
         
         # Initialize game monitor with callback for auto-resume timeout
         self.game_monitor = GameMonitor(self._get_monitor_auto_resume_timeout)
-    
+
+        # Staging during the countdown (stage_plan): the latest selection
+        # wins. A preparer extracts and packs it at once, an installer puts it
+        # in LTK Manager once it has rested STAGE_SETTLE_S
+        self._stage_cond = threading.Condition()
+        self._stage_wanted: Optional[StagePlan] = None
+        self._stage_wanted_at = 0.0
+        # Whether the wanted pick waits STAGE_SETTLE_S before its install: not
+        # when it could not rest that long before the injection threshold
+        self._stage_wanted_settles = True
+        self._stage_done = None
+        self._stage_generation = 0
+        self._stage_thread = None
+        self._prepare_thread = None
+        # (wanted, generation, prepared): prepared is (stage_dir, mod_names,
+        # archives), or None when there is nothing to stage for it
+        self._stage_prepared = None
+        # (wanted, generation) the installer is putting in LTK Manager
+        self._stage_installing = None
+
     def _get_monitor_auto_resume_timeout(self) -> float:
         """Get monitor auto-resume timeout from config."""
         try:
             from config import get_config_float
             timeout = get_config_float("General", "monitor_auto_resume_timeout", 60.0)
-            return max(1.0, min(600.0, float(timeout)))  # Clamp between 1 and 180
+            return max(1.0, min(180.0, float(timeout)))  # Clamp between 1 and 180
         except Exception as exc:  # noqa: BLE001
             log.debug(f"[INJECT] Failed to get monitor auto-resume timeout: {exc}")
             return 60.0  # Default fallback
@@ -101,13 +122,12 @@ class InjectionManager:
                         self._initialized = False
     
     def start_patcher_in_background(self):
-        """Start the LTK patcher when the loadout countdown begins.
+        """Bring LTK Manager and its bridge up when the loadout countdown begins.
 
-        The DLL only overlays games launched after the host started scanning.
-        Started with the injection at T-2, it had a few seconds before the
-        client launched the game, and a PC that froze for 4s at that moment
-        lost the overlay. In the background: starting it must not hold up the
-        countdown.
+        Starting LTK Manager takes seconds, and its patcher must already scan
+        when the client creates the game: the countdown stages the selected
+        skin on this session (stage_plan). In the background: starting it must
+        not hold up the countdown.
         """
         if not self._initialized or self.injector is None:
             return
@@ -122,20 +142,263 @@ class InjectionManager:
 
     def discard_early_patcher(self):
         """Stop the patcher started for a countdown that ends without an injection."""
+        self.cancel_staging()
         if self.injector:
             self.injector.overlay_manager.discard_early_patcher()
+
+    # -- staging during the loadout countdown ---------------------------------
+    #
+    # From a pick to the patcher's scan, every second counts: the patcher only
+    # overlays a game created after its scan started, and LTK Manager builds
+    # the overlay first (seconds for a skin that also changes a map file).
+    # So a pick is extracted and packed at once by the preparer, while it
+    # settles and while an abandoned pick's import still runs; the installer
+    # then only has to import it into LTK Manager and start the patcher.
+
+    def _stage_root(self) -> Path:
+        """Where the picks are prepared, each in a folder of its own."""
+        return Path(self.injector.mods_dir).parent / "stage"
+
+    @staticmethod
+    def _alive(thread) -> bool:
+        return thread is not None and thread.is_alive()
+
+    def _ensure_stage_threads(self):
+        """Start the preparer and the installer if they are not running (under _stage_cond)."""
+        if not self._alive(self._prepare_thread):
+            self._prepare_thread = threading.Thread(
+                target=self._prepare_worker, daemon=True, name="LTKStagePreparer"
+            )
+            self._prepare_thread.start()
+        if not self._alive(self._stage_thread):
+            self._stage_thread = threading.Thread(target=self._stage_worker, daemon=True, name="LTKStager")
+            self._stage_thread.start()
+
+    def _take_prepared(self):
+        """The prepared pick, removed from its slot (under _stage_cond)."""
+        slot, self._stage_prepared = self._stage_prepared, None
+        return slot
+
+    @staticmethod
+    def _discard_prepared(slot):
+        if slot is not None and slot[2] is not None:
+            shutil.rmtree(slot[2][0], ignore_errors=True)
+
+    def _stage_still_wanted(self, wanted, generation) -> bool:
+        with self._stage_cond:
+            return generation == self._stage_generation and self._stage_wanted == wanted
+
+    def begin_staging(self):
+        """A loadout countdown began: let stage_plan prepare LTK Manager for it."""
+        if not self._initialized or self.injector is None:
+            return
+        with self._stage_cond:
+            self._stage_generation += 1
+            self._stage_wanted = None
+            self._stage_wanted_settles = True
+            self._stage_done = None
+            stale = self._take_prepared()
+            idle = not self._alive(self._stage_thread) and not self._alive(self._prepare_thread)
+        self._discard_prepared(stale)
+        if idle:
+            # Left behind by a crash: nothing prepares or installs from it now
+            shutil.rmtree(self._stage_root(), ignore_errors=True)
+        self.injector.overlay_manager.open_staging()
+
+    def stage_skin(self, skin_name: str, champion_name: str = None, champion_id: int = None,
+                   threshold_in_s: Optional[float] = None):
+        """Stage this skin alone (see stage_plan)."""
+        if not skin_name:
+            return
+        classic = is_classic_game_mode(getattr(self.shared_state, "current_game_mode", None))
+        self.stage_plan(skin_plan(skin_name, champion_name, champion_id, classic), threshold_in_s)
+
+    def stage_plan(self, plan: StagePlan, threshold_in_s: Optional[float] = None):
+        """Stage in LTK Manager what the injection will install for this selection.
+
+        LTK Manager's patcher only overlays a game the client creates after
+        its scan started, and the client creates the game about a second
+        after the injection begins. So while the countdown runs, the mods of
+        the *plan* (the skin, the custom and saved mods, friends' skins: see
+        injection.core.stage_plan) are installed and the patcher started (see
+        OverlayManager.stage_mods); the injection then finds them in place.
+        In the background: prepared at once, installed once the selection
+        has rested STAGE_SETTLE_S. *threshold_in_s* is the time left before
+        the injection threshold: a pick that cannot rest that long is
+        installed at once, as the injection would install it anyway.
+        """
+        if not self._initialized or self.injector is None or not plan or not plan.steps:
+            return
+        wanted = plan
+        with self._stage_cond:
+            if wanted == self._stage_wanted:
+                return
+            self._stage_wanted = wanted
+            self._stage_wanted_at = time.monotonic()
+            self._stage_wanted_settles = threshold_in_s is None or threshold_in_s > STAGE_SETTLE_S
+            self._ensure_stage_threads()
+            self._stage_cond.notify_all()
+
+    def cancel_staging(self, keep: Optional[str] = None):
+        """Stage nothing more: the injection (or a discard) takes over.
+
+        *keep* is the skin the injection installs. When the countdown was
+        staging that very pick, it is installed at once and left to finish:
+        nothing is picked after the threshold, and the injection waits for
+        it instead of installing it again from the start.
+        """
+        with self._stage_cond:
+            kept = keep is not None and self._stage_wanted is not None and self._stage_wanted[0] == keep
+            if kept:
+                self._stage_wanted_settles = False
+                stale = None
+            else:
+                self._stage_generation += 1
+                self._stage_wanted = None
+                stale = self._take_prepared()
+            self._stage_cond.notify_all()
+        self._discard_prepared(stale)
+        if kept:
+            log.debug(f"[STAGE] The injection takes {keep}, which is being staged - letting it finish")
+            return
+        if self.injector:
+            self.injector.overlay_manager.close_staging()
+
+    def _prepare_worker(self):
+        """Extract and pack each new pick as soon as it is made."""
+        idle_since = time.monotonic()
+        while True:
+            stale = None
+            with self._stage_cond:
+                wanted, generation = self._stage_wanted, self._stage_generation
+                slot = self._stage_prepared
+                ready = slot is not None and slot[0] == wanted and slot[1] == generation
+                installing = self._stage_installing == (wanted, generation)
+                if wanted is None or wanted == self._stage_done or ready or installing:
+                    if slot is not None and not ready:
+                        stale = self._take_prepared()  # prepared for a pick that is gone
+                    elif time.monotonic() - idle_since > STAGE_WORKER_IDLE_S:
+                        self._prepare_thread = None
+                        return
+                    else:
+                        self._stage_cond.wait(timeout=1.0)
+                        continue
+            if stale is not None:
+                self._discard_prepared(stale)
+                continue
+
+            prepared = self._prepare_stage(wanted, generation)
+            idle_since = time.monotonic()
+            with self._stage_cond:
+                if generation == self._stage_generation and wanted == self._stage_wanted:
+                    stale = self._take_prepared()
+                    self._stage_prepared = (wanted, generation, prepared)
+                    self._stage_cond.notify_all()
+                else:
+                    stale = (wanted, generation, prepared)
+            self._discard_prepared(stale)
+
+    def _prepare_stage(self, wanted: StagePlan, generation):
+        """Extract the plan's mods (the skin, its loading screen name, the
+        other mods) into a folder of its own and pack them:
+        (stage_dir, mod_names, archives), or None when there is nothing to
+        stage for it."""
+        stage_dir = self._stage_root() / uuid.uuid4().hex
+        try:
+            stage_dir.mkdir(parents=True, exist_ok=True)
+            mod_names = prepare_plan(self.injector, wanted, stage_dir)
+            if not mod_names:
+                shutil.rmtree(stage_dir, ignore_errors=True)
+                return None
+            archives = {}
+            if self._stage_still_wanted(wanted, generation):
+                archives = self.injector.overlay_manager.pack_mods(stage_dir, mod_names)
+            return stage_dir, mod_names, archives
+        except Exception as e:
+            log.warning(f"[STAGE] Could not prepare {wanted.label}: {e}")
+            shutil.rmtree(stage_dir, ignore_errors=True)
+            return None
+
+    def _stage_worker(self):
+        """Install the prepared pick in LTK Manager once it has rested."""
+        idle_since = time.monotonic()
+        while True:
+            with self._stage_cond:
+                wanted, at, generation = self._stage_wanted, self._stage_wanted_at, self._stage_generation
+                if wanted is None or wanted == self._stage_done:
+                    if time.monotonic() - idle_since > STAGE_WORKER_IDLE_S:
+                        self._stage_thread = None
+                        return
+                    self._stage_cond.wait(timeout=1.0)
+                    continue
+                rest = STAGE_SETTLE_S if self._stage_wanted_settles else 0.0
+                settle = at + rest - time.monotonic()
+                if settle > 0:
+                    # Hovering through the skins: stage the one the player stops on
+                    self._stage_cond.wait(timeout=settle)
+                    continue
+                slot = self._stage_prepared
+                if slot is None or slot[0] != wanted or slot[1] != generation:
+                    # Still being prepared: the preparer notifies when it is done
+                    self._ensure_stage_threads()
+                    self._stage_cond.wait(timeout=1.0)
+                    continue
+                self._stage_prepared = None
+                self._stage_installing = (wanted, generation)
+            outcome = False
+            try:
+                if slot[2] is not None:
+                    outcome = self._install_prepared(wanted, generation, at, slot[2])
+            finally:
+                self._discard_prepared(slot)
+            idle_since = time.monotonic()
+            with self._stage_cond:
+                self._stage_installing = None
+                if generation == self._stage_generation and outcome is not None:
+                    # Done even when it failed: the injection installs it then.
+                    # Not when the player moved on: coming back stages it again
+                    self._stage_done = wanted
+                self._stage_cond.notify_all()  # the preparer may have one to prepare again
+
+    def _install_prepared(self, wanted, generation, selected_at, prepared) -> Optional[bool]:
+        """Stage the prepared pick: True when staged, False when it failed,
+        None when it was given up because the player moved on."""
+        skin_name = wanted.label
+        stage_dir, mod_names, archives = prepared
+        moved_on = []
+
+        def still_wanted() -> bool:
+            wanted_now = self._stage_still_wanted(wanted, generation)
+            if not wanted_now:
+                moved_on.append(True)
+            return wanted_now
+
+        if not still_wanted():
+            return None
+        try:
+            log.info(f"[STAGE] Staging {skin_name}{describe(wanted)} in LTK Manager")
+            staged = self.injector.overlay_manager.stage_mods(
+                stage_dir, mod_names, still_wanted, archives=archives, selected_at=selected_at
+            )
+        except Exception as e:
+            log.warning(f"[STAGE] Could not stage {skin_name}: {e}")
+            return False
+        if not staged and moved_on:
+            return None
+        return bool(staged)
 
     def _start_monitor(self):
         """Start game monitor - watches for game and suspends it"""
         self.game_monitor.start()
-        # The LTK patcher only overlays games launched after it started
-        # scanning: start it now if the countdown did not already
-        if self.injector:
-            self.injector.overlay_manager.start_patcher_early()
+        # LTK Manager takes seconds to start: bring it up now if the countdown
+        # did not already, in the background so the mods are prepared
+        # meanwhile (the injection waits for that connect, not a second one)
+        self.start_patcher_in_background()
     
     def _stop_monitor(self):
         """Stop the game monitor"""
         self.game_monitor.stop()
+        self.cancel_staging()
         if self.injector:
             self.injector.overlay_manager.discard_early_patcher()
     
@@ -169,6 +432,7 @@ class InjectionManager:
         if self.current_champion != champion_name:
             self.current_champion = champion_name
             log.debug(f"[INJECT] Champion locked: {champion_name}")
+    
     
     def update_skin(self, skin_name: str):
         """Update the current skin and potentially trigger injection"""
@@ -216,10 +480,8 @@ class InjectionManager:
                 log.info("[INJECT] Starting game monitor for injection")
                 self._start_monitor()
 
-            timeout_val = int(self._get_monitor_auto_resume_timeout())
             success = self.injector.inject_skin(
                 skin_name,
-                timeout=timeout_val,
                 stop_callback=None,
                 injection_manager=self
             )
@@ -241,23 +503,23 @@ class InjectionManager:
         # This prevents unnecessary suspension for base skins and owned skins
         pass
     
-    def inject_skin_immediately(self, skin_name: str, stop_callback=None, chroma_id: int = None, champion_name: str = None, champion_id: int = None, localized_name: str = None, loading_skin_id: int = None) -> bool:
+    def inject_skin_immediately(self, skin_name: str, stop_callback=None, chroma_id: int = None, champion_name: str = None, champion_id: int = None) -> bool:
         """Immediately inject a specific skin (with optional chroma)
         
         Args:
             skin_name: Name of skin to inject
             stop_callback: Callback to check if injection should stop
             chroma_id: Optional chroma ID for chroma variant
-            champion_name: Optional champion name
-            champion_id: Optional champion ID
-            localized_name: Optional localized skin name for the loading screen
-            loading_skin_id: Optional id of the skin behind a chroma (see InjectionTrigger._resolve_loading_name)
         """
+        # Check if this is a base skin (skin_0 or skin name ending with base/default indicators)
+        # If skin_name starts with "skin_" and the ID is 0 or matches base skin pattern, inject mods only
         if skin_name and skin_name.startswith("skin_"):
             try:
                 skin_id_str = skin_name.split("_")[1] if "_" in skin_name else None
                 if skin_id_str:
                     skin_id = int(skin_id_str)
+                    # Check if this is a base skin (skin ID 0 or champion's base skin ID like 36000 for champ 36)
+                    # Base skins typically have ID = champion_id * 1000
                     if skin_id == 0:
                         log.info("[INJECT] Base skin detected (skinId=0) - injection skipped")
                         report_issue(
@@ -267,40 +529,31 @@ class InjectionManager:
                             details={"skin": skin_name, "skin_id": 0},
                         )
                         return False
+                    # Check if it matches base skin pattern (champion_id * 1000)
                     if champion_id and skin_id == champion_id * 1000:
-                        log.info(
-                            f"[INJECT] Base skin detected (skinId={skin_id} for champion {champion_id}) - injection skipped"
-                        )
+                        log.info(f"[INJECT] Base skin detected (skinId={skin_id} for champion {champion_id}) - injection skipped")
                         report_issue(
                             "INJECTION_SKIPPED_BASE_SKIN",
                             "info",
                             "Injection skipped (base skin selected).",
-                            details={
-                                "skin": skin_name,
-                                "skin_id": skin_id,
-                                "champion_id": champion_id,
-                            },
+                            details={"skin": skin_name, "skin_id": skin_id, "champion_id": champion_id},
                         )
                         return False
             except (ValueError, IndexError):
                 pass  # Not a numeric skin ID, continue with normal injection
 
         classic = is_classic_game_mode(getattr(self.shared_state, "current_game_mode", None))
-        timeout_val = int(self._get_monitor_auto_resume_timeout())
 
         def inject(extra_mods_callback):
             # Pass the manager instance so injector can call resume_game()
             return self.injector.inject_skin(
                 skin_name,
-                timeout=timeout_val,
                 stop_callback=stop_callback,
                 injection_manager=self,
                 chroma_id=chroma_id,
                 champion_name=champion_name,
                 champion_id=champion_id,
                 extra_mods_callback=extra_mods_callback,
-                localized_name=localized_name,
-                loading_skin_id=loading_skin_id,
                 classic=classic,
             )
 
@@ -315,110 +568,26 @@ class InjectionManager:
         Args:
             stop_callback: Callback to check if injection should stop
         """
-        timeout_val = int(self._get_monitor_auto_resume_timeout())
-
         def inject(extra_mods_callback):
             if not extra_mods_callback:
                 log.info("[INJECT] No party skins to inject")
                 return False
             return self.injector.inject_extra_mods(
                 extra_mods_callback,
-                timeout=timeout_val,
                 stop_callback=stop_callback,
                 injection_manager=self,
             )
 
-        return self._run_injection("party skins", inject)
-
-    # ------------------------------------------------------------------
-    # The mods directory slot
-    # ------------------------------------------------------------------
-
-    def run_injection_exclusively(self, build: Callable[[], Any], wait_s: float = INJECTION_GATE_WAIT_S) -> Optional[Any]:
-        """Run build() while holding the mods directory, and return what it returns.
-
-        Every injection clears the mods directory and copies into it, and the
-        session that follows wipes it again, so two overlapping injections
-        delete each other's files mid-copy: the overlay is built half-written
-        and the patcher disables all of it, taking the skin with it.
-
-        The slot is held for the whole session, not just the build, which makes
-        a held slot mean "still serving a game". A stale one is therefore ended
-        (reclaim_injection_slot) rather than refused; a session that still will
-        not let go is refused, because building into a directory in use is the
-        failure this is here to prevent. None is the answer for "refused".
-        """
-        gate = getattr(self, "_injection_gate", None)
-        if gate is None:
-            # A manager without the slot (nothing to coordinate with)
-            return build()
-
-        if not gate.acquire(blocking=False) and not self.reclaim_injection_slot(wait_s=wait_s):
-            # Logged like the cooldown and lock-timeout refusals below: it is a
-            # timing problem the player retries away, not a tuning problem
-            log.warning("[INJECT] Another injection still holds the mods directory - this one is skipped")
-            return None
-        # The slot is held here: either just taken, or reclaim took it over
-        try:
-            return build()
-        finally:
-            gate.release()
-
-    def reclaim_injection_slot(self, wait_s: float = INJECTION_GATE_WAIT_S) -> bool:
-        """End the session holding the mods directory and wait for it to let go.
-
-        Returns with the slot held, or False when it is still held after wait_s
-        (then nothing may touch the directory until that session ends).
-        """
-        gate = getattr(self, "_injection_gate", None)
-        if gate is None:
-            return True
-        if self._acquire_gate(gate, 0.0):
-            return True
-
-        # The holder is a patcher serving a game that is over (a crash the
-        # player reconnects from). Ending it unloads those mods; a new injection
-        # can then prepare the directory from scratch.
-        log.info("[INJECT] A previous injection still holds the mods directory - stopping it")
-        try:
-            self.stop_overlay_process()
-            # A session still inside mkoverlay holds the directory through a
-            # mod-tools.exe it started: ending the host alone would leave that
-            # build running, and this one would clean the directory under it.
-            self.kill_all_modtools_processes()
-        except Exception as e:
-            log.warning(f"[INJECT] Could not stop the previous injection: {e}")
-
-        deadline = time.monotonic() + max(0.0, float(wait_s))
-        while True:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                return False
-            if self._acquire_gate(gate, min(remaining, _GATE_POLL_INTERVAL_S)):
-                return True
-
-    @staticmethod
-    def _acquire_gate(gate, timeout_s: float) -> bool:
-        """Take the mods directory slot within timeout_s (and keep it)."""
-        try:
-            return bool(gate.acquire(timeout=timeout_s) if timeout_s else gate.acquire(blocking=False))
-        except TypeError:  # a plain Lock that takes no timeout
-            return bool(gate.acquire(blocking=False))
+        return self._run_injection(PARTY_SKINS_LABEL, inject)
 
     def _run_injection(self, label: str, inject) -> bool:
-        """Run one injection under the mods directory slot and the injection lock
+        """Run one injection under the injection lock
 
         Args:
             label: What is injected (for logs and issue reports)
             inject: callback(extra_mods_callback) -> bool doing the injection;
                 extra_mods_callback adds party member skins (None without party)
         """
-        # The slot comes before the lock, never after: the session that holds the
-        # slot can be waiting on the lock, and the reverse order would deadlock.
-        return bool(self.run_injection_exclusively(lambda: self._run_injection_locked(label, inject)))
-
-    def _run_injection_locked(self, label: str, inject) -> bool:
-        """Do one injection with the mods directory slot already held"""
         self._ensure_initialized()
         self.refresh_injection_threshold()
 
@@ -428,14 +597,15 @@ class InjectionManager:
             log.error("[INJECT] Please ensure League Client is running or manually set the path in config.ini")
             return False
 
-        # The lock serialises the injections that hold the mods directory slot.
-        # A plain read of _injection_in_progress first was a check-then-act: two
-        # threads could both see False and both proceed, and the loser then
-        # returned from the INJECTION_LOCK_TIMEOUT path while the winner was
-        # already mid-injection on the shared mods directory.
+        # Check if injection already in progress
+        if self._injection_in_progress:
+            log.warning(f"[INJECT] Injection already in progress - skipping request for: {label}")
+            return False
+        
+        # Try to acquire lock with timeout to prevent indefinite blocking
         lock_acquired = self.injection_lock.acquire(timeout=INJECTION_LOCK_TIMEOUT_S)
         if not lock_acquired:
-            log.warning("[INJECT] Could not acquire injection lock - another injection in progress")
+            log.warning(f"[INJECT] Could not acquire injection lock - another injection in progress")
             report_issue(
                 "INJECTION_LOCK_TIMEOUT",
                 "warning",
@@ -448,6 +618,9 @@ class InjectionManager:
         try:
             self._injection_in_progress = True
             log.debug(f"[INJECT] Injection started - lock acquired for: {label}")
+            # What the countdown staged is reused if it matches; nothing more is
+            # staged (a staging of this very skin finishes)
+            self.cancel_staging(keep=label)
 
             current_time = time.time()
             elapsed = current_time - self.last_injection_time
@@ -466,24 +639,32 @@ class InjectionManager:
                     hint="Wait a bit, or lower the Injection Cooldown/Threshold in Settings.",
                 )
                 return False
-    
+
+            # Disconnect from UIA window when injection happens
+            # (launcher closes when game starts, so the window is gone)
             if self.shared_state and self.shared_state.ui_skin_thread:
                 try:
                     self.shared_state.ui_skin_thread.force_disconnect()
                 except Exception as e:
                     log.debug(f"[INJECT] Failed to disconnect UIA: {e}")
-    
+            
+            # Start monitor now (only when injection actually happens)
+            # Monitor runs in background and will suspend game if/when it finds it
+            # Injection proceeds immediately - suspension is optional and helps prevent file locks
             if not self._monitor_active:
                 log.info("[INJECT] Starting game monitor for injection")
                 self._start_monitor()
-    
+            
+            # Build optional callback to add party member skins to injection
             extra_mods_callback = None
             if self.shared_state:
                 party_manager = getattr(self.shared_state, "party_manager", None)
                 if party_manager and getattr(party_manager, "enabled", False):
                     try:
                         from party.integration.injection_hook import PartyInjectionHook
-                        party_hook = PartyInjectionHook(party_manager, self.shared_state, self)
+                        party_hook = PartyInjectionHook(
+                            party_manager, self.shared_state, self
+                        )
                         if party_hook.is_enabled():
                             extra_mods_callback = lambda inj: party_hook.prepare_party_mods(inj)
                     except Exception as e:
@@ -497,7 +678,10 @@ class InjectionManager:
         finally:
             self._injection_in_progress = False
             self.injection_lock.release()
-            log.debug("[INJECT] Injection completed - lock released")
+            log.debug(f"[INJECT] Injection completed - lock released")
+            
+            # Stop monitor after injection completes (this will resume game if still suspended)
+            # Note: Monitor may have already stopped if game ended, but that's fine
             self._stop_monitor()
     
     def inject_skin_for_testing(self, skin_name: str) -> bool:
@@ -567,7 +751,7 @@ class InjectionManager:
             log.warning(f"[INJECT] Failed to stop overlay process: {e}")
     
     def kill_all_runoverlay_processes(self):
-        """Kill all runoverlay processes (for ChampSelect cleanup)"""
+        """Kill all LTK Manager processes (for ChampSelect cleanup)"""
         if not self._initialized:
             return  # Nothing to kill if not initialized
         
@@ -605,7 +789,7 @@ class InjectionManager:
         cleanup.start()
     
     def stop_injection_by_user(self):
-        """Stop the patcher and mod-tools.exe so the game can start without mods"""
+        """Stop the patcher so the game can start without mods"""
         if not self._initialized:
             return
         self._stop_monitor()
@@ -616,78 +800,42 @@ class InjectionManager:
             log.warning(f"[INJECT] Failed to stop injection: {e}")
 
     def kill_all_modtools_processes(self):
-        """Kill all mod-tools.exe processes (for application shutdown)"""
+        """Kill all LTK Manager processes (for application shutdown)"""
         if not self._initialized:
             return  # Nothing to kill if not initialized
         
         try:
             self.injector.kill_all_modtools_processes()
         except Exception as e:
-            log.warning(f"[INJECT] Failed to kill mod-tools.exe processes: {e}")
+            log.warning(f"[INJECT] Failed to kill LTK Manager processes: {e}")
     
-    def prepare_custom_mod(self, mod_dict: dict, mod_type_name: str) -> Optional[str]:
-            """Extract or link a custom mod to the active mods directory (Shared Utility)"""
-            if not mod_dict or not mod_dict.get("mod_folder_name") or not mod_dict.get("mod_path"):
-                # Silent until now: a mod missing from the overlay had no line
-                # anywhere naming it
-                log.debug(f"[INJECT] {mod_type_name} mod selection is incomplete, ignored: {mod_dict}")
-                return None
+    def _get_injection_dir(self) -> Path:
+        """Get the injection directory path (works in both frozen and development environments)"""
+        if getattr(sys, 'frozen', False):
+            # Running as compiled executable (PyInstaller)
+            # Handle both onefile (_MEIPASS) and onedir (_internal) modes
+            if hasattr(sys, '_MEIPASS'):
+                # One-file mode: tools are in _MEIPASS (temporary extraction directory)
+                base_path = Path(sys._MEIPASS)
+                injection_dir = base_path / "injection"
+            else:
+                # One-dir mode: tools are alongside executable
+                base_dir = Path(sys.executable).parent
+                possible_injection_dirs = [
+                    base_dir / "injection",  # Direct path
+                    base_dir / "_internal" / "injection",  # _internal folder
+                ]
                 
-            self._ensure_initialized()
-            if not self.injector:
-                log.warning(f"[INJECT] Cannot extract {mod_type_name} mod - injector not available")
-                return None
+                injection_dir = None
+                for dir_path in possible_injection_dirs:
+                    if dir_path.exists():
+                        injection_dir = dir_path
+                        break
                 
-            try:
-                import shutil
-                import zipfile
-                from pathlib import Path
-                from utils.core.junction import is_junction, safe_remove_entry, link_or_extract
-                from utils.core.paths import get_injection_dir
-                from utils.core.safe_extract import safe_extractall
-                
-                mod_source = Path(mod_dict["mod_path"])
-                if not mod_source.exists():
-                    log.info(f"[INJECT] {mod_type_name} mod source not found (may have been deleted), ignoring: {mod_source}")
-                    return None
-                    
-                mod_folder_name = mod_dict["mod_folder_name"]
-                mod_dest = self.injector.mods_dir / mod_folder_name
-                extract_cache_dir = get_injection_dir() / ".extract_cache"
-                
-                # Удаляем старые хвосты, если они есть
-                if mod_dest.exists() or is_junction(mod_dest):
-                    safe_remove_entry(mod_dest)
-                    
-                # --- ИСПРАВЛЕНИЕ: БЕЗОПАСНАЯ РАСПАКОВКА ДЛЯ КАРТ И FORCER-ОВ ---
-                # Карты и патчи движка (Map, System Forcer) ОЧЕНЬ тяжелые. 
-                # CSLOL (mod-tools.exe) иногда криво собирает WAD из junction-ссылок,
-                # что вызывает "тихий" краш игры (Reconnect loop).
-                # Поэтому мы заставляем их физически распаковываться/копироваться в папку mods.
-                if mod_type_name in ("Map", "System Forcer"):
-                    if mod_source.is_dir():
-                        shutil.copytree(mod_source, mod_dest, dirs_exist_ok=True)
-                        log.info(f"[INJECT] {mod_type_name} directory fully copied (no junction): {mod_folder_name}")
-                    elif mod_source.is_file() and mod_source.suffix.lower() in {".zip", ".fantome"}:
-                        mod_dest.mkdir(parents=True, exist_ok=True)
-                        safe_extractall(mod_source, mod_dest)
-                        log.info(f"[INJECT] {mod_type_name} archive physically extracted (no junction): {mod_folder_name}")
-                    else:
-                        mod_dest.mkdir(parents=True, exist_ok=True)
-                        shutil.copy2(mod_source, mod_dest / mod_source.name)
-                else:
-                    # Для скинов, UI, анонсеров и шрифтов безопасно использовать быстрый junction (link_or_extract)
-                    link_or_extract(mod_source, mod_dest, cache_dir=extract_cache_dir)
-                    log.info(f"[INJECT] {mod_type_name} mod linked/extracted via cache: {mod_folder_name}")
-                
-                if mod_dest.exists() or is_junction(mod_dest):
-                    return mod_folder_name
-                else:
-                    log.warning(f"[INJECT] {mod_type_name} mod folder not found after extraction: {mod_dest}")
-                    return None
-                    
-            except Exception as e:
-                log.error(f"[INJECT] Error preparing {mod_type_name} mod: {e}")
-                import traceback
-                log.debug(f"[INJECT] Traceback: {traceback.format_exc()}")
-                return None
+                if not injection_dir:
+                    injection_dir = possible_injection_dirs[0]
+        else:
+            # Running as Python script
+            injection_dir = Path(__file__).parent.parent
+        
+        return injection_dir

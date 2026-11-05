@@ -15,6 +15,7 @@ from injection.game.game_monitor import resume_orphaned_game
 from injection.mods.storage import ModStorageService
 from utils.core.logging import get_logger, log_success
 from utils.system.admin_utils import ensure_admin_rights
+from utils.system.windows_account import check_windows_account
 from utils.threading.thread_manager import create_daemon_thread
 from config import APP_VERSION, set_config_option, get_config_file_path
 
@@ -87,6 +88,10 @@ def initialize_core_components(args, injection_threshold: Optional[float] = None
     # Check for admin rights FIRST (required for injection to work)
     ensure_admin_rights()
 
+    # LTK Manager runs with the Windows shell's rights and refuses to patch as
+    # administrator: say so now rather than after a game without the skin
+    check_windows_account()
+
     # Ensure mods directory layout exists early (and clean unknown root categories)
     try:
         ModStorageService()
@@ -141,8 +146,10 @@ def initialize_core_components(args, injection_threshold: Optional[float] = None
         # Listing processes takes seconds on Windows: keep it off the startup path
         create_daemon_thread(resume_orphaned_game, "OrphanedGameCheck").start()
         if injection_threshold is not None:
+            from config import clamp_injection_threshold
+            injection_threshold = clamp_injection_threshold(injection_threshold)
             log.info(f"Launcher override: setting injection threshold to {injection_threshold:.2f}s")
-            injection_manager.injection_threshold = max(0.0, injection_threshold)
+            injection_manager.injection_threshold = injection_threshold
         log.info("Injection manager initialized")
         # Don't initialize injection system yet - wait for WebSocket to be active
         # This will be called in main/__init__.py after WebSocket is ready

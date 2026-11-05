@@ -548,7 +548,10 @@ class MessageHandler:
     def _handle_settings_request(self, payload: dict) -> None:
         """Handle settings request"""
         try:
-            threshold = get_config_float("General", "injection_threshold", 0.5)
+            from config import INJECTION_THRESHOLD_DEFAULT_S, clamp_injection_threshold
+            threshold = clamp_injection_threshold(
+                get_config_float("General", "injection_threshold", INJECTION_THRESHOLD_DEFAULT_S)
+            )
             monitor_auto_resume_timeout = get_config_float("General", "monitor_auto_resume_timeout", 60.0)
             autostart = is_registered_for_autostart()
             hide_empty_categories = (get_config_option("General", "hide_empty_categories", "false") or "false").lower() == "true"
@@ -857,9 +860,9 @@ class MessageHandler:
                 self._send_response(json.dumps({"type": "diagnostics-applied-recommended", "success": False, "reason": "no data"}))
                 return
 
-            rec_s = round(float(rec_ms) / 1000.0, 2)
+            from config import clamp_injection_threshold, set_config_option
+            rec_s = round(clamp_injection_threshold(float(rec_ms) / 1000.0), 2)
 
-            from config import set_config_option
             set_config_option("General", "injection_threshold", str(rec_s))
 
             # Refresh the live threshold if injection manager is available
@@ -1106,6 +1109,38 @@ class MessageHandler:
                         result["trackerSamples"] = tracker_samples
                     return result
 
+                # Category: the League client runs as administrator (checked on
+                # each client connection; before the Windows account category)
+                if "can't apply skins" in ml and 'league client runs as administrator' in ml:
+                    return {
+                        'code': 'LEAGUE_ELEVATED',
+                        'text': 'League runs as administrator -> start it normally',
+                        'cause': 'running',
+                    }
+                if "can't apply skins" in ml and 'league is set to run as administrator' in ml:
+                    programs = msg.split('(', 1)[1].rsplit(')', 1)[0].strip() if '(' in msg else ''
+                    return {
+                        'code': 'LEAGUE_ELEVATED',
+                        'text': 'League set to run as administrator -> turn it off',
+                        'cause': 'setting',
+                        'detail': programs,
+                    }
+
+                # Category: Windows runs every program as administrator (startup
+                # check; before the LTF category, whose markers it also names)
+                if "can't apply skins" in ml and 'as administrator' in ml:
+                    if 'built-in administrator' in ml:
+                        cause = 'builtin'
+                    elif 'user account control is turned off' in ml:
+                        cause = 'uac'
+                    else:
+                        cause = 'other'
+                    return {
+                        'code': 'WINDOWS_ADMIN_SHELL',
+                        'text': 'Windows runs programs as administrator -> use a regular account',
+                        'cause': cause,
+                    }
+
                 # Category: Low disk space during overlay creation
                 if 'not enough disk space' in ml or ('disk space' in ml and 'injection failed' in ml):
                     return {
@@ -1113,19 +1148,38 @@ class MessageHandler:
                         'text': 'Low Disk Space -> free up space',
                     }
 
-                # Category: LTK patcher (user-provided injection binaries)
-                if 'ltk patcher' in ml:
-                    if 'end of life' in ml:
-                        return {'code': 'LTK_PATCHER_EOL', 'text': 'LTK patcher outdated -> update'}
-                    if 'missing' in ml:
-                        return {'code': 'LTK_PATCHER_MISSING', 'text': 'LTK patcher missing -> add files'}
-                    detail = msg.split('LTK patcher error:', 1)[-1].strip()
+                # Category: LTF session (Rose's bridge driving LTK Manager).
+                # The overlay manager's import messages and hints are the
+                # markers: a mod name or an error text names nothing reliable
+                is_import_failure = (
+                    ml.startswith('injection failed: could not install') or 'no mods could be installed' in ml
+                )
+                is_ltf_report = (
+                    is_import_failure
+                    or 'ltk_bridge.log' in fl
+                    or 'ltf' in ml or 'ltk patcher' in ml or 'ltk manager' in ml
+                )
+                if is_ltf_report:
+                    if 'bridge files are missing' in ml:
+                        return {'code': 'LTF_MISSING', 'text': 'LTF bridge files missing -> reinstall Rose'}
+                    if 'ltk manager is not installed' in ml:
+                        return {'code': 'LTK_MANAGER_MISSING', 'text': 'LTK Manager missing -> install it'}
+                    detail = msg.split('Injection failed:', 1)[-1].strip()
+                    # An install that failed because LTK Manager's browser did not
+                    # answer is not an import problem (older reports name it so)
+                    if is_import_failure and ltk_failure_cause(detail) != 'cdp':
+                        return {
+                            'code': 'LTF_IMPORT_FAILED',
+                            'text': 'Mod import failed',
+                            'detail': detail,
+                            'cause': 'import',
+                        }
                     return {
-                        'code': 'LTK_PATCHER_FAILED',
+                        'code': 'LTF_FAILED',
                         'text': 'LTK patcher error',
                         'detail': detail,
-                        # Picks the panel's hint: most failures have nothing to
-                        # do with outdated patcher files
+                        # Picks the panel's hint: what to do depends on why
+                        # the session failed
                         'cause': ltk_failure_cause(detail),
                     }
 
@@ -2721,7 +2775,8 @@ class MessageHandler:
             return
         
         other_id = payload.get("otherId")
-        other_data = payload.get("otherData", {})
+        # The category's "None" entry deselects each mod with otherData null
+        other_data = payload.get("otherData") or {}
         action = payload.get("action", "select")  # "select" or "deselect"
         
         # Initialize selected_other_mods as list if it doesn't exist
@@ -2731,10 +2786,14 @@ class MessageHandler:
         # Handle deselection
         if action == "deselect" or other_id is None:
             if other_id:
-                # Remove specific mod from list
+                # Remove specific mod from list (its relative path is otherData's id, else otherId)
+                def _rel(value) -> str:
+                    return str(value or "").replace("\\", "/").lstrip("/").lower()
+
+                target = _rel(other_data.get("id") or other_id)
                 self.shared_state.selected_other_mods = [
-                    mod for mod in self.shared_state.selected_other_mods 
-                    if mod.get("relative_path") != other_data.get("id")
+                    mod for mod in (self.shared_state.selected_other_mods or [])
+                    if mod and _rel(mod.get("relative_path")) != target
                 ]
                 log.info(f"[SkinMonitor] Other mod deselected: {other_id}")
             else:
@@ -2956,8 +3015,9 @@ class MessageHandler:
     def _handle_settings_save(self, payload: dict) -> None:
         """Handle settings save"""
         try:
-            threshold = max(0.0, min(2.0, float(payload.get("threshold", 0.5))))
-            monitor_auto_resume_timeout = max(1, min(600, int(payload.get("monitorAutoResumeTimeout", 60))))
+            from config import INJECTION_THRESHOLD_DEFAULT_S, clamp_injection_threshold
+            threshold = clamp_injection_threshold(payload.get("threshold", INJECTION_THRESHOLD_DEFAULT_S))
+            monitor_auto_resume_timeout = max(1, min(180, int(payload.get("monitorAutoResumeTimeout", 60))))
             autostart = payload.get("autostart", False)
             hide_empty_categories = bool(payload.get("hideEmptyCategories", False))
             game_path = payload.get("gamePath", "")

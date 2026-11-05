@@ -44,9 +44,7 @@ class ChromaWithoutSkinTests(unittest.TestCase):
         self.state.owned_skin_ids = {SPIRIT_BLOSSOM_RUBY}
         self.trigger.trigger_injection(f"chroma_{SPIRIT_BLOSSOM_RUBY}", ticker_id=1)
         self.trigger._force_owned_skin.assert_not_called()
-        self.trigger._inject_unowned_skin.assert_called_once_with(
-            f"chroma_{SPIRIT_BLOSSOM_RUBY}", "", effective_skin_id=SPIRIT_BLOSSOM_RUBY
-        )
+        self.trigger._inject_unowned_skin.assert_called_once_with(f"chroma_{SPIRIT_BLOSSOM_RUBY}", "")
 
     def test_a_chroma_owned_with_its_skin_is_still_forced(self):
         self.state.owned_skin_ids = {SPIRIT_BLOSSOM, SPIRIT_BLOSSOM_RUBY}
