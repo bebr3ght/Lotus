@@ -74,6 +74,10 @@ PATCHER_STATUS_POLL_TICKS = 4
 # before the patcher hooks it. The wait is the auto-resume timeout (config.py):
 # the same window, so one setting covers both.
 PATCHER_READY_POLL_S = 0.25
+# A stop request is answered before the host has unwound its scan, so a restart
+# right after it can still be told ALREADY_RUNNING: retried this many times
+PATCHER_START_ATTEMPTS = 3
+PATCHER_RESTART_DELAY_S = 0.5
 # A patcher still idle this long after start_patcher answered did not start
 PATCHER_IDLE_GRACE_S = 3.0
 # Unanswered status polls in a row (CDP busy, a slow eval) before the session
@@ -1062,15 +1066,35 @@ class OverlayManager:
     def _start_patcher(self, session: dict, report: bool = True) -> bool:
         """Start LTK Manager's patcher (it builds the overlay, then scans for the game)."""
         tail = LtkLogTail(LtkLogTail.log_dir())  # LTK's own log from this start on
-        try:
-            session["bridge"].start_patcher()
-        except (BridgeUnavailable, BridgeCommandError) as e:
-            log.error(f"[INJECT] Could not start the LTK patcher: {e}")
-            if report and not self._session_stopped(session):
-                self._report_ltf_failure(
-                    _cdp_unreachable_reason() if _cdp_unreachable(e) else f"could not start the LTK patcher ({e})"
-                )
-            return False
+        for attempt in range(1, PATCHER_START_ATTEMPTS + 1):
+            try:
+                session["bridge"].start_patcher()
+                break
+            except (BridgeUnavailable, BridgeCommandError) as e:
+                already_running = "ALREADY_RUNNING" in str(e)
+                if already_running and attempt < PATCHER_START_ATTEMPTS:
+                    # A stop request is answered before the host has unwound its
+                    # scan: ask again, give it a moment, retry
+                    try:
+                        session["bridge"].stop_patcher()
+                    except (BridgeUnavailable, BridgeCommandError) as stop_error:
+                        log.debug(f"[INJECT] Could not stop the LTK patcher again: {stop_error}")
+                    time.sleep(PATCHER_RESTART_DELAY_S)
+                    continue
+                if already_running:
+                    # Adopting it is worse than a clean start but far better than
+                    # failing: the failure path unloads the mods the game is being
+                    # served, which shows up as a black screen.
+                    log.warning("[INJECT] The LTK patcher was already running - keeping it instead of restarting")
+                    session["patcher_running"] = True
+                    session["ltk_log"] = tail
+                    return True
+                log.error(f"[INJECT] Could not start the LTK patcher: {e}")
+                if report and not self._session_stopped(session):
+                    self._report_ltf_failure(
+                        _cdp_unreachable_reason() if _cdp_unreachable(e) else f"could not start the LTK patcher ({e})"
+                    )
+                return False
         session["patcher_running"] = True
         session["patcher_started_at"] = time.monotonic()
         session["ltk_log"] = tail
@@ -1081,12 +1105,13 @@ class OverlayManager:
         session["ltk_error"] = None
         return True
 
-    def _stop_patcher(self, session: dict) -> None:
+    def _stop_patcher(self, session: dict) -> bool:
         try:
             session["bridge"].stop_patcher()
         except (BridgeUnavailable, BridgeCommandError) as e:
             log.debug(f"[INJECT] Could not stop the LTK patcher: {e}")
         session["patcher_running"] = False
+        return True
 
     # -- staging during the loadout countdown ---------------------------------
     def open_staging(self) -> None:
