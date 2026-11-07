@@ -23,6 +23,9 @@
   let championSelectRoot = null;
   let championSelectObserver = null;
   let championLocked = false;
+  // Opened from Settings ("Open mods interface"), where there is no champion
+  // select to hang the wheel on: it stays up until it is closed by hand.
+  let isGlobalMode = false;
   let currentSkinData = null;
   let selectedModId = null; // Track which mod is currently selected
   let selectedModSkinId = null; // Track which skin the selected mod belongs to
@@ -2029,7 +2032,7 @@
 
   function attachToChampionSelect() {
     // Attach as soon as champ select UI exists (even before a champion is locked)
-    if (!championSelectRoot) {
+    if (!championSelectRoot || championSelectRoot === "global") {
       return;
     }
 
@@ -2096,12 +2099,19 @@
       attachToChampionSelect();
       return;
     }
-    closePanel();
+    // Opened from Settings: the panel must survive having no button on screen
+    if (!isGlobalMode) closePanel();
     detachFromChampionSelect();
   }
 
   function updateChampionSelectTarget() {
     const target = document.querySelector(".champion-select");
+    if (!target && isGlobalMode) {
+      // Opened from Settings outside champ select: nothing to re-hang the
+      // wheel on, and the panel must not be closed by DOM churn
+      championSelectRoot = "global";
+      return;
+    }
     if (target === championSelectRoot) {
       // Even if target is the same, check if button needs to be attached
       if (target && (!button || !button.parentNode)) {
@@ -2160,9 +2170,13 @@
   // where no champion select exists: the wheel opens anyway.
   window.addEventListener("rose-open-custom-wheel", () => {
     if (!document.querySelector(".champion-select")) {
-      championSelectRoot = "reconnect";
+      // Opened from Settings: no champion select to hang the wheel on, so it
+      // stays up (global mode) until it is closed by hand
+      isGlobalMode = true;
+      championSelectRoot = "global";
     }
-    attachToChampionSelect();
+    if (!button) createButton();
+    if (!panel) createPanel();
     openPanel();
   });
 
@@ -2279,6 +2293,7 @@
   function closePanel() {
     if (!panel) {
       isOpen = false;
+      isGlobalMode = false;
       broadcastPanelVisibility(false);
       // Update button pressed state
       if (button) {
@@ -2292,6 +2307,7 @@
       panel.style.pointerEvents = "none";
     }
     isOpen = false;
+    isGlobalMode = false;
     broadcastPanelVisibility(false);
 
     // Update button pressed state
