@@ -61,6 +61,10 @@ class SwiftplayHandler:
         # Bumped whenever the extracted picks change or are dropped: a staging
         # run of an older generation gives up instead of installing stale mods
         self._swiftplay_stage_generation = 0
+        # A pick made while the queue runs collapses into one rebuild
+        self._restage_guard = threading.Lock()
+        self._restage_running = False
+        self._restage_pending = False
         # Champions the user set to a non-default skin this lobby session: their
         # choice wins over the saved (historic) skin, like in champ select
         self._historic_declined: set = set()
@@ -648,22 +652,6 @@ class SwiftplayHandler:
 
                 extracted_mods = []
 
-                # РАЗДЕЛЯЕМ OTHER-МОДЫ НА FORCER И ОБЫЧНЫЕ
-                other_mods = getattr(self.state, 'selected_other_mods', [])
-                if not other_mods:
-                    old_other = getattr(self.state, 'selected_other_mod', None)
-                    if old_other:
-                        other_mods = [old_other]
-
-                regular_other_mods = []
-                forcer_mods = []
-                for o_mod in other_mods:
-                    is_forcer = o_mod.get("is_map_forcer", False) or 'forcer' in o_mod.get("mod_name", "").lower()
-                    if is_forcer:
-                        forcer_mods.append(o_mod)
-                    else:
-                        regular_other_mods.append(o_mod)
-
                 # 1. Извлекаем скины чемпионов
                 for champion_id, skin_id in filtered_tracking.items():
                     try:
@@ -755,34 +743,8 @@ class SwiftplayHandler:
                         import traceback
                         log.debug(f"[phase] Traceback: {traceback.format_exc()}")
 
-                # 2. Извлекаем глобальные моды
-                map_mod = getattr(self.state, 'selected_map_mod', None)
-                if map_mod:
-                    fld = self.injection_manager.prepare_custom_mod(map_mod, "Map")
-                    if fld:
-                        extracted_mods.append(fld)
-
-                font_mod = getattr(self.state, 'selected_font_mod', None)
-                if font_mod:
-                    fld = self.injection_manager.prepare_custom_mod(font_mod, "Font")
-                    if fld:
-                        extracted_mods.append(fld)
-
-                announcer_mod = getattr(self.state, 'selected_announcer_mod', None)
-                if announcer_mod:
-                    fld = self.injection_manager.prepare_custom_mod(announcer_mod, "Announcer")
-                    if fld:
-                        extracted_mods.append(fld)
-
-                for o_mod in regular_other_mods:
-                    fld = self.injection_manager.prepare_custom_mod(o_mod, "Other")
-                    if fld:
-                        extracted_mods.append(fld)
-
-                for f_mod in forcer_mods:
-                    fld = self.injection_manager.prepare_custom_mod(f_mod, "System Forcer")
-                    if fld:
-                        extracted_mods.append(fld)
+                # 2. Глобальные моды: карта, шрифт, аннонсер, прочее, форсеры
+                extracted_mods.extend(self._selected_global_mods())
 
                 extracted_mods = list(dict.fromkeys(extracted_mods))
 
@@ -808,6 +770,72 @@ class SwiftplayHandler:
                 import traceback
                 log.debug(f"[phase] Traceback: {traceback.format_exc()}")
     
+    def _selected_global_mods(self) -> list:
+        """The map/font/announcer/other picks, prepared for injection (their
+        folders are junctioned into the shared mods directory)."""
+        if not self.injection_manager:
+            return []
+        folders = []
+
+        def add(mod, label):
+            if not mod:
+                return
+            folder = self.injection_manager.prepare_custom_mod(mod, label)
+            if folder:
+                folders.append(folder)
+
+        add(getattr(self.state, "selected_map_mod", None), "Map")
+        add(getattr(self.state, "selected_font_mod", None), "Font")
+        add(getattr(self.state, "selected_announcer_mod", None), "Announcer")
+
+        others = getattr(self.state, "selected_other_mods", []) or []
+        if not others:
+            old_other = getattr(self.state, "selected_other_mod", None)
+            others = [old_other] if old_other else []
+        for mod in others:
+            is_forcer = mod.get("is_map_forcer", False) or "forcer" in mod.get("mod_name", "").lower()
+            add(mod, "System Forcer" if is_forcer else "Other")
+        return folders
+
+    def _refresh_swiftplay_mods(self, mod_names) -> list:
+        """The queue can run for minutes: picks made after the extraction are
+        added and ones taken back are dropped, so the game gets what is
+        selected now (the staging is rebuilt on every pick, see request_restage)."""
+        injector = getattr(self.injection_manager, "injector", None)
+        mods_dir = getattr(injector, "mods_dir", None)
+        if mods_dir is None:
+            return list(mod_names)
+        names = [name for name in mod_names if (mods_dir / name).is_dir()]
+        names.extend(self._selected_global_mods())
+        return list(dict.fromkeys(names))
+
+    def request_restage(self) -> None:
+        """A mod was picked or dropped while the queue runs: rebuild the mods
+        and stage them again (one run at a time, the newest selection wins)."""
+        with self._restage_guard:
+            if self._restage_running:
+                self._restage_pending = True
+                return
+            self._restage_running = True
+
+        def run() -> None:
+            try:
+                while True:
+                    with self._restage_guard:
+                        self._restage_pending = False
+                    self.trigger_swiftplay_injection()
+                    with self._restage_guard:
+                        if not self._restage_pending:
+                            return
+                    log.debug("[phase] Swiftplay mods changed again - staging the newer selection")
+            except Exception as e:
+                log.warning(f"[phase] Could not restage Swiftplay mods: {e}")
+            finally:
+                with self._restage_guard:
+                    self._restage_running = False
+
+        threading.Thread(target=run, daemon=True, name="SwiftplayRestage").start()
+
     def _stage_swiftplay_mods(self, mod_names) -> None:
         """Install the mods and start LTK Manager's patcher while the queue runs.
 
@@ -872,6 +900,12 @@ class SwiftplayHandler:
                         return
                     extracted_mods = list(self.state.swiftplay_extracted_mods)
                     self.state.swiftplay_extracted_mods.clear()
+
+                # Picks made while the queue ran are in, ones taken back are out
+                extracted_mods = self._refresh_swiftplay_mods(extracted_mods)
+                if not extracted_mods:
+                    log.warning("[phase] No mods left to inject for Swiftplay")
+                    return
 
                 if not self.injection_manager:
                     log.error("[phase] Injection manager not available")

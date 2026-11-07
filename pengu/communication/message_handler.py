@@ -624,17 +624,27 @@ class MessageHandler:
         which is exactly where a player ends up when a mod crashed it, and the
         one place they need to pick a different one.
         """
-        if getattr(self.shared_state, "phase", None) not in RECONNECT_PHASES:
-            return
-        if self._user_stopped_injection():
-            return
-        if not (self._has_staged_mods() or deselected):
-            log.info("[SkinMonitor] No mod left to inject - reconnect to play without Rose's mods")
+        state = self.shared_state
+        phase = getattr(state, "phase", None)
+        if phase in RECONNECT_PHASES:
+            if self._user_stopped_injection():
+                return
+            if not (self._has_staged_mods() or deselected):
+                log.info("[SkinMonitor] No mod left to inject - reconnect to play without Rose's mods")
+                return
+
+            threading.Thread(
+                target=self._reinject_worker, daemon=True, name="ModsReinject"
+            ).start()
             return
 
-        threading.Thread(
-            target=self._reinject_worker, daemon=True, name="ModsReinject"
-        ).start()
+        # Swiftplay has no countdown: the mods are extracted and staged when the
+        # search starts, so a pick made while the queue runs has to rebuild them
+        # (the wheel is not there once the game runs).
+        handler = getattr(state, "swiftplay_handler", None)
+        if getattr(state, "is_swiftplay_mode", False) and handler is not None \
+                and phase in ("Matchmaking", "ReadyCheck"):
+            handler.request_restage()
 
     def _reinject_worker(self) -> None:
         """Run the re-injection off the bridge worker: it holds the mods

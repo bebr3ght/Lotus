@@ -66,6 +66,46 @@ class SwiftplayStagingTests(unittest.TestCase):
 
         self.overlay.stage_mods.assert_not_called()
 
+    def test_the_global_picks_are_part_of_the_selection(self):
+        self.manager.prepare_custom_mod.side_effect = lambda mod, label: mod["mod_name"]
+        self.handler.state.selected_map_mod = {"mod_name": "map-x"}
+        self.handler.state.selected_font_mod = {"mod_name": "font-x"}
+        self.handler.state.selected_announcer_mod = {"mod_name": "ann-x"}
+        self.handler.state.selected_other_mods = [
+            {"mod_name": "sfx-x"},
+            {"mod_name": "forcer-x", "is_map_forcer": True},
+        ]
+
+        self.assertEqual(
+            self.handler._selected_global_mods(),
+            ["map-x", "font-x", "ann-x", "sfx-x", "forcer-x"],
+        )
+
+    def test_a_pick_made_during_the_queue_is_added_at_injection(self):
+        mods_dir = self.manager.injector.mods_dir
+        (mods_dir / "skin_141009").mkdir()
+        self.manager.prepare_custom_mod.side_effect = lambda mod, label: mod["mod_name"]
+        self.handler.state.selected_map_mod = {"mod_name": "map-x"}
+
+        # "gone" was taken back while the queue ran: its folder is gone too
+        self.assertEqual(
+            self.handler._refresh_swiftplay_mods(["skin_141009", "gone"]),
+            ["skin_141009", "map-x"],
+        )
+
+    def test_picks_during_a_run_collapse_into_one_more(self):
+        calls = []
+
+        def trigger():
+            calls.append(1)
+            if len(calls) == 1:
+                self.handler.request_restage()  # a pick while the first run goes
+
+        with patch.object(self.handler, "trigger_swiftplay_injection", side_effect=trigger):
+            self.handler.request_restage()
+
+        self.assertEqual(len(calls), 2)
+
 
 if __name__ == "__main__":
     unittest.main()
