@@ -58,6 +58,9 @@ class SwiftplayHandler:
         self._last_sync_active_ids: Optional[frozenset] = None
         self._last_injected_tracking: dict = {}  # snapshot of tracking at last successful extraction
         self._user_changed_since_inject: set = set()  # champion IDs explicitly changed by user after last injection
+        # Bumped whenever the extracted picks change or are dropped: a staging
+        # run of an older generation gives up instead of installing stale mods
+        self._swiftplay_stage_generation = 0
         # Champions the user set to a non-default skin this lobby session: their
         # choice wins over the saved (historic) skin, like in champ select
         self._historic_declined: set = set()
@@ -284,6 +287,7 @@ class SwiftplayHandler:
                 elif current_state == "Invalid" and self._injection_triggered:
                     log.debug("[phase] Swiftplay matchmaking stopped - resetting injection flag")
                     self._injection_triggered = False
+                    self._drop_swiftplay_staging()
         except Exception as e:
             log.debug(f"[phase] Error monitoring Swiftplay matchmaking: {e}")
     
@@ -459,6 +463,17 @@ class SwiftplayHandler:
         except Exception as e:
             log.warning(f"[phase] Error forcing base skins: {e}")
 
+    def _drop_swiftplay_staging(self) -> None:
+        """A cancelled queue or a left lobby: the staged mods are no longer
+        wanted, and an LTK Manager Rose started for them can stop."""
+        self._swiftplay_stage_generation += 1
+        if not self.injection_manager:
+            return
+        try:
+            self.injection_manager.discard_early_patcher()
+        except Exception as e:
+            log.debug(f"[phase] Could not drop the staged Swiftplay mods: {e}")
+
     def cleanup_swiftplay_exit(self):
         """Clear Swiftplay-specific state when leaving the lobby."""
         with self.state.swiftplay_lock:
@@ -543,7 +558,10 @@ class SwiftplayHandler:
 
             except Exception as e:
                 log.warning(f"[phase] Error while cleaning up Swiftplay state: {e}")
-    
+
+        # Outside the state lock: dropping the staged session talks to LTK Manager
+        self._drop_swiftplay_staging()
+
     def _get_active_lobby_champion_ids(self) -> Optional[set]:
         """Return the set of champion IDs currently in the player's lobby slots.
 
@@ -780,11 +798,56 @@ class SwiftplayHandler:
                 self._user_changed_since_inject.clear()
                 log.info(f"[phase] Extracted {len(extracted_mods)} mod(s) - will inject on GameStart: {', '.join(extracted_mods)}")
 
+                # Swiftplay has no countdown: the game is created a second after
+                # the injection begins, too soon for an import then. Stage now,
+                # while the player waits in the queue.
+                self._stage_swiftplay_mods(extracted_mods)
+
             except Exception as e:
                 log.warning(f"[phase] Error extracting Swiftplay skins/mods: {e}")
                 import traceback
                 log.debug(f"[phase] Traceback: {traceback.format_exc()}")
     
+    def _stage_swiftplay_mods(self, mod_names) -> None:
+        """Install the mods and start LTK Manager's patcher while the queue runs.
+
+        In champ select the countdown gives the import time (stage_plan); in
+        Swiftplay there is no countdown and the game is created about a second
+        after the injection begins, so an import then always misses it. Staged
+        here, the injection finds the same mods installed and keeps the scan
+        running (see OverlayManager.stage_mods).
+        """
+        if not self.injection_manager or self._overlay_done:
+            return
+        injector = getattr(self.injection_manager, "injector", None)
+        overlay = getattr(injector, "overlay_manager", None)
+        mods_dir = getattr(injector, "mods_dir", None)
+        if overlay is None or mods_dir is None:
+            return
+
+        self._swiftplay_stage_generation += 1
+        generation = self._swiftplay_stage_generation
+        names = list(mod_names)
+
+        def still_wanted() -> bool:
+            return self._swiftplay_stage_generation == generation and not self._overlay_done
+
+        # Opened here, not in the thread: the injection closes staging when it
+        # takes the session over, and the thread must not reopen it after that
+        overlay.open_staging()
+
+        def stage() -> None:
+            try:
+                if not still_wanted():
+                    return
+                staged = overlay.stage_mods(mods_dir, names, still_wanted, selected_at=time.monotonic())
+                if not staged and still_wanted():
+                    log.debug("[phase] Swiftplay mods were not staged - the injection installs them")
+            except Exception as e:
+                log.warning(f"[phase] Could not stage Swiftplay mods: {e}")
+
+        threading.Thread(target=stage, daemon=True, name="SwiftplayStage").start()
+
     def run_swiftplay_overlay(self, prepare=None):
         """Run overlay injection for Swiftplay mode with previously extracted mods
 
