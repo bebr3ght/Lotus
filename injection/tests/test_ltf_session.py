@@ -160,6 +160,7 @@ class LtfSessionTestCase(unittest.TestCase):
             patch.object(overlay_manager, "report_issue"),
             patch.object(OverlayManager, "_running_game", return_value=None),
             patch.object(OverlayManager, "_ltk_manager_running", return_value=False),
+            patch.object(OverlayManager, "_running_managers", return_value=[]),
             patch.object(OverlayManager, "_process_created", return_value=None),
             patch.object(OverlayManager, "_terminate_manager",
                          lambda _self, pid, grace_s=0.0: self.terminated.append(pid)),
@@ -411,6 +412,49 @@ class InjectionSessionTests(LtfSessionTestCase):
             result = self.overlay.mk_run_overlay([mod], stop_callback=lambda: True)
 
         self.assertEqual(result, 1)
+        launcher.assert_not_called()
+        self.assertEqual(self.reported_causes(), ["running"])
+
+    def test_a_hidden_manager_rose_left_behind_is_closed(self):
+        """The launcher starts LTK Manager hidden with --shell-relaunched. One
+        still running without a bridge is Rose's own - the player never sees a
+        window to close - so it is closed instead of blocking every game."""
+        mod = self.make_mod()
+        no_bridge, run = self.launched()
+        leftover = {
+            "pid": 5150,
+            "path": r"C:\Program Files\LTK Manager\ltk-manager.exe",
+            "created": 1.0,
+            "cmdline": ["ltk-manager.exe", "--shell-relaunched"],
+            "visible": False,
+        }
+        with no_bridge, run as launcher, \
+                patch.object(OverlayManager, "_running_managers", return_value=[leftover]), \
+                patch.object(OverlayManager, "_ltk_manager_running", side_effect=[True, False]):
+            result = self.overlay.mk_run_overlay([mod], stop_callback=lambda: True)
+
+        self.assertEqual(result, 0)
+        self.assertIn(5150, self.terminated)
+        launcher.assert_called()
+        self.assertEqual(self.reported_causes(), [])
+
+    def test_the_players_own_ltk_manager_is_left_alone(self):
+        mod = self.make_mod()
+        no_bridge, run = self.launched()
+        own = {
+            "pid": 555,
+            "path": r"C:\Program Files\LTK Manager\ltk-manager.exe",
+            "created": 1.0,
+            "cmdline": [r"C:\Program Files\LTK Manager\ltk-manager.exe"],
+            "visible": True,
+        }
+        with no_bridge, run as launcher, \
+                patch.object(OverlayManager, "_running_managers", return_value=[own]), \
+                patch.object(OverlayManager, "_ltk_manager_running", return_value=True):
+            result = self.overlay.mk_run_overlay([mod], stop_callback=lambda: True)
+
+        self.assertEqual(result, 1)
+        self.assertEqual(self.terminated, [])
         launcher.assert_not_called()
         self.assertEqual(self.reported_causes(), ["running"])
 
@@ -1620,6 +1664,62 @@ class SessionStopperWiringTests(LtfSessionTestCase):
         self.overlay.mk_run_overlay([mod], stop_callback=lambda: True)
 
         self.assertIsNone(self.process_manager._session_stopper)
+
+
+class ManagerDescriptionTests(unittest.TestCase):
+    """What the log says about an LTK Manager Rose finds running"""
+
+    def test_the_launcher_flag_marks_roses_own_manager(self):
+        self.assertTrue(OverlayManager._rose_started_manager(
+            {"cmdline": [r"C:\Program Files\LTK Manager\ltk-manager.exe", "--shell-relaunched"]}
+        ))
+        self.assertFalse(OverlayManager._rose_started_manager(
+            {"cmdline": [r"C:\Program Files\LTK Manager\ltk-manager.exe"]}
+        ))
+        self.assertFalse(OverlayManager._rose_started_manager({}))
+
+    def test_the_description_names_pid_path_start_and_window(self):
+        text = OverlayManager._manager_description({
+            "pid": 7,
+            "path": r"C:\LTK\ltk-manager.exe",
+            "created": 1700000000.0,
+            "cmdline": ["ltk-manager.exe", "--shell-relaunched"],
+            "visible": False,
+        })
+
+        self.assertIn("pid=7", text)
+        self.assertIn(r"C:\LTK\ltk-manager.exe", text)
+        self.assertIn("--shell-relaunched", text)
+        self.assertIn("visible_window=no", text)
+
+    def test_a_manager_the_launcher_did_not_report_is_found(self):
+        """Its stdout is not always inherited: without this the hidden manager
+        started for a failed launch would never be closed"""
+        detail = {"pid": 99, "created": 1000.0, "cmdline": ["ltk-manager.exe", "--shell-relaunched"]}
+        own = {"pid": 5, "created": 1000.0, "cmdline": ["ltk-manager.exe"]}
+
+        with patch.object(OverlayManager, "_running_managers", return_value=[own, detail]):
+            self.assertEqual(OverlayManager._find_just_started_manager(999.0), 99)
+        with patch.object(OverlayManager, "_running_managers", return_value=[own]):
+            self.assertIsNone(OverlayManager._find_just_started_manager(999.0))
+
+
+class StaleManagerRecordTests(LtfSessionTestCase):
+    def test_a_manager_that_will_not_close_keeps_its_record(self):
+        self.state_path.write_text(json.dumps({"manager": {"pid": 777, "created": None}}), encoding="utf-8")
+
+        with patch.object(OverlayManager, "_process_created", return_value=1.0):
+            self.overlay._close_stale_rose_manager()
+
+        self.assertEqual(self.state()["manager"]["pid"], 777)
+
+    def test_a_closed_manager_record_is_cleared(self):
+        self.state_path.write_text(json.dumps({"manager": {"pid": 777, "created": None}}), encoding="utf-8")
+
+        with patch.object(OverlayManager, "_process_created", side_effect=[1.0, None]):
+            self.overlay._close_stale_rose_manager()
+
+        self.assertIsNone(self.state()["manager"])
 
 
 if __name__ == "__main__":

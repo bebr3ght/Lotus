@@ -576,7 +576,109 @@ class OverlayManager:
         if self._is_rose_manager(pid) and self._process_created(pid) is not None:
             log.info(f"[INJECT] The LTK Manager Rose started (PID {pid}) lost its bridge - closing it")
             self._terminate_manager(pid)
+            if self._process_created(pid) is not None:
+                # It survived the attempt: keep the record, so the next session
+                # tries again instead of taking it for the player's own
+                log.warning(f"[INJECT] LTK Manager (PID {pid}) did not close - will try again next session")
+                return
         self._update_state(lambda state: state.__setitem__("manager", None))
+
+    @staticmethod
+    def _pid_has_visible_window(pid: int) -> Optional[bool]:
+        """Whether *pid* shows a top-level window (None when it cannot be told).
+
+        A manager the launcher starts runs hidden; one the player opened has a
+        window (or sits in the tray, which also has none: the command line is
+        what tells those apart)."""
+        if sys.platform != "win32":
+            return None
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            found = [False]
+
+            def visit(hwnd, _param):
+                owner = wintypes.DWORD()
+                ctypes.windll.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(owner))
+                if owner.value == pid and ctypes.windll.user32.IsWindowVisible(hwnd):
+                    found[0] = True
+                    return False  # stop enumerating
+                return True
+
+            callback = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)(visit)
+            ctypes.windll.user32.EnumWindows(callback, 0)
+            return found[0]
+        except Exception as e:  # noqa: BLE001 - diagnostics only, never fatal
+            log.debug(f"[INJECT] Could not look for a window of PID {pid}: {e}")
+            return None
+
+    @staticmethod
+    def _running_managers() -> List[dict]:
+        """Every LTK Manager process on the PC, with what tells them apart."""
+        if not PSUTIL_AVAILABLE:
+            return []
+        found: List[dict] = []
+        try:
+            for proc in psutil.process_iter(["name", "pid"]):
+                if (proc.info.get("name") or "").lower() not in LTK_MANAGER_PROCESSES:
+                    continue
+                detail = {
+                    "pid": proc.pid,
+                    "path": None,
+                    "created": None,
+                    "cmdline": [],
+                    "visible": None,
+                }
+                for key, read in (
+                    ("path", proc.exe),
+                    ("created", proc.create_time),
+                    ("cmdline", proc.cmdline),
+                ):
+                    try:
+                        value = read()
+                        detail[key] = list(value) if key == "cmdline" else value
+                    except (psutil.Error, OSError):
+                        pass
+                detail["visible"] = OverlayManager._pid_has_visible_window(proc.pid)
+                found.append(detail)
+        except (psutil.Error, OSError) as e:
+            log.debug(f"[INJECT] Could not list LTK Manager processes: {e}")
+        return found
+
+    @staticmethod
+    def _manager_description(detail: dict) -> str:
+        """One log line that says which LTK Manager this is."""
+        created = detail.get("created")
+        started = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(created)) if created else "unknown"
+        visible = {True: "yes", False: "no"}.get(detail.get("visible"), "unknown")
+        cmdline = " ".join(str(part) for part in detail.get("cmdline") or ()) or "unknown"
+        return (
+            f"pid={detail.get('pid')} path={detail.get('path') or 'unknown'} started={started} "
+            f"cmdline={cmdline!r} visible_window={visible}"
+        )
+
+    @staticmethod
+    def _rose_started_manager(detail: dict) -> bool:
+        """Whether the LTF launcher started this LTK Manager.
+
+        The launcher runs it with --shell-relaunched; a copy the player opened
+        has no such argument. So a manager Rose started can be recognised (and
+        closed) even after its state record is gone."""
+        joined = " ".join(str(part) for part in detail.get("cmdline") or ()).lower()
+        return "shell-relaunched" in joined
+
+    @staticmethod
+    def _find_just_started_manager(since: float) -> Optional[int]:
+        """The manager the launcher started but did not report a PID for (its
+        stdout is not always inherited), so it cannot be left running hidden."""
+        for detail in OverlayManager._running_managers():
+            if not OverlayManager._rose_started_manager(detail):
+                continue
+            created = detail.get("created")
+            if created is None or created >= since - 5.0:
+                return detail["pid"]
+        return None
 
     @staticmethod
     def _ltk_manager_running() -> bool:
@@ -760,12 +862,30 @@ class OverlayManager:
         # an LTK Manager Rose did not start is the user's: it stays open
         self._close_stale_rose_manager()
         if self._ltk_manager_running():
-            log.warning("[INJECT] LTK Manager is already open without Rose's bridge - leaving it alone")
-            self._report_ltf_failure(ALREADY_OPEN_REASON, report)
-            return None, False
+            managers = self._running_managers()
+            for detail in managers:
+                log.warning(
+                    "[INJECT] LTK Manager is running without Rose's bridge: "
+                    f"{self._manager_description(detail)}"
+                )
+            # One the launcher started (hidden, --shell-relaunched) whose
+            # bridge is gone is Rose's own, even if its state record was lost:
+            # close it so this game can start a fresh one. The player's own
+            # copy is left alone.
+            for detail in [d for d in managers if self._rose_started_manager(d)]:
+                log.warning(
+                    f"[INJECT] Closing the LTK Manager Rose started earlier (pid={detail['pid']}, "
+                    "no bridge) so this game gets a fresh one"
+                )
+                self._terminate_manager(detail["pid"], grace_s=2.0)
+            if self._ltk_manager_running():
+                log.warning("[INJECT] LTK Manager is already open without Rose's bridge - leaving it alone")
+                self._report_ltf_failure(ALREADY_OPEN_REASON, report)
+                return None, False
 
         log.info(f"[INJECT] Starting LTK Manager through {launcher.name}")
         creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+        launched_at = time.time()
         try:
             result = subprocess.run(
                 [str(launcher), "--exe", str(manager), "--quiet"],
@@ -802,7 +922,7 @@ class OverlayManager:
             else:
                 self._report_ltf_failure(f"the LTF bridge is unreachable ({e})", report)
             # Started hidden by Rose: it would linger out of sight
-            self._terminate_manager(pid)
+            self._terminate_manager(pid if pid is not None else self._find_just_started_manager(launched_at))
             return None, False
         self._register_manager(bridge.pid or pid)
         # Its bridge is up; its browser, which every command goes through, follows
