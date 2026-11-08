@@ -24,7 +24,7 @@ log = logging.getLogger(__name__)
 # APPLICATION METADATA
 # =============================================================================
 
-APP_VERSION = "1.5.3"                           # Application version
+APP_VERSION = "1.5.5"                           # Application version
 
 # Product identity. Rose.spec (which cannot import this module) and the build
 # scripts duplicate these three strings; scripts/create_update_package.py checks

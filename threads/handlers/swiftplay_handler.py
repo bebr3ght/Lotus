@@ -711,10 +711,10 @@ class SwiftplayHandler:
                         )
 
                         if zip_path and zip_path.exists():
-                            base_mod_folder = self.injection_manager.injector._extract_zip_to_mod(zip_path)
+                            base_mod_folder = self.injection_manager.injector._link_archive(zip_path)
                             if base_mod_folder:
                                 extracted_mods.append(base_mod_folder.name)
-                                log.info(f"[phase] Extracted {injection_name} to mods directory")
+                                log.info(f"[phase] Linked {injection_name} into the mods directory")
 
                                 try:
                                     from injection.loadingname.loading_name import (

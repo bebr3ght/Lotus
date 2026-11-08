@@ -379,14 +379,18 @@ class InjectionTrigger:
 
     @staticmethod
     def _saved_other_mod_paths(historic_mods: dict) -> list:
-        """The saved category mods (ui/voiceover/loading_screen/vfx/sfx/others)."""
-        historic_paths = []
+        """The saved category mods (ui/voiceover/loading_screen/vfx/sfx/others), each once.
+
+        Before #379 every category write also listed its paths under "others", so
+        an existing history names "vfx/X" under both "vfx" and "others"."""
+        historic_paths, seen = [], set()
         for cat in ("ui", "voiceover", "loading_screen", "vfx", "sfx", "others"):
             v = historic_mods.get(cat)
-            if isinstance(v, list):
-                historic_paths.extend(v)
-            elif isinstance(v, str):
-                historic_paths.append(v)
+            for path in v if isinstance(v, list) else [v] if isinstance(v, str) else []:
+                key = str(path).replace("\\", "/").strip("/").lower()
+                if key and key not in seen:
+                    seen.add(key)
+                    historic_paths.append(path)
         return historic_paths
 
     @staticmethod
@@ -534,7 +538,8 @@ class InjectionTrigger:
                 mods.append(selected)
 
         other_mods = list(getattr(self.state, 'selected_other_mods', None) or [])
-        if not other_mods and historic_mods.get("other"):
+        if not other_mods:
+            # load_mod_historic keeps them per category: there is no "other" key
             for historic_path in self._saved_other_mod_paths(historic_mods):
                 saved = self._find_saved_mod(
                     mod_storage(), self._other_mod_category(mod_storage(), historic_path), historic_path
@@ -715,10 +720,6 @@ class InjectionTrigger:
                         if not injector:
                             return
 
-                        historic_path = historic_mods.get(mod_type)
-                        if not historic_path:
-                            return
-
                         # For category-mods selection, historic data is stored per category key
                         # (ui/voiceover/loading_screen/vfx/sfx/others). We treat them together here.
                         if mod_type == "other":
@@ -780,6 +781,10 @@ class InjectionTrigger:
                             return
 
                         # For other mod types (map, font, announcer), handle single mod
+                        historic_path = historic_mods.get(mod_type)
+                        if not historic_path:
+                            return
+
                         # Check if already selected
                         selected_attr = f'selected_{mod_type}_mod'
                         if getattr(self.state, selected_attr, None):
@@ -1500,12 +1505,12 @@ class InjectionTrigger:
                     if force_champion_id:
                         self._force_base_skin(force_champion_id * 1000)
 
-                    base_mod_folder = injector._extract_zip_to_mod(zp)
+                    base_mod_folder = injector._link_archive(zp)
                     if not base_mod_folder or not (
                         base_mod_folder.exists() or is_junction(base_mod_folder)
                     ):
                         log.error(
-                            "[INJECT] Required skin carrier archive could not be extracted: %s",
+                            "[INJECT] Required skin carrier archive could not be linked: %s",
                             base_skin_name,
                         )
                         return
@@ -1515,11 +1520,11 @@ class InjectionTrigger:
                     mod_folder_names.append(carrier_mod_folder_name)
                     mod_names_list.append(f"Skin Carrier ({base_skin_name})")
                     log.info(
-                        "[INJECT] Skin carrier archive extracted: %s",
+                        "[INJECT] Skin carrier archive linked: %s",
                         carrier_mod_folder_name,
                     )
                 except Exception as e:
-                    log.error(f"[INJECT] Error extracting skin carrier archive: {e}")
+                    log.error(f"[INJECT] Error linking skin carrier archive: {e}")
                     import traceback
                     log.debug(f"[INJECT] Traceback: {traceback.format_exc()}")
                     return

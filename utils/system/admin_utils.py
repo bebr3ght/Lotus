@@ -23,6 +23,10 @@ log = get_logger()
 # blocks with no output, and is_registered_for_autostart() runs while the settings
 # dialog is being built, so the hang landed on the tray thread.
 SCHTASKS_TIMEOUT_S = 10.0
+# schtasks writes its messages in the console (OEM) code page, not the ANSI one
+# text=True decodes with: on a Turkish Windows "bulamıyor" is 0x8d in cp857,
+# undefined in cp1254, and the decode killed subprocess's reader thread (#478)
+SCHTASKS_OUTPUT = {"capture_output": True, "text": True, "encoding": "oem", "errors": "replace"}
 
 
 def is_admin():
@@ -124,12 +128,10 @@ def is_registered_for_autostart():
         bool: True if registered, False otherwise
     """
     try:
+        # Only the exit code answers: the output is not read at all
         result = subprocess.run(
             ['schtasks', '/Query', '/TN', 'Rose'],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
+            **SCHTASKS_OUTPUT,
             creationflags=subprocess.CREATE_NO_WINDOW,
             timeout=SCHTASKS_TIMEOUT_S,
         )
@@ -176,14 +178,11 @@ def register_autostart():
 
         result = subprocess.run(
             cmd,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
+            **SCHTASKS_OUTPUT,
             creationflags=subprocess.CREATE_NO_WINDOW,
             timeout=SCHTASKS_TIMEOUT_S,
         )
-        
+
         if result.returncode == 0:
             return True, "Successfully registered for auto-start with admin rights"
         else:
@@ -218,14 +217,11 @@ def unregister_autostart():
 
         result = subprocess.run(
             cmd,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
+            **SCHTASKS_OUTPUT,
             creationflags=subprocess.CREATE_NO_WINDOW,
             timeout=SCHTASKS_TIMEOUT_S,
         )
-        
+
         if result.returncode == 0:
             return True, "Successfully unregistered from auto-start"
         else:

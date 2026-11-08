@@ -1,4 +1,5 @@
 import asyncio
+import os
 import tempfile
 import time
 import unittest
@@ -12,6 +13,7 @@ from party.core.party_manager import PartyManager
 from party.discovery import custom_mods
 from party.discovery.skin_collector import PartySkinData, SkinCollector
 from party.integration.injection_hook import PartyInjectionHook
+from injection.mods.mod_files import ModFiles
 from party.protocol.token_codec import PartyToken, create_token
 
 
@@ -127,6 +129,33 @@ class CustomModsTests(unittest.TestCase):
         )
         # Another champion's folder is never searched
         self.assertIsNone(custom_mods.find_local_mod(11, content_hash=content_hash))
+
+    def test_preview_image_does_not_change_party_hash_and_replacement_refreshes_cache(self):
+        folder = self.root / "shared mod"
+        self._write_mod_files(folder)
+        archive = self.root / "same mod.zip"
+        with zipfile.ZipFile(archive, "w") as packed:
+            for file_path in folder.rglob("*"):
+                if file_path.is_file():
+                    packed.write(file_path, file_path.relative_to(folder).as_posix())
+        archive_hash, _ = custom_mods.mod_hashes(archive)
+        folder_hash, _ = custom_mods.mod_hashes(folder)
+        self.assertEqual(folder_hash, archive_hash)
+
+        image = folder / "META" / "image.png"
+        image.write_bytes(b"first preview")
+        os.utime(image, ns=(1_000_000_000, 1_000_000_000))
+        first_hash, _ = custom_mods.mod_hashes(folder)
+        first_stamp = custom_mods._hash_cache[str(folder)][0]
+        self.assertEqual(first_hash, archive_hash)
+
+        image.write_bytes(b"replacement preview")
+        os.utime(image, ns=(2_000_000_000, 2_000_000_000))
+        replacement_hash, _ = custom_mods.mod_hashes(folder)
+        replacement_stamp = custom_mods._hash_cache[str(folder)][0]
+
+        self.assertEqual(replacement_hash, archive_hash)
+        self.assertNotEqual(replacement_stamp, first_stamp)
 
 
 class SkinCollectorSelectionTests(unittest.TestCase):
@@ -602,6 +631,10 @@ class InjectionHookTests(unittest.TestCase):
             return None if chroma_id else self.skin_zip
         return SimpleNamespace(mods_dir=self.mods_dir, _resolve_zip=Mock(side_effect=resolve_zip))
 
+    def _wad(self, name):
+        with ModFiles(self.mods_dir / name) as mod:
+            return mod.read("WAD/MasterYi.wad.client")
+
     def test_skin_is_linked_under_a_party_folder(self):
         hook = PartyInjectionHook(Mock(), make_state())
         skin = PartySkinData(summoner_id=2, summoner_name="B", champion_id=11, skin_id=11002, chroma_id=11005)
@@ -609,8 +642,8 @@ class InjectionHookTests(unittest.TestCase):
         name = hook._prepare_single_skin(skin, self.injector())
 
         self.assertEqual(name, "party_2")
-        # Missing chroma: the base skin is used
-        self.assertEqual((self.mods_dir / name / "WAD" / "MasterYi.wad.client").read_bytes(), b"skin")
+        # Missing chroma: the base skin is used, its archive linked as it is
+        self.assertEqual(self._wad(name), b"skin")
 
     def test_custom_mod_folder_is_used(self):
         mod = self.root / "mods" / "skins" / "11000" / "Custom Yi"
@@ -634,7 +667,7 @@ class InjectionHookTests(unittest.TestCase):
         name = hook._prepare_single_skin(skin, injector, classic=True)
 
         # Custom mods target the regular characters, which Classic doesn't load
-        self.assertEqual((self.mods_dir / name / "WAD" / "MasterYi.wad.client").read_bytes(), b"skin")
+        self.assertEqual(self._wad(name), b"skin")
         self.assertTrue(injector._resolve_zip.call_args.kwargs["classic"])
 
 

@@ -2,8 +2,8 @@
 ; This creates a proper Windows installer that registers the app
 
 #define MyAppName "Lotus"
-#define MyAppVersion "1.5.3"
-#define MyAppVersionInfo "1.5.3.0"
+#define MyAppVersion "1.5.5"
+#define MyAppVersionInfo "1.5.5.0"
 #define MyAppPublisher "Rose Team + Lotus Edited"
 #define MyAppURL "https://github.com/bebr3ght/Lotus"
 #define MyAppExeName "Lotus.exe"
@@ -172,7 +172,7 @@ begin
   IntroText.Height := ScaleY(36);
   IntroText.AutoSize := False;
   IntroText.ShowAccelChar := False;
-  IntroText.Caption := 'Choose what to keep. Everything unchecked is deleted.';
+  IntroText.Caption := 'Your settings, skin history and downloaded skins are kept unless you untick this.';
 
   KeepUserDataBox := TNewCheckBox.Create(UninstallProgressForm);
   KeepUserDataBox.Parent := Page;

@@ -71,12 +71,10 @@ class LCU:
         return self._connection.websocket_credentials()
     
     def get(self, path: str, timeout: float = 1.0, *, use_cache: bool = True):
-        """Make GET request to LCU API.
-
-        use_cache=False bypasses the response cache: a phase poll has to see the
-        client's current phase, not the one from a second ago.
-        """
-        return self._api.get(path, timeout, use_cache=use_cache)
+        """Make GET request to LCU API"""
+        if not use_cache:
+            return self._api.get(path, timeout, use_cache=False)
+        return self._api.get(path, timeout)
     
     # Properties (delegated to properties handler)
     @property

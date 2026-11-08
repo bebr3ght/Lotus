@@ -2649,6 +2649,13 @@
     }
   }
 
+  function handleModImageUpdated(data) {
+    if (!data?.success || Number(data.championId) !== getCurrentSkinContext().championId) return;
+    lastSkinModsRequestKey = null;
+    lastSkinModsRequestAt = 0;
+    requestModsForCurrentSkin();
+  }
+
   function handleMapsResponse(event) {
     const detail = event?.detail;
     if (!detail || detail.type !== "maps-response") {
@@ -3075,6 +3082,7 @@
     if (bridge) {
       bridge.subscribe("settings-data", (data) => handleSettingsData({ detail: data }));
       bridge.subscribe("skin-mods-response", (data) => handleModsResponse({ detail: data }));
+      bridge.subscribe("champion-mod-image-updated", handleModImageUpdated);
       bridge.subscribe("custom-mod-selection-result", (data) => handleSelectionResult({ detail: data }));
       bridge.subscribe("chroma-state", handleChromaStateUpdate);
       bridge.subscribe("phase-change", handlePhaseChange);

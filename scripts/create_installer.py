@@ -139,7 +139,11 @@ def _registered_inno_directories() -> list[Path]:
             continue
         with key:
             for index in range(winreg.QueryInfoKey(key)[0]):
-                with winreg.OpenKey(key, winreg.EnumKey(key, index)) as entry:
+                try:
+                    entry = winreg.OpenKey(key, winreg.EnumKey(key, index))
+                except OSError:  # an entry this account may not read (its ACL), or removed meanwhile
+                    continue
+                with entry:
                     display_name = read_string(entry, "DisplayName")
                     if not display_name or not _looks_like_inno(display_name):
                         continue
@@ -197,9 +201,9 @@ def create_installer():
     print("=" * 60)
     print(f"Creating {product.app_name()} Windows Installer")
     print("=" * 60)
-
+    
     iscc_path = find_iscc()
-
+    
     if not iscc_path:
         print("Inno Setup not found!")
         print("\nPlease install Inno Setup from: https://jrsoftware.org/isdl.php")
@@ -226,12 +230,12 @@ def create_installer():
     
     print("\n[1/3] Preparing installer files...")
     
-    # Convert tray_ready.png to ICO format for installer
+    # Preserve the tracked ICO; convert the PNG only when the ICO is missing.
     # Inno Setup requires ICO format for SetupIconFile
     png_icon = ROOT / "assets/tray_ready.png"
     ico_icon = ROOT / "assets/icon.ico"
     
-    if png_icon.exists() and PIL_AVAILABLE:
+    if not ico_icon.exists() and png_icon.exists() and PIL_AVAILABLE:
         try:
             # Convert PNG to ICO with multiple sizes for best compatibility
             with Image.open(png_icon) as img:
