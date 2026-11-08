@@ -36,7 +36,7 @@ class ClientGetTests(unittest.TestCase):
     def test_the_default_keeps_the_cache(self):
         client, api = self._client()
         client.get("/any")
-        api.get.assert_called_once_with("/any", 1.0, use_cache=True)
+        api.get.assert_called_once_with("/any", 1.0)
 
 
 if __name__ == "__main__":

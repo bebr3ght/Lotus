@@ -19,18 +19,21 @@ class PhaseReconnectTests(unittest.TestCase):
         worker.last_phase = 'InProgress'
         worker._last_raw_phase = 'InProgress'
         observed = []
+        tolerance = phase_thread._NULL_PHASE_TOLERANCE
 
         def advance(_):
             observed.append(state.phase)
-            if len(observed) == 1:
+            # A single hiccup is held (the countdown's FINALIZATION survives it);
+            # only a real outage publishes the missing phase
+            if len(observed) == tolerance:
                 lcu.phase = 'InProgress'
-            else:
+            elif len(observed) > tolerance:
                 state.stop = True
 
         with patch.object(phase_thread.time, 'sleep', side_effect=advance):
             worker.run()
 
-        self.assertEqual(observed, [None, 'InProgress'])
+        self.assertEqual(observed, ['InProgress'] * (tolerance - 1) + [None, 'InProgress'])
         phase_handler.handle_phase_change.assert_not_called()
 
     def test_the_countdowns_finalization_is_kept(self):

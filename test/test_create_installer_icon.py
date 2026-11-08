@@ -23,7 +23,8 @@ class InstallerIconTests(unittest.TestCase):
         compiler.parent.mkdir(parents=True)
         compiler.touch()
         (self.root / 'assets').mkdir()
-        (self.root / 'dist/Rose').mkdir(parents=True)
+        self.app = builder.product.app_name()
+        (self.root / 'dist' / self.app).mkdir(parents=True)
         (self.root / 'installer.iss').write_text('stub')
         self.icon = self.root / 'assets/icon.ico'
         self.png = self.root / 'assets/tray_ready.png'
@@ -31,12 +32,15 @@ class InstallerIconTests(unittest.TestCase):
 
     def build(self, image, pil_available=True):
         def compile_installer(*args, **kwargs):
-            (self.root / 'installer/Rose_Setup_1.exe').write_bytes(b'fake installer')
+            out = self.root / 'installer' / f'{self.app}_Setup_1.exe'
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_bytes(b'fake installer')
             return SimpleNamespace(returncode=0)
 
         # find_iscc (#365) takes an explicit override first: the fake compiler, not one installed on this PC
         compiler_path = self.home / 'AppData/Local/Programs/Inno Setup 6/ISCC.exe'
         with patch.object(builder, 'ROOT', self.root), \
+                patch.object(builder.product, 'dist_dir', lambda: self.root / 'dist' / self.app), \
                 patch.dict(builder.os.environ, {'INNO_SETUP_PATH': str(compiler_path)}), \
                 patch.object(builder, 'PIL_AVAILABLE', pil_available), \
                 patch.object(builder, 'Image', image, create=True), \
@@ -55,7 +59,7 @@ class InstallerIconTests(unittest.TestCase):
         self.assertTrue(result)
         image.open.assert_not_called()
         self.assertEqual(self.icon.read_bytes(), b'original tracked ico')
-        self.assertEqual((self.root / 'dist/Rose/icon.ico').read_bytes(), b'original tracked ico')
+        self.assertEqual((self.root / 'dist' / self.app / 'icon.ico').read_bytes(), b'original tracked ico')
         compiler.assert_called_once()
 
     def test_missing_icon_is_generated_from_png_and_copied(self):
@@ -66,7 +70,7 @@ class InstallerIconTests(unittest.TestCase):
         result, compiler = self.build(image)
         self.assertTrue(result)
         self.assertEqual(self.icon.read_bytes(), b'generated ico')
-        self.assertEqual((self.root / 'dist/Rose/icon.ico').read_bytes(), b'generated ico')
+        self.assertEqual((self.root / 'dist' / self.app / 'icon.ico').read_bytes(), b'generated ico')
         compiler.assert_called_once()
 
     def test_conversion_failure_without_an_icon_does_not_compile(self):
