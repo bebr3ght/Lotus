@@ -24,7 +24,7 @@ log = logging.getLogger(__name__)
 # APPLICATION METADATA
 # =============================================================================
 
-APP_VERSION = "1.5.5"                           # Application version
+APP_VERSION = "1.5.6"                           # Application version
 
 # Product identity. Rose.spec (which cannot import this module) and the build
 # scripts duplicate these three strings; scripts/create_update_package.py checks
@@ -342,6 +342,7 @@ INJECTION_GATE_WAIT_S = 5.0
 # Main loop watchdog timeouts (seconds)
 MAIN_LOOP_STALL_THRESHOLD_S = 5.0       # Threshold for detecting main loop stalls
 MAIN_LOOP_FORCE_QUIT_TIMEOUT_S = 2.0    # Timeout before forcing quit when stop flag is set
+UNINSTALL_CLEANUP_DEADLINE_S = 120
 CHROMA_PANEL_PROCESSING_THRESHOLD_S = 1.0  # Warning threshold for chroma panel processing
 
 # Process priority settings
@@ -417,6 +418,7 @@ _IS_DEV_BUILD = bool(getattr(sys, "frozen", False)) and (
     "rosedev" in Path(sys.executable).stem.lower() or "rose-dev" in Path(sys.executable).stem.lower()
 )
 SINGLE_INSTANCE_MUTEX_NAME = r"Local\RoseDevSingleInstance" if _IS_DEV_BUILD else r"Local\RoseSingleInstance"
+MOD_MIGRATION_MUTEX_NAME = r"Local\RoseModMigration"
 
 # Log file patterns (handles .log files)
 LOG_FILE_PATTERN = "rose_*.log*"

@@ -18,7 +18,6 @@ _SWIFTPLAY_ACTIVE_PHASES = {"Matchmaking", "ReadyCheck", "ChampSelect", "FINALIZ
 
 
 class PhaseHandler:
-    """Handles phase-specific logic"""
     
     def __init__(
         self,
@@ -43,12 +42,23 @@ class PhaseHandler:
         self.skin_scraper = skin_scraper
         self.swiftplay_handler = swiftplay_handler
     
+    @staticmethod
+    def _sync_saved_mods_for_listing() -> None:
+        """Champion select lists the saved mods: sync them, so those LTK
+        Manager lost since show as missing."""
+        from injection.mods.ltk_sync import start_saved_mods_sync
+        start_saved_mods_sync(only_if_changed=True)
+
     def handle_phase_change(self, phase: str, previous_phase: str):
-        """Handle phase change"""
         from threads.handlers.champ_select_reset import note_phase_for_reset
         note_phase_for_reset(self.state, phase)
         log.info(f"[phase] Phase transition: {previous_phase} → {phase} (swiftplay={self.state.is_swiftplay_mode}, extracted={len(self.state.swiftplay_extracted_mods)}, queue={self.state.current_queue_id})")
-        
+        try:
+            # The stored skins not yet matched to the base skin of this patch are, while the client is idle
+            from injection.baseskin.library import on_phase as fix_stored_skins_when_idle
+            fix_stored_skins_when_idle(phase, self.injection_manager, self.state)
+        except Exception as e:  # noqa: BLE001 - phase handling goes on
+            log.warning(f"[phase] Could not start checking the stored skins against the base skin: {e}")
         if phase == "Matchmaking":
             if self.state.is_swiftplay_mode:
                 log.info("[phase] Matchmaking phase detected in Swiftplay mode - triggering injection")
@@ -59,6 +69,8 @@ class PhaseHandler:
                         self.swiftplay_handler._injection_triggered = True
         
         elif phase == "ChampSelect":
+            self._sync_saved_mods_for_listing()
+
             # Swiftplay/Quickplay queue ID fallback - handles race condition where game_mode_detector
             # hasn't set is_swiftplay_mode yet when we enter ChampSelect
             if not self.state.is_swiftplay_mode and self.state.current_queue_id in SWIFTPLAY_QUEUE_IDS:

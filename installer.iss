@@ -2,8 +2,8 @@
 ; This creates a proper Windows installer that registers the app
 
 #define MyAppName "Lotus"
-#define MyAppVersion "1.5.5"
-#define MyAppVersionInfo "1.5.5.0"
+#define MyAppVersion "1.5.6"
+#define MyAppVersionInfo "1.5.6.0"
 #define MyAppPublisher "Rose Team + Lotus Edited"
 #define MyAppURL "https://github.com/bebr3ght/Lotus"
 #define MyAppExeName "Lotus.exe"
@@ -373,6 +373,23 @@ begin
     RegDeleteKeyIncludingSubkeys(HKLM, IfeoKey);
 end;
 
+{ Rose turns its hook off when it exits, so a crash or shutdown leaves it on,
+  pointing at the core.dll copy in the desktop user's %LOCALAPPDATA%\Rose\Pengu Loader.
+  The bundled loader's --uninstall only removes a hook on its own copy, and that
+  folder survives an uninstall that keeps the user's data, so remove Rose's hook here. }
+procedure _RemoveRosePenguIfeo();
+var
+  Debugger: string;
+begin
+  if not RegQueryStringValue(HKLM, IfeoKey, 'Debugger', Debugger) then
+    exit;
+  { The elevated uninstaller's localappdata can be another account's, so match
+    the folder names rather than the full path. }
+  if _ContainsTextLower(Debugger, '\rose\pengu loader\core.dll"') or
+     _ContainsTextLower(Debugger, '"' + LowerCase(ExpandConstant('{app}\_internal\Pengu Loader\core.dll')) + '"') then
+    RegDeleteValue(HKLM, IfeoKey, 'Debugger');
+end;
+
 const
   LegacyUninstallKey = 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{#MyAppName}';
 
@@ -395,11 +412,27 @@ begin
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var
+  ResultCode: Integer;
 begin
   if CurUninstallStep = usUninstall then
   begin
     _CleanupStartupRegistry();
     _CleanupLegacyUninstallEntry();
+    { Only Rose's data names the mods Rose added to LTK Manager's library:
+      remove them while Rose is still here to do it. Kept data keeps them.
+      Not in [UninstallRun], whose Check: is evaluated at install time. }
+    if not _KeepUserData then
+    begin
+      Exec(ExpandConstant('{app}\{#MyAppExeName}'), '--remove-ltk-mods', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+      if (ResultCode <> 0) and not UninstallSilent then
+        MsgBox(
+          '{#MyAppName} could not finish cleaning up LTK Manager.'#13#10 +
+          'Some of your LTK Manager mods may still be turned off: turn them back on in LTK Manager.',
+          mbInformation,
+          MB_OK
+        );
+    end;
   end;
 
   if CurUninstallStep = usPostUninstall then
@@ -410,6 +443,7 @@ begin
     { Inno removes installed files; a shared/custom install root may also
       contain unrelated files. Remove the root only when it is empty. }
     RemoveDir(ExpandConstant('{app}'));
+    _RemoveRosePenguIfeo();
     { Safety net if Pengu's own --uninstall could not run }
     _RemoveDeadPenguIfeo();
   end;
