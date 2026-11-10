@@ -270,6 +270,178 @@
     if (enabled) {
       pauseBackgroundVideos();
       if (!videoObserver) {
-        videoObserver = new MutationObser
+        videoObserver = new MutationObserver(scheduleVideoScan);
+        videoObserver.observe(document.documentElement, { childList: true, subtree: true });
+        // Videos the client starts again after they were paused
+        document.addEventListener("play", onVideoPlay, true);
+      }
+      return;
+    }
+    if (videoObserver) {
+      videoObserver.disconnect();
+      videoObserver = null;
+      document.removeEventListener("play", onVideoPlay, true);
+      resumeBackgroundVideos();
+    }
+  }
 
-[Truncated after 272 lines. To continue, call readFile again with offset=273.]
+  // ---------------------------------------------------------------------------
+  // Apply
+  // ---------------------------------------------------------------------------
+
+  function apply() {
+    setStyle(STYLE_THEME_ID, THEME_CSS, settings.theme);
+    setStyle(STYLE_PERF_ID, PERFORMANCE_CSS, settings.performance || settings.pauseBackgroundVideos);
+    setStyle(STYLE_MOTION_ID, MOTION_CSS, settings.reducedMotion || settings.performance);
+    setVideoWatcher(settings.pauseBackgroundVideos || settings.performance);
+  }
+
+  function update(changes) {
+    for (const key of Object.keys(changes || {})) {
+      if (key in DEFAULTS && typeof changes[key] === "boolean") settings[key] = changes[key];
+    }
+    saveSettings();
+    apply();
+    syncPanel();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Settings panel (Ctrl+Shift+M)
+  // ---------------------------------------------------------------------------
+
+  const OPTIONS = [
+    { key: "theme", label: "Modern theme", hint: "Rounded corners, soft shadows, clean scrollbars" },
+    { key: "performance", label: "Performance mode", hint: "No blur, no animations, paused background videos" },
+    { key: "reducedMotion", label: "Reduce motion", hint: "Shorter animations and transitions" },
+    { key: "pauseBackgroundVideos", label: "Pause background videos", hint: "Lower CPU and GPU use on the home screen" },
+  ];
+
+  let panel = null;
+
+  function buildPanel() {
+    setStyle(STYLE_PANEL_ID, PANEL_CSS, true);
+
+    panel = document.createElement("div");
+    panel.id = PANEL_ID;
+    panel.hidden = true;
+    panel.setAttribute("role", "dialog");
+    panel.setAttribute("aria-label", t("Modern Client"));
+
+    const header = document.createElement("div");
+    header.className = "rose-mc-header";
+
+    const title = document.createElement("span");
+    title.className = "rose-mc-title";
+    title.textContent = t("Modern Client");
+
+    const close = document.createElement("button");
+    close.className = "rose-mc-close";
+    close.type = "button";
+    close.textContent = "\u00d7";
+    close.setAttribute("aria-label", t("Close"));
+    close.addEventListener("click", () => togglePanel(false));
+
+    header.append(title, close);
+    panel.appendChild(header);
+
+    for (const option of OPTIONS) {
+      const label = document.createElement("label");
+      const input = document.createElement("input");
+      input.type = "checkbox";
+      input.dataset.key = option.key;
+      input.addEventListener("change", () => update({ [option.key]: input.checked }));
+
+      const text = document.createElement("span");
+      text.textContent = t(option.label);
+      const hint = document.createElement("span");
+      hint.className = "rose-mc-hint";
+      hint.textContent = t(option.hint);
+      text.appendChild(hint);
+
+      label.append(input, text);
+      panel.appendChild(label);
+    }
+
+    const footer = document.createElement("div");
+    footer.className = "rose-mc-footer";
+    footer.textContent = t("Ctrl+Shift+M to open or close");
+    panel.appendChild(footer);
+
+    document.body.appendChild(panel);
+    syncPanel();
+  }
+
+  function syncPanel() {
+    if (!panel) return;
+    panel.querySelectorAll("input[data-key]").forEach((input) => {
+      const key = input.dataset.key;
+      // Performance mode already covers these two
+      const covered = settings.performance && (key === "reducedMotion" || key === "pauseBackgroundVideos");
+      input.checked = covered || Boolean(settings[key]);
+      input.disabled = covered;
+    });
+  }
+
+  function togglePanel(force) {
+    if (!panel) {
+      if (!document.body) return;
+      buildPanel();
+    }
+    panel.hidden = typeof force === "boolean" ? !force : !panel.hidden;
+  }
+
+  function onKeyDown(event) {
+    if (event.key === "Escape" && panel && !panel.hidden) {
+      togglePanel(false);
+      return;
+    }
+    if (
+      event.ctrlKey === HOTKEY.ctrl &&
+      event.shiftKey === HOTKEY.shift &&
+      !event.altKey &&
+      typeof event.key === "string" &&
+      event.key.toLowerCase() === HOTKEY.key
+    ) {
+      event.preventDefault();
+      togglePanel();
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Start
+  // ---------------------------------------------------------------------------
+
+  function start() {
+    try {
+      apply();
+    } catch (e) {
+      console.error(`${LOG_PREFIX} Could not apply settings:`, e);
+    }
+    window.addEventListener("keydown", onKeyDown, true);
+    if (window.RoseI18n && typeof window.RoseI18n.onChange === "function") {
+      // Rebuild the panel in the new language
+      window.RoseI18n.onChange(() => {
+        if (!panel) return;
+        const wasOpen = !panel.hidden;
+        panel.remove();
+        panel = null;
+        if (wasOpen) togglePanel(true);
+      });
+    }
+    console.log(`${LOG_PREFIX} Ready (Ctrl+Shift+M for settings)`, { ...settings });
+  }
+
+  window.RoseModernClient = Object.freeze({
+    get settings() { return { ...settings }; },
+    update,
+    reset() { update({ ...DEFAULTS }); },
+    open() { togglePanel(true); },
+    close() { togglePanel(false); },
+  });
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", start, { once: true });
+  } else {
+    start();
+  }
+})();
