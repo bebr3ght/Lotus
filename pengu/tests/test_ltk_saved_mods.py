@@ -66,6 +66,11 @@ class SavedLtkModSelectionTests(unittest.TestCase):
         )
         self.sent = []
         self.handler._send_response = lambda message: self.sent.append(json.loads(message))
+        # The app routes these selections through the bridge worker; the test
+        # asserts right after the call, so they are routed inline here
+        inline = patch("pengu.communication.message_handler.BACKGROUND_MESSAGE_TYPES", frozenset())
+        inline.start()
+        self.addCleanup(inline.stop)
         self.linked = []
         for target, kwargs in (
             ("injection.mods.mod_source.link_or_extract", {"side_effect": self.link}),
